@@ -1,4 +1,5 @@
-//! Schema for Comparand's golden-case validation corpus.
+//! Schema, oracles, and generators for Comparand's golden-case validation
+//! corpus.
 //!
 //! A *golden case* pairs an input with an expected output for a specific
 //! algorithm variant, along with the case's provenance. The corpus is
@@ -6,12 +7,34 @@
 //! versioned deliverable, it is also intended to be usable by other
 //! sequence-comparison libraries to check their outputs against ours.
 //!
+//! # Subsystems
+//!
+//! This crate is organized into three cooperating subsystems, each with
+//! its own module:
+//!
+//! * [`GoldenCase`] and friends (at the crate root) define the schema for
+//!   hand-authored golden cases and the [`FloatExpectation`] comparison
+//!   policy every floating-point expected value must declare.
+//! * [`oracle`] defines the [`Oracle`] contract — a slow, straightforward,
+//!   deliberately unoptimized reference implementation — and the
+//!   [`differential_check`] / [`differential_check_bounded`] drivers that
+//!   sweep a candidate implementation against an oracle over a stream of
+//!   inputs.
+//! * [`generator`] provides [`exhaustive_over_alphabet`] and
+//!   [`exhaustive_pairs`]: the exhaustive small-alphabet enumeration that
+//!   feeds those differential sweeps. [`count_sequences`] gives the
+//!   closed-form size of the enumeration up front.
+//! * [`differential`] provides [`DifferentialResult`] and
+//!   [`DifferenceClassification`] — the classification vocabulary the
+//!   design document commits to for triaging observed disagreements.
+//!
 //! # Layers
 //!
-//! This crate defines only the **schema types**. The actual corpus data
-//! — canonical examples, exhaustive-oracle outputs, phonetic multilingual
-//! sets — is added incrementally under `crates/comparand-corpus/data/` as
-//! algorithms come online.
+//! This crate defines only the **schema types** and the **validation
+//! infrastructure**. The actual corpus data — canonical examples,
+//! exhaustive-oracle outputs, phonetic multilingual sets — is added
+//! incrementally under `crates/comparand-corpus/data/` as algorithms come
+//! online.
 //!
 //! # Sources
 //!
@@ -27,9 +50,32 @@
 //! (see [`FloatExpectation`]). Comparand rejects the practice of comparing
 //! doubles for exact equality by default — every floating-point golden
 //! case must declare its tolerance regime.
+//!
+//! # `no_std`
+//!
+//! The schema types, the [`Oracle`] trait, and [`DifferentialResult`] all
+//! compile without `alloc`. The [`generator`] module and the
+//! [`differential_check`] driver require the `alloc` feature because they
+//! return `Vec`s.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+
+pub mod differential;
+pub mod oracle;
+
+#[cfg(feature = "alloc")]
+pub mod generator;
+
+pub use differential::{DifferenceClassification, DifferentialResult};
+pub use oracle::{Disagreement, Oracle};
+
+#[cfg(feature = "alloc")]
+pub use generator::{
+    ExhaustiveIter, count_sequences, exhaustive_over_alphabet, exhaustive_pairs,
+};
+#[cfg(feature = "alloc")]
+pub use oracle::{differential_check, differential_check_bounded};
 
 use comparand_core::AlgorithmDescriptor;
 
