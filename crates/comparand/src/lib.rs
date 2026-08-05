@@ -40,6 +40,11 @@ pub use comparand_jaro as jaro;
 /// `comparand-damerau` crate.
 pub use comparand_damerau as damerau;
 
+/// The n-gram representation layer: character, byte, and token n-gram
+/// generators plus set / multiset / weighted-vector representations,
+/// re-exported unchanged from the `comparand-ngram` crate.
+pub use comparand_ngram as ngram;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

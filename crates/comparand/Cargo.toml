@@ -19,6 +19,7 @@ std = [
     "comparand-hamming/std",
     "comparand-jaro/std",
     "comparand-damerau/std",
+    "comparand-ngram/std",
 ]
 alloc = [
     "comparand-core/alloc",
@@ -26,6 +27,7 @@ alloc = [
     "comparand-hamming/alloc",
     "comparand-jaro/alloc",
     "comparand-damerau/alloc",
+    "comparand-ngram/alloc",
 ]
 
 [dependencies]
@@ -34,6 +36,7 @@ comparand-levenshtein = { workspace = true }
 comparand-hamming = { workspace = true }
 comparand-jaro = { workspace = true }
 comparand-damerau = { workspace = true }
+comparand-ngram = { workspace = true }
 
 [lints]
 workspace = true
