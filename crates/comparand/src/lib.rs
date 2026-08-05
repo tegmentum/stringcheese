@@ -30,6 +30,10 @@ pub use comparand_levenshtein as levenshtein;
 /// re-exported unchanged from the `comparand-hamming` crate.
 pub use comparand_hamming as hamming;
 
+/// The Jaro subsystem: base Jaro (1989) similarity and the Jaro-Winkler
+/// variant family, re-exported unchanged from the `comparand-jaro` crate.
+pub use comparand_jaro as jaro;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

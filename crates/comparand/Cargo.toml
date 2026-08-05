@@ -17,17 +17,20 @@ std = [
     "comparand-core/std",
     "comparand-levenshtein/std",
     "comparand-hamming/std",
+    "comparand-jaro/std",
 ]
 alloc = [
     "comparand-core/alloc",
     "comparand-levenshtein/alloc",
     "comparand-hamming/alloc",
+    "comparand-jaro/alloc",
 ]
 
 [dependencies]
 comparand-core = { workspace = true }
 comparand-levenshtein = { workspace = true }
 comparand-hamming = { workspace = true }
+comparand-jaro = { workspace = true }
 
 [lints]
 workspace = true

@@ -41,6 +41,7 @@ version = "0.1.0"
 dependencies = [
  "comparand-core",
  "comparand-hamming",
+ "comparand-jaro",
  "comparand-levenshtein",
 ]
 
@@ -75,6 +76,15 @@ dependencies = [
 [[package]]
 name = "comparand-index"
 version = "0.1.0"
+
+[[package]]
+name = "comparand-jaro"
+version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "proptest",
+]
 
 [[package]]
 name = "comparand-levenshtein"
