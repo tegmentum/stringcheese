@@ -31,11 +31,8 @@
 //! configurations where the direct route between two strings is longer than
 //! the sum of two intermediate routes. The classical distinguishing example
 //! is `"ca"` vs `"abc"`, which OSA scores as `3` while the unrestricted
-//! Damerau algorithm scores as `2`. See the crate's
-//! [`property_tests`](crate::property_tests) for the triangle-violation
-//! test.
-//!
-//! [`crate::property_tests`]: crate::property_tests
+//! Damerau algorithm scores as `2`. See the crate's `property_tests`
+//! module (test-only) for the triangle-violation test.
 
 pub mod banded;
 pub mod full_matrix;

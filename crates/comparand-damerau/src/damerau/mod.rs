@@ -36,8 +36,8 @@
 //! Full Damerau-Levenshtein under unit costs is a *metric* on
 //! sequences: symmetric, non-negative, satisfies identity of indiscernibles
 //! under `T: Eq`, and (unlike OSA) satisfies the triangle inequality. The
-//! crate's [`property_tests`](crate::property_tests) exercise all four
-//! axioms on generated inputs.
+//! crate's `property_tests` module (test-only) exercises all four axioms
+//! on generated inputs.
 
 pub mod full_matrix;
 #[cfg(feature = "std")]

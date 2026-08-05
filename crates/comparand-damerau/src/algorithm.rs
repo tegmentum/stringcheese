@@ -57,9 +57,8 @@ use crate::workspace::DamerauWorkspace;
 /// cost `1`, with the restriction that no substring of either input may be
 /// edited more than once. Under that restriction OSA is a *semimetric*
 /// rather than a metric: it violates the triangle inequality — see
-/// [`Osa::properties`] and the crate's
-/// [`property_tests`](crate::property_tests) for a hard-coded violation
-/// case that documents this as known behavior.
+/// [`Osa::properties`] and the crate's `property_tests` module (test-only)
+/// for a hard-coded violation case that documents this as known behavior.
 ///
 /// The type is a zero-sized unit struct; construct it as `Osa` and reuse
 /// the value across threads.
