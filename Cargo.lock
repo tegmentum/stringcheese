@@ -40,6 +40,7 @@ name = "comparand"
 version = "0.1.0"
 dependencies = [
  "comparand-core",
+ "comparand-damerau",
  "comparand-hamming",
  "comparand-jaro",
  "comparand-levenshtein",
@@ -62,6 +63,15 @@ name = "comparand-corpus"
 version = "0.1.0"
 dependencies = [
  "comparand-core",
+]
+
+[[package]]
+name = "comparand-damerau"
+version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "proptest",
 ]
 
 [[package]]

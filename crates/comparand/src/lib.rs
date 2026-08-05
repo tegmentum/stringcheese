@@ -34,6 +34,12 @@ pub use comparand_hamming as hamming;
 /// variant family, re-exported unchanged from the `comparand-jaro` crate.
 pub use comparand_jaro as jaro;
 
+/// The Damerau subsystem: Optimal String Alignment (semimetric, restricted
+/// Damerau-Levenshtein) and the full unrestricted Damerau-Levenshtein
+/// (true metric per Damerau 1964), re-exported unchanged from the
+/// `comparand-damerau` crate.
+pub use comparand_damerau as damerau;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

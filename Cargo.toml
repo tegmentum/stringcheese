@@ -13,6 +13,7 @@ members = [
     "crates/comparand-levenshtein",
     "crates/comparand-hamming",
     "crates/comparand-jaro",
+    "crates/comparand-damerau",
 ]
 
 [workspace.package]
@@ -46,6 +47,7 @@ comparand-corpus = { version = "0.1.0", path = "crates/comparand-corpus", defaul
 comparand-levenshtein = { version = "0.1.0", path = "crates/comparand-levenshtein", default-features = false }
 comparand-hamming = { version = "0.1.0", path = "crates/comparand-hamming", default-features = false }
 comparand-jaro = { version = "0.1.0", path = "crates/comparand-jaro", default-features = false }
+comparand-damerau = { version = "0.1.0", path = "crates/comparand-damerau", default-features = false }
 
 [profile.release]
 lto = "thin"
