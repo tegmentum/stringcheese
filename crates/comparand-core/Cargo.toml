@@ -1,0 +1,22 @@
+[package]
+name = "comparand-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Foundational traits, result types, and algorithm descriptors for the Comparand sequence-comparison toolkit."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["comparison", "distance", "similarity", "sequence", "wasm"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc"]
+# When enabled, the crate may use heap-allocating types (`Vec`, `Box`, …)
+# from `alloc`. Some workspace and preprocessing types require this.
+alloc = []
+
+[lints]
+workspace = true

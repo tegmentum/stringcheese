@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/comparand",
+    "crates/comparand-core",
+    "crates/comparand-unicode",
+    "crates/comparand-phonetic",
+    "crates/comparand-search",
+    "crates/comparand-cdc",
+    "crates/comparand-index",
+    "crates/comparand-corpus",
+    "crates/comparand-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <mail@zacharywhitley.com>"]
+repository = "https://github.com/zacharywhitley/comparand"
+readme = "README.md"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+
+[workspace.dependencies]
+comparand-core = { version = "0.1.0", path = "crates/comparand-core", default-features = false }
+comparand-unicode = { version = "0.1.0", path = "crates/comparand-unicode", default-features = false }
+comparand-phonetic = { version = "0.1.0", path = "crates/comparand-phonetic", default-features = false }
+comparand-search = { version = "0.1.0", path = "crates/comparand-search", default-features = false }
+comparand-cdc = { version = "0.1.0", path = "crates/comparand-cdc", default-features = false }
+comparand-index = { version = "0.1.0", path = "crates/comparand-index", default-features = false }
+comparand-corpus = { version = "0.1.0", path = "crates/comparand-corpus", default-features = false }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

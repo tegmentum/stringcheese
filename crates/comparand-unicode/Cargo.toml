@@ -1,0 +1,19 @@
+[package]
+name = "comparand-unicode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Unicode preprocessing (normalization, case folding, grapheme handling) for the Comparand sequence-comparison toolkit."
+categories = ["algorithms", "text-processing", "internationalization"]
+keywords = ["comparison", "unicode", "normalization", "grapheme"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "comparand-cdc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Content-defined chunking (Rabin CDC, FastCDC, Gear) and rolling-hash fingerprints for Comparand."
+categories = ["algorithms", "compression"]
+keywords = ["cdc", "fastcdc", "chunking", "rabin", "rolling-hash"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true

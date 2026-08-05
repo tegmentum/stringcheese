@@ -1,0 +1,19 @@
+[package]
+name = "comparand-index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Index structures (BK-tree, VP-tree, q-gram, MinHash, LSH) for large-scale sequence matching with Comparand."
+categories = ["algorithms", "data-structures"]
+keywords = ["bk-tree", "vp-tree", "minhash", "lsh", "index"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true

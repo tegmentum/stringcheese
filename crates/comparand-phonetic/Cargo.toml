@@ -1,0 +1,19 @@
+[package]
+name = "comparand-phonetic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Phonetic encoding and matching algorithms (Soundex, Metaphone, NYSIIS, and multilingual packs) for Comparand."
+categories = ["algorithms", "text-processing", "internationalization"]
+keywords = ["comparison", "phonetic", "soundex", "metaphone", "nysiis"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true

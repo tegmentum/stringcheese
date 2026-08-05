@@ -1,0 +1,19 @@
+[package]
+name = "comparand-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Substring search algorithms (Rabin-Karp, KMP, Boyer-Moore, Horspool, two-way, Aho-Corasick) for Comparand."
+categories = ["algorithms", "text-processing"]
+keywords = ["search", "substring", "rabin-karp", "kmp", "aho-corasick"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[lints]
+workspace = true

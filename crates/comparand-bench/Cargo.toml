@@ -1,0 +1,17 @@
+[package]
+name = "comparand-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Benchmark suite and comparative-reporting harness for the Comparand sequence-comparison toolkit."
+publish = false
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
