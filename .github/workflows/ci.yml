@@ -1,0 +1,198 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref: a quick push replaces a slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Colored output plays nicely with GitHub Actions log rendering.
+  CARGO_TERM_COLOR: always
+  # Fail fast on any rustc warning that slipped past the workspace lint config.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ------------------------------------------------------------------
+  # Unit, doc, and integration tests across (OS × Rust) matrix.
+  # MSRV is pinned to 1.85 to match `rust-version` in Cargo.toml.
+  # ------------------------------------------------------------------
+  test:
+    name: test (${{ matrix.os }}, rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}-${{ matrix.rust }}
+
+      - name: Run tests
+        run: cargo test --workspace --all-features --locked
+
+  # ------------------------------------------------------------------
+  # Clippy. `-D warnings` promotes every clippy warning to a hard failure.
+  # ------------------------------------------------------------------
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-stable
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
+
+  # ------------------------------------------------------------------
+  # rustfmt. The workspace uses default formatting (no rustfmt.toml).
+  # ------------------------------------------------------------------
+  rustfmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ------------------------------------------------------------------
+  # no_std / alloc feature check. Every crate declaring `alloc` must
+  # compile both with no default features and with `--features alloc`.
+  # ------------------------------------------------------------------
+  no_std:
+    name: no_std (alloc-capable crates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: no_std-stable
+
+      - name: Check --no-default-features and --features alloc
+        # Every crate below declares an `alloc` cargo feature that gates
+        # heap-allocating types. If a new alloc-gated crate lands, add it
+        # here. (The placeholder crates in the workspace also declare
+        # `alloc` today but hold no code; they are intentionally excluded
+        # from this list until they carry implementations worth checking.)
+        run: |
+          set -euo pipefail
+          crates=(
+            comparand-core
+            comparand-corpus
+            comparand-levenshtein
+            comparand-hamming
+            comparand-jaro
+            comparand
+          )
+          for crate in "${crates[@]}"; do
+            echo "::group::${crate} --no-default-features"
+            cargo check -p "${crate}" --no-default-features --locked
+            echo "::endgroup::"
+            echo "::group::${crate} --no-default-features --features alloc"
+            cargo check -p "${crate}" --no-default-features --features alloc --locked
+            echo "::endgroup::"
+          done
+
+  # ------------------------------------------------------------------
+  # WebAssembly cross-compile.
+  #
+  # This is the FIRST run of wasm compilation in CI for this project.
+  # `continue-on-error: true` is intentional: if any crate fails to build
+  # for wasm32, the job reports the failure without blocking the merge
+  # queue. The failure is aspirational-CI signal — once every crate
+  # cleanly cross-compiles, drop `continue-on-error`. Do not treat green
+  # here as a correctness guarantee until this note is removed.
+  #
+  # The `comparand-bench` crate is excluded because its harness depends
+  # on host-only benchmarking machinery.
+  # ------------------------------------------------------------------
+  wasm:
+    name: wasm cross-compile (aspirational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown,wasm32-wasip1
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-stable
+
+      - name: cargo check --target wasm32-unknown-unknown
+        run: |
+          cargo check --workspace --exclude comparand-bench \
+            --all-features --target wasm32-unknown-unknown --locked
+
+      - name: cargo check --target wasm32-wasip1
+        run: |
+          cargo check --workspace --exclude comparand-bench \
+            --all-features --target wasm32-wasip1 --locked
+
+  # ------------------------------------------------------------------
+  # rustdoc. Any broken intra-doc link or dead link fails the build.
+  # ------------------------------------------------------------------
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: docs-stable
+
+      - name: Build documentation
+        run: cargo doc --workspace --all-features --no-deps --locked

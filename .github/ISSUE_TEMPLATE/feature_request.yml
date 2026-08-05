@@ -1,0 +1,62 @@
+name: Feature request
+description: Propose a new algorithm, API, or capability for Comparand.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Comparand aims for a coherent surface. Proposals that identify
+        the subsystem, the motivation, and a concrete sketch are much
+        easier to evaluate than open-ended requests.
+
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      description: Which part of the workspace does this touch?
+      options:
+        - comparand-core (traits, descriptors, result types)
+        - comparand-corpus (golden schema, oracle framework)
+        - comparand-unicode
+        - comparand-phonetic
+        - comparand-search
+        - comparand-cdc
+        - comparand-index
+        - comparand-levenshtein
+        - comparand-hamming
+        - comparand-jaro
+        - comparand (facade)
+        - comparand-bench
+        - new crate
+        - build, CI, or tooling
+        - documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? Which use cases benefit?
+    validations:
+      required: true
+
+  - type: textarea
+    id: sketch
+    attributes:
+      label: Proposed API sketch
+      description: Optional — trait signatures, descriptor entries, module layout, or wire format.
+      render: rust
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What did you consider and reject? Why is this the right shape?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else
+      description: Prior art in other libraries, references to papers, related issues.

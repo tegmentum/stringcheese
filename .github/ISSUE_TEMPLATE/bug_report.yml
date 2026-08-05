@@ -1,0 +1,116 @@
+name: Bug report
+description: A defect in a shipped Comparand crate.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The more precisely you pin down which
+        crate, algorithm, and target are involved, the faster this can
+        be triaged.
+
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Crate
+      description: Which crate exhibits the defect?
+      options:
+        - comparand
+        - comparand-core
+        - comparand-corpus
+        - comparand-unicode
+        - comparand-phonetic
+        - comparand-search
+        - comparand-cdc
+        - comparand-index
+        - comparand-bench
+        - comparand-levenshtein
+        - comparand-hamming
+        - comparand-jaro
+        - other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: algorithm_family
+    attributes:
+      label: Algorithm family
+      description: Only if applicable — e.g. `Levenshtein`, `Hamming`, `Jaro`, `JaroWinkler`.
+      placeholder: "Levenshtein"
+
+  - type: input
+    id: variant_slug
+    attributes:
+      label: Variant slug
+      description: Only if applicable — e.g. `levenshtein-unit`, `hamming-byte`, `jaro-winkler-default`.
+      placeholder: "levenshtein-unit"
+
+  - type: textarea
+    id: what_you_did
+    attributes:
+      label: What you did
+      description: The API call or command that triggered the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Actual behavior, including panics, wrong values, or diagnostics.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_expected
+    attributes:
+      label: What you expected
+      description: The behavior you thought you would get, and why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: A self-contained snippet that reproduces the defect.
+      render: rust
+      placeholder: |
+        use comparand_levenshtein::…;
+
+        fn main() {
+            …
+        }
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Where did you observe the defect?
+      options:
+        - linux
+        - mac
+        - windows
+        - wasm32-wasip1
+        - wasm32-unknown-unknown
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: rust_version
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+      placeholder: "rustc 1.85.0 (…)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else
+      description: Environment quirks, related issues, prior investigation.
