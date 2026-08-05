@@ -16,9 +16,8 @@
 //! case cannot silently be validated against the wrong variant.
 
 use comparand_core::{
-    AlgorithmDescriptor, AlgorithmFamily, BoundedDistance, BoundedDistanceMetric,
-    DefinitionSource, DescriptorVersion, Distance, DistanceMetric, MetricClass,
-    MetricProperties, VariantId,
+    AlgorithmDescriptor, AlgorithmFamily, BoundedDistance, BoundedDistanceMetric, DefinitionSource,
+    DescriptorVersion, Distance, DistanceMetric, MetricClass, MetricProperties, VariantId,
 };
 
 use crate::banded::distance_banded_with_workspace;
@@ -137,7 +136,10 @@ mod tests {
         let d = Levenshtein::descriptor();
         assert_eq!(d.family, AlgorithmFamily::Levenshtein);
         assert_eq!(d.variant, VariantId("unit-cost-generic-eq"));
-        assert!(matches!(d.source, DefinitionSource::Paper { year: 1966, .. }));
+        assert!(matches!(
+            d.source,
+            DefinitionSource::Paper { year: 1966, .. }
+        ));
     }
 
     #[test]

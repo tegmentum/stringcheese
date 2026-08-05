@@ -60,7 +60,10 @@ impl AlgorithmDescriptor {
 /// This enum is `#[non_exhaustive]`; new families may be added in
 /// backwards-compatible releases.
 #[non_exhaustive]
-#[allow(missing_docs, reason = "variants are named after their canonical algorithms; per-variant documentation is deferred until each algorithm's implementation lands")]
+#[allow(
+    missing_docs,
+    reason = "variants are named after their canonical algorithms; per-variant documentation is deferred until each algorithm's implementation lands"
+)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AlgorithmFamily {
     // — Edit distance —

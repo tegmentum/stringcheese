@@ -41,8 +41,8 @@ fn arb_bytes_of_len(n: usize) -> impl Strategy<Value = std::vec::Vec<u8>> {
 /// A three-tuple of equal-length byte-slices. Cap length at 20 to keep the
 /// triangle-inequality search fast; each additional length grows the input
 /// space by a factor of `3^3`.
-fn arb_equal_length_triple(
-) -> impl Strategy<Value = (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>)> {
+fn arb_equal_length_triple()
+-> impl Strategy<Value = (std::vec::Vec<u8>, std::vec::Vec<u8>, std::vec::Vec<u8>)> {
     (0usize..=20).prop_flat_map(|n| {
         (
             arb_bytes_of_len(n),

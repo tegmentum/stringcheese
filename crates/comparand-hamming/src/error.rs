@@ -55,8 +55,14 @@ mod tests {
     fn display_names_both_lengths() {
         let e = LengthMismatch { left: 3, right: 5 };
         let msg = std::format!("{e}");
-        assert!(msg.contains('3'), "display should include the left length: {msg}");
-        assert!(msg.contains('5'), "display should include the right length: {msg}");
+        assert!(
+            msg.contains('3'),
+            "display should include the left length: {msg}"
+        );
+        assert!(
+            msg.contains('5'),
+            "display should include the right length: {msg}"
+        );
     }
 
     #[test]

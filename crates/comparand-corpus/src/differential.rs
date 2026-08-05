@@ -128,9 +128,7 @@ pub enum DifferenceClassification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use comparand_core::{
-        AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId,
-    };
+    use comparand_core::{AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId};
 
     const D: AlgorithmDescriptor = AlgorithmDescriptor::new(
         AlgorithmFamily::Levenshtein,

@@ -261,7 +261,10 @@ mod tests {
         let d = Jaro::descriptor();
         assert_eq!(d.family, AlgorithmFamily::Jaro);
         assert_eq!(d.variant, VariantId("classic-generic-eq"));
-        assert!(matches!(d.source, DefinitionSource::Paper { year: 1989, .. }));
+        assert!(matches!(
+            d.source,
+            DefinitionSource::Paper { year: 1989, .. }
+        ));
     }
 
     #[test]
@@ -294,13 +297,22 @@ mod tests {
 
     #[test]
     fn one_empty_is_zero() {
-        assert_eq!(jaro_similarity::<u8>(&[], b"abc").to_bits(), 0.0_f64.to_bits());
-        assert_eq!(jaro_similarity::<u8>(b"abc", &[]).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(
+            jaro_similarity::<u8>(&[], b"abc").to_bits(),
+            0.0_f64.to_bits()
+        );
+        assert_eq!(
+            jaro_similarity::<u8>(b"abc", &[]).to_bits(),
+            0.0_f64.to_bits()
+        );
     }
 
     #[test]
     fn identical_is_one() {
-        assert_eq!(jaro_similarity(b"kitten", b"kitten").to_bits(), 1.0_f64.to_bits());
+        assert_eq!(
+            jaro_similarity(b"kitten", b"kitten").to_bits(),
+            1.0_f64.to_bits()
+        );
     }
 
     #[test]
@@ -313,7 +325,9 @@ mod tests {
     #[test]
     fn similarity_normalized_matches_similarity() {
         let alg = Jaro;
-        let n = alg.similarity_normalized(b"kitten", b"sitting").into_inner();
+        let n = alg
+            .similarity_normalized(b"kitten", b"sitting")
+            .into_inner();
         let s = alg.similarity(b"kitten", b"sitting").into_inner();
         assert_eq!(n.to_bits(), s.to_bits());
     }

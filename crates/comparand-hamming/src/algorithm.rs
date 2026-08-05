@@ -21,9 +21,8 @@
 //! descriptor rather than the common name.
 
 use comparand_core::{
-    AlgorithmDescriptor, AlgorithmFamily, BoundedDistance, BoundedDistanceMetric,
-    DefinitionSource, DescriptorVersion, Distance, DistanceMetric, MetricClass,
-    MetricProperties, VariantId,
+    AlgorithmDescriptor, AlgorithmFamily, BoundedDistance, BoundedDistanceMetric, DefinitionSource,
+    DescriptorVersion, Distance, DistanceMetric, MetricClass, MetricProperties, VariantId,
 };
 
 use crate::error::LengthMismatch;
@@ -207,7 +206,10 @@ mod tests {
         let d = Hamming::descriptor();
         assert_eq!(d.family, AlgorithmFamily::Hamming);
         assert_eq!(d.variant, VariantId("equal-length-generic-eq"));
-        assert!(matches!(d.source, DefinitionSource::Paper { year: 1950, .. }));
+        assert!(matches!(
+            d.source,
+            DefinitionSource::Paper { year: 1950, .. }
+        ));
     }
 
     #[test]
@@ -287,13 +289,7 @@ mod tests {
     fn try_distance_reports_length_mismatch() {
         let alg = Hamming;
         let e = alg.try_distance::<u8>(b"abc", b"abcd").unwrap_err();
-        assert_eq!(
-            e,
-            LengthMismatch {
-                left: 3,
-                right: 4,
-            }
-        );
+        assert_eq!(e, LengthMismatch { left: 3, right: 4 });
     }
 
     #[test]
@@ -302,13 +298,7 @@ mod tests {
         let e = alg
             .try_distance_within::<u8>(b"abcdef", b"abc", 2)
             .unwrap_err();
-        assert_eq!(
-            e,
-            LengthMismatch {
-                left: 6,
-                right: 3,
-            }
-        );
+        assert_eq!(e, LengthMismatch { left: 6, right: 3 });
     }
 
     #[test]

@@ -243,7 +243,8 @@ mod tests {
             let (left, right) = case.input;
             let observed = alg.distance(left, right);
             assert_eq!(
-                observed, case.expected,
+                observed,
+                case.expected,
                 "golden case {} disagreed: expected {expected}, observed {observed}",
                 case.id,
                 expected = case.expected,
@@ -258,7 +259,8 @@ mod tests {
             let (left, right) = case.input;
             let observed = alg.distance(left, right);
             assert_eq!(
-                observed, case.expected,
+                observed,
+                case.expected,
                 "golden case {} disagreed: expected {expected}, observed {observed}",
                 case.id,
                 expected = case.expected,

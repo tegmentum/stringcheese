@@ -219,7 +219,10 @@ mod tests {
 
     #[test]
     fn empty_pair_is_within() {
-        assert_eq!(banded(b"", b"", 0), BoundedDistance::Within(Distance::new(0)));
+        assert_eq!(
+            banded(b"", b"", 0),
+            BoundedDistance::Within(Distance::new(0))
+        );
     }
 
     #[test]

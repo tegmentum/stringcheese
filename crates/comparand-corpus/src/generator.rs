@@ -163,8 +163,7 @@ pub fn exhaustive_pairs<'a, T: Clone + 'a>(
     max_length: usize,
 ) -> impl Iterator<Item = (Vec<T>, Vec<T>)> + 'a {
     exhaustive_over_alphabet(alphabet, max_length).flat_map(move |left| {
-        exhaustive_over_alphabet(alphabet, max_length)
-            .map(move |right| (left.clone(), right))
+        exhaustive_over_alphabet(alphabet, max_length).map(move |right| (left.clone(), right))
     })
 }
 
@@ -293,12 +292,7 @@ mod tests {
     fn exhaustive_iter_unary_alphabet() {
         let alphabet = ['x'];
         let seqs: Vec<Vec<char>> = exhaustive_over_alphabet(&alphabet, 3).collect();
-        let expected: Vec<Vec<char>> = vec![
-            vec![],
-            vec!['x'],
-            vec!['x', 'x'],
-            vec!['x', 'x', 'x'],
-        ];
+        let expected: Vec<Vec<char>> = vec![vec![], vec!['x'], vec!['x', 'x'], vec!['x', 'x', 'x']];
         assert_eq!(seqs, expected);
     }
 
@@ -316,8 +310,7 @@ mod tests {
     fn exhaustive_pairs_binary_max_length_one() {
         // count_sequences(2, 1) = 3. So 3^2 = 9 pairs.
         let alphabet = ['a', 'b'];
-        let pairs: Vec<(Vec<char>, Vec<char>)> =
-            exhaustive_pairs(&alphabet, 1).collect();
+        let pairs: Vec<(Vec<char>, Vec<char>)> = exhaustive_pairs(&alphabet, 1).collect();
         assert_eq!(pairs.len(), 9);
         // The first pair should be (empty, empty).
         assert_eq!(pairs[0], (vec![], vec![]));

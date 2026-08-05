@@ -114,7 +114,11 @@ mod tests {
         let after_grow = ws.capacity();
         assert!(after_grow >= 16);
         ws.ensure_capacity(4);
-        assert_eq!(ws.capacity(), after_grow, "shrinking on smaller request is a bug");
+        assert_eq!(
+            ws.capacity(),
+            after_grow,
+            "shrinking on smaller request is a bug"
+        );
     }
 
     #[test]

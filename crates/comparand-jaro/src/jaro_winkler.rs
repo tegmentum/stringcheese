@@ -355,7 +355,10 @@ mod tests {
     #[test]
     fn classic_descriptor_slug() {
         let alg = JaroWinkler::classic();
-        assert_eq!(alg.descriptor().variant, VariantId("winkler-1990-limit-4-scaling-0.1"));
+        assert_eq!(
+            alg.descriptor().variant,
+            VariantId("winkler-1990-limit-4-scaling-0.1")
+        );
     }
 
     #[test]

@@ -71,9 +71,7 @@ pub use differential::{DifferenceClassification, DifferentialResult};
 pub use oracle::{Disagreement, Oracle};
 
 #[cfg(feature = "alloc")]
-pub use generator::{
-    ExhaustiveIter, count_sequences, exhaustive_over_alphabet, exhaustive_pairs,
-};
+pub use generator::{ExhaustiveIter, count_sequences, exhaustive_over_alphabet, exhaustive_pairs};
 #[cfg(feature = "alloc")]
 pub use oracle::{differential_check, differential_check_bounded};
 

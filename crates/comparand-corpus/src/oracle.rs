@@ -171,9 +171,7 @@ where
 mod tests {
     use super::*;
     use alloc::vec;
-    use comparand_core::{
-        AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId,
-    };
+    use comparand_core::{AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId};
 
     const TEST_DESCRIPTOR: AlgorithmDescriptor = AlgorithmDescriptor::new(
         AlgorithmFamily::Levenshtein,
@@ -207,12 +205,8 @@ mod tests {
     fn differential_check_reports_every_disagreement() {
         let oracle = AlwaysZero;
         let inputs = vec![1_u32, 2, 3, 4, 5];
-        let disagreements = differential_check(
-            &oracle,
-            |_input: &u32| 1_u32,
-            CANDIDATE_DESCRIPTOR,
-            inputs,
-        );
+        let disagreements =
+            differential_check(&oracle, |_input: &u32| 1_u32, CANDIDATE_DESCRIPTOR, inputs);
         assert_eq!(disagreements.len(), 5);
         for d in &disagreements {
             assert_eq!(d.oracle_output, 0);
@@ -240,12 +234,8 @@ mod tests {
     fn differential_check_reports_nothing_when_candidate_agrees() {
         let oracle = AlwaysZero;
         let inputs = vec![1_u32, 2, 3];
-        let disagreements = differential_check(
-            &oracle,
-            |_input: &u32| 0_u32,
-            CANDIDATE_DESCRIPTOR,
-            inputs,
-        );
+        let disagreements =
+            differential_check(&oracle, |_input: &u32| 0_u32, CANDIDATE_DESCRIPTOR, inputs);
         assert!(disagreements.is_empty());
     }
 

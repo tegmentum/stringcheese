@@ -366,8 +366,14 @@ mod tests {
     fn normalized_distance_constants() {
         // Compare bit patterns to sidestep the pedantic float-equality lint —
         // the constants are exact, so exact-bits comparison is what we want.
-        assert_eq!(NormalizedDistance::IDENTITY.into_inner().to_bits(), 0.0_f64.to_bits());
-        assert_eq!(NormalizedDistance::MAXIMUM.into_inner().to_bits(), 1.0_f64.to_bits());
+        assert_eq!(
+            NormalizedDistance::IDENTITY.into_inner().to_bits(),
+            0.0_f64.to_bits()
+        );
+        assert_eq!(
+            NormalizedDistance::MAXIMUM.into_inner().to_bits(),
+            1.0_f64.to_bits()
+        );
     }
 
     #[test]
