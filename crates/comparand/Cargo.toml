@@ -13,11 +13,12 @@ keywords = ["comparison", "distance", "similarity", "levenshtein", "phonetic"]
 
 [features]
 default = ["std"]
-std = ["comparand-core/std"]
-alloc = ["comparand-core/alloc"]
+std = ["comparand-core/std", "comparand-levenshtein/std"]
+alloc = ["comparand-core/alloc", "comparand-levenshtein/alloc"]
 
 [dependencies]
 comparand-core = { workspace = true }
+comparand-levenshtein = { workspace = true }
 
 [lints]
 workspace = true

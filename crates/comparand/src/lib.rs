@@ -20,6 +20,11 @@
 
 pub use comparand_core::*;
 
+/// The Levenshtein subsystem: unit-cost edit distance with full-matrix,
+/// rolling-rows, and Ukkonen-style banded kernels, re-exported unchanged
+/// from the `comparand-levenshtein` crate.
+pub use comparand_levenshtein as levenshtein;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.
