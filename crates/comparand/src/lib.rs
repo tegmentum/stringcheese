@@ -25,6 +25,11 @@ pub use comparand_core::*;
 /// from the `comparand-levenshtein` crate.
 pub use comparand_levenshtein as levenshtein;
 
+/// The Hamming subsystem: equal-length Hamming distance with a fallible
+/// entry point for callers who cannot statically establish equal length,
+/// re-exported unchanged from the `comparand-hamming` crate.
+pub use comparand_hamming as hamming;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

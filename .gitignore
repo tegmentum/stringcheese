@@ -1,2 +1,9 @@
-/target
+# Cargo build output — matches any target/ dir in the workspace tree,
+# including per-crate ones left over from standalone-crate development.
+target/
 **/*.rs.bk
+
+# Per-crate Cargo.lock files can appear when a crate is developed as its
+# own standalone workspace (e.g. before being wired into the outer
+# workspace). Only the top-level Cargo.lock is authoritative.
+crates/*/Cargo.lock
