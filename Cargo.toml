@@ -15,9 +15,9 @@ members = [
     "crates/comparand-bench",
     "crates/comparand-lcs",
     "crates/comparand-search",
+    "crates/comparand-cdc",
 ]
 exclude = [
-    "crates/comparand-cdc",
     "crates/comparand-index",
     "fuzz",
 ]

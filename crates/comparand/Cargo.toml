@@ -25,6 +25,7 @@ std = [
     "comparand-set-similarity/std",
     "comparand-lcs/std",
     "comparand-search/std",
+    "comparand-cdc/std",
 ]
 alloc = [
     "comparand-core/alloc",
@@ -38,6 +39,7 @@ alloc = [
     "comparand-set-similarity/alloc",
     "comparand-lcs/alloc",
     "comparand-search/alloc",
+    "comparand-cdc/alloc",
 ]
 
 [dependencies]
@@ -52,6 +54,7 @@ comparand-phonetic = { workspace = true }
 comparand-set-similarity = { workspace = true }
 comparand-lcs = { workspace = true }
 comparand-search = { workspace = true }
+comparand-cdc = { workspace = true }
 
 [lints]
 workspace = true

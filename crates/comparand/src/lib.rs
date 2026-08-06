@@ -50,6 +50,14 @@ pub use comparand_lcs as lcs;
 /// re-exported unchanged from the `comparand-search` crate.
 pub use comparand_search as search;
 
+/// The content-defined chunking and rolling-hash fingerprint subsystem:
+/// Rabin (GF(2) polynomial), polynomial (mod Mersenne-61), and Gear
+/// (from the `FastCDC` paper) rolling hashes behind a shared
+/// `RollingHash` trait, plus `FastCDC` content-defined chunking as a
+/// streaming state machine, re-exported unchanged from the
+/// `comparand-cdc` crate.
+pub use comparand_cdc as cdc;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.
