@@ -1,0 +1,123 @@
+# StringCheese wasm binary-size baseline.
+#
+# `optimized_bytes` is the `wasm-opt -Oz` size of the size-probe cdylib
+# (see `wasm-size-probes/`) linked against the crate's `--no-default-
+# features --features std` build for `wasm32-unknown-unknown`. That
+# probe forces LTO to retain a representative slice of each crate's
+# public API — see `docs/wasm-binary-size.md` for the methodology, the
+# per-crate feature-set and target rationale, and the recipe for
+# regenerating these numbers with `scripts/measure-wasm-size.sh`.
+#
+# CI's `wasm-size` job fails whenever a measured build exceeds
+# `optimized_bytes * (1 + tolerance_pct / 100)`. Update this file
+# explicitly whenever a change intentionally grows a binary; do not
+# widen a tolerance to smother a regression that has not been
+# reviewed.
+#
+# For the component/rust-host component: `wasm-opt` does not yet
+# support component-model binaries (Binaryen issue #6728), so its
+# `optimized_bytes` is the raw `cargo component build --release`
+# output. When wasm-opt gains component support, re-measure and drop
+# the `optimizer_skipped` marker.
+
+# ------ Workspace library crates -------------------------------------
+# All ten non-bench workspace crates. Each measurement is against the
+# size-probe wrapper described above (--no-default-features --features
+# probe-<crate>); the probe's `probe()` function calls a representative
+# slice of the crate's public API so LTO cannot strip it.
+
+[[crate]]
+name = "stringcheese"
+kind = "library"
+probe_feature = "probe-stringcheese"
+optimized_bytes = 18027
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-core"
+kind = "library"
+probe_feature = "probe-stringcheese-core"
+optimized_bytes = 724
+tolerance_pct = 20  # sub-1KB baseline; ±5 % of 724 is 36 B — well inside the
+                    # noise floor of a wasm-opt pass. 20 % lets the number
+                    # move meaningfully before firing.
+
+[[crate]]
+name = "stringcheese-corpus"
+kind = "library"
+probe_feature = "probe-stringcheese-corpus"
+optimized_bytes = 14836
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-compare"
+kind = "library"
+probe_feature = "probe-stringcheese-compare"
+optimized_bytes = 17839
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-unicode"
+kind = "library"
+probe_feature = "probe-stringcheese-unicode"
+# 213 KB is dominated by ICU casemap / normalization tables (see
+# `docs/wasm-binary-size.md`, "What twiggy shows"). The number is
+# expected to move only when the ICU data revision changes or a new
+# normalization form gains a table.
+optimized_bytes = 213054
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-phonetic"
+kind = "library"
+probe_feature = "probe-stringcheese-phonetic"
+optimized_bytes = 23523
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-cdc"
+kind = "library"
+probe_feature = "probe-stringcheese-cdc"
+optimized_bytes = 21511
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-index"
+kind = "library"
+probe_feature = "probe-stringcheese-index"
+optimized_bytes = 31375
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-align"
+kind = "library"
+probe_feature = "probe-stringcheese-align"
+optimized_bytes = 17758
+tolerance_pct = 5
+
+[[crate]]
+name = "stringcheese-manip"
+kind = "library"
+probe_feature = "probe-stringcheese-manip"
+# 71 KB is dominated by `stringcheese-unicode`'s case-fold surface pulled
+# in transitively (case.rs). Expected to shrink when future `manip`
+# releases add non-case modules that don't require ICU.
+optimized_bytes = 70934
+tolerance_pct = 5
+
+# ------ Component-model binaries ------------------------------------
+# The component/rust-host component is built with
+# `cargo component build --release`; the reported number is the
+# component-wrapped output at
+# `component/rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm`.
+# `wasm-opt` currently rejects component-model binaries
+# (Binaryen #6728), so `optimizer_skipped = true` documents that
+# `optimized_bytes` here is the unoptimized `cargo component` output.
+
+[[crate]]
+name = "component/rust-host"
+kind = "component"
+build = "cargo-component"
+optimized_bytes = 129291
+tolerance_pct = 5
+optimizer_skipped = true

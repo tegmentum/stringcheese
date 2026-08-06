@@ -290,6 +290,139 @@ jobs:
             --target wasm32-wasip1
 
   # ------------------------------------------------------------------
+  # WebAssembly binary-size gate.
+  #
+  # Builds every crate that ships (or, via the size-probe wrapper at
+  # `wasm-size-probes/`, could ship) a `.wasm` binary and compares the
+  # `wasm-opt -Oz` output size against the baseline recorded in
+  # `.wasm-size-limits.toml`. Fails the job when any measured crate
+  # exceeds `optimized_bytes * (1 + tolerance_pct / 100)` — see
+  # `docs/wasm-binary-size.md` for the methodology and the reason each
+  # crate carries the tolerance it does.
+  #
+  # `wasm-opt` (from Binaryen) and `twiggy` are both pinned versions;
+  # `twiggy` is `cargo install`ed once and cached via the shared
+  # `~/.cargo/bin` cache. `wasm-opt` is downloaded from the Binaryen
+  # release tarball (`version_<N>` naming; the linux-x86_64 tarball is
+  # the officially-supported GitHub Actions shape).
+  #
+  # cargo-component is required to build the WIT component. It is
+  # `cargo install`ed alongside twiggy; both are on the cargo-bin cache
+  # and only reinstall when `TWIGGY_VERSION` / `CARGO_COMPONENT_VERSION`
+  # change.
+  # ------------------------------------------------------------------
+  wasm-size:
+    name: wasm binary-size gate
+    runs-on: ubuntu-latest
+    env:
+      # Pinned tool versions. Bump these deliberately — every version
+      # change re-optimizes the wasm output slightly and can shift the
+      # baseline numbers in `.wasm-size-limits.toml` by low-single-digit
+      # percentages. Coordinate a rebaseline PR when bumping either.
+      BINARYEN_VERSION: "119"
+      TWIGGY_VERSION: "0.7.0"
+      CARGO_COMPONENT_VERSION: "0.21.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32-unknown-unknown + wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          # `wasm32-wasip1` is the target `cargo component` currently
+          # emits before wrapping into the component-model binary;
+          # `wasm32-unknown-unknown` is the target every probe cdylib
+          # is built against.
+          targets: wasm32-unknown-unknown,wasm32-wasip1
+
+      # Two independent caches: one for the workspace target/ (probes
+      # + component builds), one for `~/.cargo/bin/` where `twiggy` and
+      # `cargo-component` land. Splitting them keeps the target cache
+      # invalidating on lockfile changes without also nuking the
+      # slow-to-install binaries.
+      - name: Cache cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-size-stable
+          # `wasm-size-probes` is standalone (own Cargo.lock); include
+          # it explicitly so the cache invalidates on probe-crate
+          # changes too.
+          workspaces: |
+            .
+            wasm-size-probes
+            component/rust-host
+
+      - name: Cache ~/.cargo/bin (twiggy, cargo-component)
+        id: cargo-bin-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/twiggy
+            ~/.cargo/bin/cargo-component
+          # Bust the cache when a pinned tool version changes.
+          key: cargo-bin-twiggy${{ env.TWIGGY_VERSION }}-cc${{ env.CARGO_COMPONENT_VERSION }}
+
+      - name: Install wasm-opt (Binaryen ${{ env.BINARYEN_VERSION }})
+        run: |
+          set -euo pipefail
+          url="https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz"
+          curl -fL --retry 3 --retry-delay 5 -o /tmp/binaryen.tar.gz "$url"
+          tar -xzf /tmp/binaryen.tar.gz -C /tmp
+          sudo cp "/tmp/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt
+          wasm-opt --version
+
+      - name: Install twiggy (${{ env.TWIGGY_VERSION }}) if cache miss
+        if: steps.cargo-bin-cache.outputs.cache-hit != 'true'
+        # `--locked` ensures the crate's own Cargo.lock is honored so
+        # the install is reproducible across CI runs.
+        run: cargo install --locked --version "${TWIGGY_VERSION}" twiggy
+
+      - name: Install cargo-component (${{ env.CARGO_COMPONENT_VERSION }}) if cache miss
+        if: steps.cargo-bin-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --version "${CARGO_COMPONENT_VERSION}" cargo-component
+
+      - name: Verify tool versions
+        run: |
+          wasm-opt --version
+          twiggy --version
+          cargo-component --version
+
+      # The gate itself. `scripts/measure-wasm-size.sh` is the single
+      # source of truth for the measurement recipe — the job below
+      # delegates to it rather than duplicating the loop, so the local
+      # reproducer and CI stay in lockstep. Exit code 1 fails the job.
+      - name: Run wasm-size gate
+        run: scripts/measure-wasm-size.sh
+
+      # On a green run, dump `twiggy top` for the two heaviest crates
+      # so a reviewer skimming a passing CI can see roughly where the
+      # bytes are going. Deliberately not gated on the size check —
+      # this is informational.
+      - name: Post-run twiggy summary (informational)
+        if: success()
+        run: |
+          set -euo pipefail
+          # `stringcheese-unicode` and `stringcheese-manip` are the two
+          # heaviest as of the initial baseline; anyone re-baselining
+          # heavier crates should swap the names here.
+          for crate in stringcheese-unicode stringcheese-manip; do
+            probe_wasm="wasm-size-probes/target/wasm32-unknown-unknown/release/wasm_size_probe.wasm"
+            opt_wasm="/tmp/${crate}.opt.wasm"
+            (
+              cd wasm-size-probes
+              cargo build --release \
+                --target wasm32-unknown-unknown \
+                --no-default-features \
+                --features "probe-${crate}" \
+                --quiet
+            )
+            wasm-opt -Oz -o "${opt_wasm}" "${probe_wasm}"
+            echo "::group::twiggy top ${crate}"
+            twiggy top "${opt_wasm}" | head -20 || true
+            echo "::endgroup::"
+          done
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

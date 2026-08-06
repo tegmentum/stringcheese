@@ -1,0 +1,113 @@
+# Wasm size probes — instrumentation-only scaffolding for the wasm-size CI
+# gate. NOT a member of the outer StringCheese workspace: the empty
+# `[workspace]` table below sentinels this crate as a standalone package
+# so `cargo` invoked inside `wasm-size-probes/` resolves against a fresh,
+# isolated `Cargo.lock`, matching the pattern used by
+# `component/rust-host/Cargo.toml`, `fuzz/Cargo.toml`, and
+# `bench-adapters/rust/Cargo.toml`.
+#
+# Why probes exist. Every measured StringCheese crate is an `rlib` — none
+# of them declare `crate-type = ["cdylib"]`, and none of them export
+# `#[no_mangle] extern "C"` functions on their own. Building an rlib crate
+# with `cargo build --target wasm32-unknown-unknown` produces a `.rlib`
+# archive (metadata + bitcode), not a `.wasm`; forcing a `cdylib` build
+# via `cargo rustc --crate-type cdylib` produces a `.wasm` whose LTO
+# strips every crate item because nothing references them. Neither
+# artifact is a useful size proxy.
+#
+# The probe pattern fixes this. This crate is a `cdylib` with one feature
+# per measured StringCheese crate. Each feature turns on the corresponding
+# optional dependency and gates a probe function that references the
+# crate's public API through `core::hint::black_box`, defeating dead-code
+# elimination. The resulting `.wasm` is a realistic upper-bound on what
+# the crate contributes to a downstream browser/edge build that imports
+# its full public surface.
+#
+# Feature set choice. Probes enable `std` on each measured crate, not
+# just `alloc`. Two reasons: (1) `wasm32-unknown-unknown + no_std + alloc`
+# has no global allocator by default — a real deployment would need one
+# from either `std` or a third-party crate like `dlmalloc`, so the `std`
+# baseline reflects what a downstream user actually ships; (2) several
+# StringCheese kernels (Damerau's HashMap-backed production kernel, the
+# set-similarity Cosine variant, weighted MinHash) are gated on `std`
+# and are absent from an alloc-only build — measuring alloc-only would
+# systematically under-report the crate's real surface. The
+# `wasm32-unknown-unknown` target still forbids most std syscalls at
+# runtime, so `std` here means "the panic handler, the allocator, and
+# the pure-CPU parts of the standard library".
+[workspace]
+
+[package]
+name = "wasm-size-probe"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Size-probe wrappers used by the wasm-size CI gate. Not a shipping crate."
+
+[lib]
+# `cdylib` so `cargo build --target wasm32-unknown-unknown` emits a `.wasm`
+# rather than an `.rlib`. No `rlib` sibling — this crate is never linked
+# into anything else.
+crate-type = ["cdylib"]
+
+[features]
+# Empty default — a `--no-default-features` build fails to link (no
+# panic_handler is enabled without a probe feature), which is intended:
+# an accidental probeless build should be loud, not silent.
+default = []
+
+# One feature per measured workspace crate. Each toggles both the optional
+# dep and the `cfg(feature = "...")` branch in `src/lib.rs`. All deps are
+# `no-default-features + alloc` — the canonical minimum surface (see
+# `docs/wasm-binary-size.md`).
+probe-stringcheese          = ["dep:stringcheese"]
+probe-stringcheese-core     = []
+probe-stringcheese-corpus   = ["dep:stringcheese-corpus"]
+probe-stringcheese-compare  = ["dep:stringcheese-compare"]
+probe-stringcheese-unicode  = ["dep:stringcheese-unicode"]
+probe-stringcheese-phonetic = ["dep:stringcheese-phonetic"]
+probe-stringcheese-cdc      = ["dep:stringcheese-cdc"]
+probe-stringcheese-index    = ["dep:stringcheese-index"]
+probe-stringcheese-align    = ["dep:stringcheese-align"]
+probe-stringcheese-manip    = ["dep:stringcheese-manip"]
+
+# `stringcheese-core` is an unconditional direct dep below (not
+# `optional`) because compare / index / align / manip probes call trait
+# methods (`DistanceMetric::distance`, `SimilarityMetric::similarity`)
+# whose trait names live in `stringcheese-core` and cargo does not
+# transparently re-export transitive deps. Having it always present
+# does not affect measurements: `stringcheese-core` is already in every
+# measured crate's tree and its unused surface is stripped by LTO in
+# the probe builds that do not enable the `probe-stringcheese-core`
+# feature.
+
+[dependencies]
+# Each measured crate. Optional so only the feature-selected one gets
+# pulled into the build; `default-features = false` + `features = ["std"]`
+# picks up the full public surface plus the std-provided panic handler
+# and global allocator (see the top-of-file comment). Every path points
+# up two levels into the main workspace's `crates/` directory.
+stringcheese          = { path = "../crates/stringcheese",          optional = true, default-features = false, features = ["std"] }
+stringcheese-core     = { path = "../crates/stringcheese-core",     default-features = false, features = ["std"] }
+stringcheese-corpus   = { path = "../crates/stringcheese-corpus",   optional = true, default-features = false, features = ["std"] }
+stringcheese-compare  = { path = "../crates/stringcheese-compare",  optional = true, default-features = false, features = ["std"] }
+stringcheese-unicode  = { path = "../crates/stringcheese-unicode",  optional = true, default-features = false, features = ["std"] }
+stringcheese-phonetic = { path = "../crates/stringcheese-phonetic", optional = true, default-features = false, features = ["std"] }
+stringcheese-cdc      = { path = "../crates/stringcheese-cdc",      optional = true, default-features = false, features = ["std"] }
+stringcheese-index    = { path = "../crates/stringcheese-index",    optional = true, default-features = false, features = ["std"] }
+stringcheese-align    = { path = "../crates/stringcheese-align",    optional = true, default-features = false, features = ["std"] }
+stringcheese-manip    = { path = "../crates/stringcheese-manip",    optional = true, default-features = false, features = ["std"] }
+
+# Release profile matches the main workspace's `[profile.release]` plus
+# the size-tuning knobs the component host applies (`opt-level = "s"`,
+# `panic = "abort"`, `strip = "debuginfo"`). Same recipe the wasm-size
+# doc records as canonical; kept here so probe builds don't accidentally
+# use a heavier default.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+strip = "debuginfo"
+panic = "abort"
