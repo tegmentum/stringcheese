@@ -15,9 +15,10 @@
 //!   record-linkage systems.
 //! * [`DoubleMetaphone`] — Lawrence Philips' 1999 revision of Metaphone,
 //!   supporting up to two keys per input to reflect regional pronunciation
-//!   variance. **This crate ships the primary-key variant only** — see
-//!   [`DoubleMetaphone`] for the rationale and the roadmap to the two-key
-//!   implementation.
+//!   variance. This crate ships both variants: a primary-only variant
+//!   ([`DoubleMetaphoneVariant::PrimaryOnly`]) that produces the primary
+//!   key only, and a full variant ([`DoubleMetaphoneVariant::Full`]) that
+//!   additionally computes the alternate key.
 //! * [`Nysiis`] — Robert L. Taft's 1970 New York State Identification and
 //!   Intelligence System encoder, developed for the New York State Division
 //!   of Criminal Justice and still widely deployed in record-linkage tooling.
@@ -119,7 +120,7 @@ mod property_tests;
 #[cfg(feature = "alloc")]
 pub use comparator::{MatchMode, PhoneticMatcher};
 #[cfg(feature = "alloc")]
-pub use double_metaphone::{DoubleMetaphone, DoubleMetaphoneKey};
+pub use double_metaphone::{DoubleMetaphone, DoubleMetaphoneKey, DoubleMetaphoneVariant};
 #[cfg(feature = "alloc")]
 pub use encoder::{Applicability, LanguageTag, PhoneticEncoder, RegionTag, ScriptTag};
 #[cfg(feature = "alloc")]

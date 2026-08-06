@@ -13,7 +13,8 @@
 //!
 //! * Soundex: 10 encoding cases + 3 match-pair cases (12 unique inputs)
 //! * NYSIIS: 10 encoding cases + 3 match-pair cases
-//! * Double Metaphone: 10 encoding cases + 3 match-pair cases
+//! * Double Metaphone (primary-only): 10 encoding cases + 3 match-pair cases
+//! * Double Metaphone (full): 10 encoding cases + 3 match-pair cases
 
 use alloc::string::String;
 
@@ -462,6 +463,185 @@ pub fn double_metaphone_encoding_cases() -> alloc::vec::Vec<DoubleMetaphoneCase>
     ]
 }
 
+/// Convenience constructor for a two-key `DoubleMetaphoneKey`.
+fn dm_pair(primary: &str, alternate: &str) -> DoubleMetaphoneKey {
+    DoubleMetaphoneKey {
+        primary: String::from(primary),
+        alternate: Some(String::from(alternate)),
+    }
+}
+
+/// Returns the Double Metaphone (full variant) encoding golden cases.
+///
+/// The primary key of every case equals the corresponding primary-only
+/// primary — that invariant is asserted in the `full_primary_matches_primary_only`
+/// test below. The alternate is either `Some` (at a divergence point) or
+/// `None` (when the alternate pass agreed with the primary).
+#[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the golden cases read best as a single vec![] literal so the \
+              full case list stays inspectable at a glance"
+)]
+pub fn double_metaphone_full_encoding_cases() -> alloc::vec::Vec<DoubleMetaphoneCase> {
+    alloc::vec![
+        GoldenCase {
+            id: "double-metaphone/full/wagner",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Wagner",
+            expected: dm_pair("AKNR", "FKNR"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "Initial W before a vowel: primary treats W as silent (A \
+                    becomes first-committed vowel), alternate emits F for the \
+                    Germanic V-sound reading.",
+            tags: &["full", "germanic-w"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/xavier",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Xavier",
+            expected: dm_pair("SFR", "SF"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "French -IER ending: primary emits final R, alternate \
+                    treats it as silent (reversed from Apache Commons's \
+                    primary/alternate assignment to preserve this crate's \
+                    primary-only primary byte-for-byte).",
+            tags: &["full", "french-ier"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/schmidt",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Schmidt",
+            expected: dm_pair("XMT", "SMT"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "SCH: primary emits X, alternate emits S (Anglicized \
+                    reading of the Germanic cluster).",
+            tags: &["full", "sch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/chorus",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Chorus",
+            expected: dm_pair("XRS", "KRS"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "Initial CH followed by O: primary emits X, alternate \
+                    emits K for the Greek 'chi' reading (Chorus, Chaos).",
+            tags: &["full", "ch-greek"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/chien",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Chien",
+            expected: dm_pair("XN", "JN"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "Initial CH followed by IE: primary emits X, alternate \
+                    emits J for the French reading.",
+            tags: &["full", "ch-french"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/barwig",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Barwig",
+            expected: dm_pair("PRK", "PRF"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "-WIG Germanic ending: primary keeps W silent and emits K \
+                    for the G; alternate emits F for the W and drops the IG.",
+            tags: &["full", "germanic-wig"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/smith",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Smith",
+            expected: dm_pair("SM0", "SMT"),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "TH (theta phoneme): primary emits '0' (ASCII theta \
+                    placeholder), alternate emits T — the classical Double \
+                    Metaphone split for the theta phoneme.",
+            tags: &["full", "theta-th"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/thompson-no-divergence",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Thompson",
+            expected: DoubleMetaphoneKey::primary_only(String::from("TMPS")),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "TH+OM Thomas-family exception applies in both branches; \
+                    no other divergence — alternate is None.",
+            tags: &["full", "no-divergence"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/cachao-no-divergence",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Cachao",
+            expected: DoubleMetaphoneKey::primary_only(String::from("KX")),
+            source: GoldenSource::ReferenceImplementation {
+                name: "Apache Commons Codec DoubleMetaphone (Philips 1999 with two-key branch)",
+            },
+            notes: "Internal (non-initial) CH stays X in both branches; hard \
+                    initial C stays K — no divergence.",
+            tags: &["full", "no-divergence", "ch-internal"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/edge-empty",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "",
+            expected: dm_primary(""),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Empty input yields an empty primary and no alternate.",
+            tags: &["full", "edge", "empty"],
+        },
+    ]
+}
+
+/// Double Metaphone (full variant) match-pair cases.
+pub const DOUBLE_METAPHONE_FULL_MATCH_CASES: &[MatchPairCase] = &[
+    GoldenCase {
+        id: "double-metaphone/full/pair/xavier-xavier",
+        descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+        input: ("Xavier", "Xavier"),
+        expected: true,
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Same input matches under Full via primary=primary.",
+        tags: &["full", "pair", "positive"],
+    },
+    GoldenCase {
+        id: "double-metaphone/full/pair/wagner-wagner",
+        descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+        input: ("Wagner", "Wagner"),
+        expected: true,
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Same input matches under Full via primary=primary AND \
+                alternate=alternate (both are Some).",
+        tags: &["full", "pair", "positive", "both-branches"],
+    },
+    GoldenCase {
+        id: "double-metaphone/full/pair/xavier-zavier",
+        descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+        input: ("Xavier", "Zavier"),
+        expected: true,
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Both encode to primary 'SFR' (initial X and initial Z both \
+                emit S; V→F; R→R). Match via primary=primary.",
+        tags: &["full", "pair", "positive"],
+    },
+];
+
 /// Double Metaphone match-pair cases (primary-only key equality).
 pub const DOUBLE_METAPHONE_MATCH_CASES: &[MatchPairCase] = &[
     GoldenCase {
@@ -523,6 +703,12 @@ mod tests {
         for c in DOUBLE_METAPHONE_MATCH_CASES {
             ids.push(c.id);
         }
+        for c in double_metaphone_full_encoding_cases() {
+            ids.push(c.id);
+        }
+        for c in DOUBLE_METAPHONE_FULL_MATCH_CASES {
+            ids.push(c.id);
+        }
         ids
     }
 
@@ -541,10 +727,16 @@ mod tests {
             assert_desc(c.id, c.descriptor, Nysiis::DESCRIPTOR);
         }
         for c in double_metaphone_encoding_cases() {
-            assert_desc(c.id, c.descriptor, DoubleMetaphone::DESCRIPTOR);
+            assert_desc(c.id, c.descriptor, DoubleMetaphone::PRIMARY_ONLY_DESCRIPTOR);
         }
         for c in DOUBLE_METAPHONE_MATCH_CASES {
-            assert_desc(c.id, c.descriptor, DoubleMetaphone::DESCRIPTOR);
+            assert_desc(c.id, c.descriptor, DoubleMetaphone::PRIMARY_ONLY_DESCRIPTOR);
+        }
+        for c in double_metaphone_full_encoding_cases() {
+            assert_desc(c.id, c.descriptor, DoubleMetaphone::FULL_DESCRIPTOR);
+        }
+        for c in DOUBLE_METAPHONE_FULL_MATCH_CASES {
+            assert_desc(c.id, c.descriptor, DoubleMetaphone::FULL_DESCRIPTOR);
         }
     }
 
@@ -611,8 +803,9 @@ mod tests {
 
     #[test]
     fn every_double_metaphone_case_matches_encoder() {
+        let enc = DoubleMetaphone::primary_only();
         for c in double_metaphone_encoding_cases() {
-            let got = DoubleMetaphone.encode(c.input);
+            let got = enc.encode(c.input);
             assert_eq!(
                 got,
                 c.expected,
@@ -624,7 +817,7 @@ mod tests {
 
     #[test]
     fn every_double_metaphone_match_case_agrees() {
-        let m = crate::comparator::PhoneticMatcher::new(DoubleMetaphone);
+        let m = crate::comparator::PhoneticMatcher::new(DoubleMetaphone::primary_only());
         for c in DOUBLE_METAPHONE_MATCH_CASES {
             let (a, b) = c.input;
             assert_eq!(
@@ -632,6 +825,58 @@ mod tests {
                 c.expected,
                 "double metaphone match case {id} disagreed",
                 id = c.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_double_metaphone_full_case_matches_encoder() {
+        let enc = DoubleMetaphone::full();
+        for c in double_metaphone_full_encoding_cases() {
+            let got = enc.encode(c.input);
+            assert_eq!(
+                got,
+                c.expected,
+                "double metaphone full-variant golden case {id} disagreed",
+                id = c.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_double_metaphone_full_match_case_agrees() {
+        let m = crate::comparator::PhoneticMatcher::new(DoubleMetaphone::full());
+        for c in DOUBLE_METAPHONE_FULL_MATCH_CASES {
+            let (a, b) = c.input;
+            assert_eq!(
+                m.matches_double_metaphone(a, b),
+                c.expected,
+                "double metaphone full-variant match case {id} disagreed",
+                id = c.id
+            );
+        }
+    }
+
+    #[test]
+    fn full_variant_primary_matches_primary_only_across_all_golden_inputs() {
+        // The most important invariant: adding the alternate branch never
+        // changes the primary key.
+        let po = DoubleMetaphone::primary_only();
+        let f = DoubleMetaphone::full();
+        for c in double_metaphone_encoding_cases() {
+            assert_eq!(
+                po.encode(c.input).primary,
+                f.encode(c.input).primary,
+                "primary key differs for primary-only golden input {input:?}",
+                input = c.input
+            );
+        }
+        for c in double_metaphone_full_encoding_cases() {
+            assert_eq!(
+                po.encode(c.input).primary,
+                f.encode(c.input).primary,
+                "primary key differs for full-variant golden input {input:?}",
+                input = c.input
             );
         }
     }
@@ -645,6 +890,8 @@ mod tests {
         assert!(NYSIIS_MATCH_CASES.len() >= 3);
         assert!(double_metaphone_encoding_cases().len() >= 8);
         assert!(DOUBLE_METAPHONE_MATCH_CASES.len() >= 3);
+        assert!(double_metaphone_full_encoding_cases().len() >= 8);
+        assert!(DOUBLE_METAPHONE_FULL_MATCH_CASES.len() >= 3);
     }
 
     #[test]

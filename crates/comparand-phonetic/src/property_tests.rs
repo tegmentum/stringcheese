@@ -139,36 +139,88 @@ proptest! {
 proptest! {
     #[test]
     fn double_metaphone_determinism(w in arb_ascii_word()) {
-        prop_assert_eq!(DoubleMetaphone::encode(&w), DoubleMetaphone::encode(&w));
+        let po = DoubleMetaphone::primary_only();
+        prop_assert_eq!(po.encode(&w), po.encode(&w));
+        let full = DoubleMetaphone::full();
+        prop_assert_eq!(full.encode(&w), full.encode(&w));
     }
 
     #[test]
     fn double_metaphone_case_insensitive(w in arb_ascii_word()) {
         let upper = w.to_uppercase();
         let lower = w.to_lowercase();
-        prop_assert_eq!(DoubleMetaphone::encode(&w), DoubleMetaphone::encode(&upper));
-        prop_assert_eq!(DoubleMetaphone::encode(&w), DoubleMetaphone::encode(&lower));
+        let po = DoubleMetaphone::primary_only();
+        prop_assert_eq!(po.encode(&w), po.encode(&upper));
+        prop_assert_eq!(po.encode(&w), po.encode(&lower));
+        let full = DoubleMetaphone::full();
+        prop_assert_eq!(full.encode(&w), full.encode(&upper));
+        prop_assert_eq!(full.encode(&w), full.encode(&lower));
     }
 
     #[test]
     fn double_metaphone_primary_length_bound(w in arb_ascii_word()) {
-        let out = DoubleMetaphone::encode(&w);
+        let out = DoubleMetaphone::primary_only().encode(&w);
         prop_assert!(out.primary.len() <= crate::double_metaphone::MAX_KEY_LEN,
             "DM({:?}).primary = {:?} exceeded max len", w, out.primary);
     }
 
     #[test]
-    fn double_metaphone_alternate_always_none(w in arb_ascii_word()) {
+    fn double_metaphone_alternate_always_none_primary_only(w in arb_ascii_word()) {
         // Primary-only variant contract.
-        let out = DoubleMetaphone::encode(&w);
+        let out = DoubleMetaphone::primary_only().encode(&w);
         prop_assert!(out.alternate.is_none(),
             "DM({:?}).alternate should be None in primary-only variant, got {:?}",
             w, out.alternate);
     }
 
+    /// Backwards-compat guarantee: adding the alternate branch does NOT
+    /// change the primary key.
+    #[test]
+    fn double_metaphone_full_primary_matches_primary_only(w in arb_ascii_word()) {
+        let po = DoubleMetaphone::primary_only().encode(&w);
+        let f = DoubleMetaphone::full().encode(&w);
+        prop_assert_eq!(&po.primary, &f.primary,
+            "primary key differs for {:?}: primary_only={:?} vs full={:?}",
+            w, po.primary, f.primary);
+    }
+
+    /// The full variant's alternate is either `None` or a non-empty string —
+    /// never `Some("")`.
+    #[test]
+    fn double_metaphone_full_alternate_is_none_or_nonempty(w in arb_ascii_word()) {
+        let out = DoubleMetaphone::full().encode(&w);
+        if let Some(alt) = &out.alternate {
+            prop_assert!(!alt.is_empty(),
+                "DM.full({:?}).alternate is Some(\"\"), should be None instead", w);
+        }
+    }
+
+    /// The full variant's alternate, when present, respects the same
+    /// four-character length cap as the primary.
+    #[test]
+    fn double_metaphone_full_alternate_length_bound(w in arb_ascii_word()) {
+        let out = DoubleMetaphone::full().encode(&w);
+        if let Some(alt) = &out.alternate {
+            prop_assert!(alt.len() <= crate::double_metaphone::MAX_KEY_LEN,
+                "DM.full({:?}).alternate = {:?} exceeded max len", w, alt);
+        }
+    }
+
+    /// The full variant's alternate, when present, is never equal to the
+    /// primary — we return `None` instead in that case.
+    #[test]
+    fn double_metaphone_full_alternate_differs_from_primary(w in arb_ascii_word()) {
+        let out = DoubleMetaphone::full().encode(&w);
+        if let Some(alt) = &out.alternate {
+            prop_assert_ne!(alt, &out.primary,
+                "DM.full({:?}) reported Some(alternate) equal to primary", w);
+        }
+    }
+
     #[test]
     fn double_metaphone_no_panic(w in arb_arbitrary_short_string()) {
-        let _ = DoubleMetaphone::encode(&w);
+        let _ = DoubleMetaphone::primary_only().encode(&w);
+        let _ = DoubleMetaphone::full().encode(&w);
     }
 }
 
@@ -204,11 +256,33 @@ proptest! {
         a in arb_ascii_word(),
         b in arb_ascii_word(),
     ) {
-        let m = crate::PhoneticMatcher::new(DoubleMetaphone)
+        let po = DoubleMetaphone::primary_only();
+        let m = crate::PhoneticMatcher::new(po)
             .with_mode(crate::MatchMode::PrimaryOnly);
         let matched = m.matches_double_metaphone(&a, &b);
-        let pa = DoubleMetaphone::encode(&a).primary;
-        let pb = DoubleMetaphone::encode(&b).primary;
+        let pa = po.encode(&a).primary;
+        let pb = po.encode(&b).primary;
         prop_assert_eq!(matched, pa == pb);
+    }
+
+    /// Full-variant matcher in `AnyPair` mode is at least as permissive as
+    /// primary-only matching. If two inputs share a primary key, they must
+    /// match under Full-AnyPair too (their alternate branches cannot
+    /// override the primary=primary agreement).
+    #[test]
+    fn dm_full_matcher_any_pair_supersets_primary_equality(
+        a in arb_ascii_word(),
+        b in arb_ascii_word(),
+    ) {
+        let full = DoubleMetaphone::full();
+        let m = crate::PhoneticMatcher::new(full);
+        let matched = m.matches_double_metaphone(&a, &b);
+        let pa = full.encode(&a).primary;
+        let pb = full.encode(&b).primary;
+        if pa == pb {
+            prop_assert!(matched,
+                "Full-AnyPair rejected {:?} vs {:?} despite equal primaries \
+                 ({:?})", a, b, pa);
+        }
     }
 }

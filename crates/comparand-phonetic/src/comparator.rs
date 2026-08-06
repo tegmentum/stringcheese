@@ -199,14 +199,34 @@ mod tests {
 
     #[test]
     fn multi_key_matcher_defaults_to_any_pair() {
-        let m = PhoneticMatcher::new(DoubleMetaphone);
+        let m = PhoneticMatcher::new(DoubleMetaphone::primary_only());
         assert_eq!(m.mode(), MatchMode::AnyPair);
     }
 
     #[test]
     fn multi_key_matcher_honors_primary_only() {
-        let m = PhoneticMatcher::new(DoubleMetaphone).with_mode(MatchMode::PrimaryOnly);
+        let m =
+            PhoneticMatcher::new(DoubleMetaphone::primary_only()).with_mode(MatchMode::PrimaryOnly);
         assert_eq!(m.mode(), MatchMode::PrimaryOnly);
+    }
+
+    #[test]
+    fn full_variant_matches_via_cross_product() {
+        // Xavier vs itself: primary=primary equals under Full.
+        let m = PhoneticMatcher::new(DoubleMetaphone::full());
+        assert!(m.matches_double_metaphone("Xavier", "Xavier"));
+
+        // Wagner vs itself: matches via primary=primary AND alternate=alternate.
+        assert!(m.matches_double_metaphone("Wagner", "Wagner"));
+
+        // Xavier vs Zavier: both give primary "SFR" — primary=primary match.
+        assert!(m.matches_double_metaphone("Xavier", "Zavier"));
+
+        // Full variant in PrimaryOnly mode reduces to primary equality — the
+        // Xavier / Zavier pair still matches on their identical primaries.
+        let strict =
+            PhoneticMatcher::new(DoubleMetaphone::full()).with_mode(MatchMode::PrimaryOnly);
+        assert!(strict.matches_double_metaphone("Xavier", "Zavier"));
     }
 
     #[test]
