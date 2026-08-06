@@ -12,6 +12,13 @@ publish = false
 [features]
 default = ["std"]
 std = []
+# Opt-in allocation-counting harness. Installs `dhat::Alloc` as the global
+# allocator in the `alloc_report_*` binaries — it must NOT be enabled for a
+# regular `cargo bench` run because dhat records every allocation in the
+# process and both skews criterion samples and invalidates its statistical
+# model. Kept off by default; each `alloc_report_*` binary opts in via
+# `required-features = ["alloc-tracking"]`.
+alloc-tracking = ["dep:dhat"]
 
 [dependencies]
 comparand-core = { workspace = true, features = ["std"] }
@@ -20,6 +27,9 @@ comparand-hamming = { workspace = true, features = ["std"] }
 comparand-jaro = { workspace = true, features = ["std"] }
 comparand-damerau = { workspace = true, features = ["std"] }
 comparand-ngram = { workspace = true, features = ["std"] }
+# Optional so the default build does not link the heap profiler and the
+# criterion benches never inherit its global allocator.
+dhat = { version = "0.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
@@ -47,6 +57,29 @@ harness = false
 [[bench]]
 name = "batch"
 harness = false
+
+# Allocation-report binaries. Each one is gated on the `alloc-tracking`
+# feature so that a default build never sees dhat's global allocator; the
+# feature has to be requested explicitly at `cargo run` time.
+[[bin]]
+name = "alloc_report_levenshtein"
+path = "src/bin/alloc_report_levenshtein.rs"
+required-features = ["alloc-tracking"]
+
+[[bin]]
+name = "alloc_report_osa"
+path = "src/bin/alloc_report_osa.rs"
+required-features = ["alloc-tracking"]
+
+[[bin]]
+name = "alloc_report_damerau"
+path = "src/bin/alloc_report_damerau.rs"
+required-features = ["alloc-tracking"]
+
+[[bin]]
+name = "alloc_report_ngram"
+path = "src/bin/alloc_report_ngram.rs"
+required-features = ["alloc-tracking"]
 
 [lints]
 workspace = true
