@@ -30,7 +30,7 @@
 
 use stringcheese_bench::alloc_harness::{AllocMeasurement, measure};
 use stringcheese_bench::inputs::random_ascii;
-use stringcheese_ngram::{
+use stringcheese_compare::ngram::{
     CharacterGramSlices, CharacterGrams, GramMultiSet, GramSet, GramVector, NGramGenerator,
     PaddingPolicy,
 };

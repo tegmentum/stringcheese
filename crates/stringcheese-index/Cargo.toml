@@ -25,10 +25,10 @@ stringcheese-core = { workspace = true }
 
 [dev-dependencies]
 stringcheese-corpus = { workspace = true, features = ["alloc"] }
-# A true metric to build BK-tree and VP-tree golden fixtures against.
-stringcheese-levenshtein = { workspace = true, features = ["std"] }
-# A documented semimetric (OSA) used by the "reject non-metric" tests.
-stringcheese-damerau = { workspace = true, features = ["std"] }
+# A true metric (Levenshtein) to build BK-tree and VP-tree golden fixtures
+# against, and a documented semimetric (OSA / Damerau) used by the
+# "reject non-metric" tests. Both live in `stringcheese-compare`.
+stringcheese-compare = { workspace = true, features = ["std"] }
 proptest = "1"
 
 [lints]

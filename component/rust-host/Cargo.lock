@@ -166,19 +166,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "stringcheese-component-host"
+name = "stringcheese-compare"
 version = "0.1.0"
 dependencies = [
  "stringcheese-core",
- "stringcheese-damerau",
- "stringcheese-hamming",
- "stringcheese-jaro",
- "stringcheese-lcs",
- "stringcheese-levenshtein",
- "stringcheese-ngram",
+]
+
+[[package]]
+name = "stringcheese-component-host"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-compare",
+ "stringcheese-core",
  "stringcheese-phonetic",
- "stringcheese-search",
- "stringcheese-set-similarity",
  "wit-bindgen",
 ]
 
@@ -187,67 +187,10 @@ name = "stringcheese-core"
 version = "0.1.0"
 
 [[package]]
-name = "stringcheese-damerau"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-hamming"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-jaro"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-lcs"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-levenshtein"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-ngram"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
 name = "stringcheese-phonetic"
 version = "0.1.0"
 dependencies = [
  "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-search"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-set-similarity"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
- "stringcheese-ngram",
 ]
 
 [[package]]

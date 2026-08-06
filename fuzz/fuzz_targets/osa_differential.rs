@@ -11,8 +11,8 @@
 #![no_main]
 
 use stringcheese_core::BoundedDistance;
-use stringcheese_damerau::OsaWorkspace;
-use stringcheese_damerau::osa::{
+use stringcheese_compare::damerau::OsaWorkspace;
+use stringcheese_compare::damerau::osa::{
     distance_banded_with_workspace, distance_full_matrix, distance_rolling_rows_with_workspace,
 };
 use libfuzzer_sys::fuzz_target;

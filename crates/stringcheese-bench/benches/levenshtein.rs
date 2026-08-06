@@ -23,11 +23,11 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_core::DistanceMetric;
-use stringcheese_levenshtein::{
+use stringcheese_compare::levenshtein::{
     Levenshtein, LevenshteinWorkspace, distance_banded_with_workspace, distance_full_matrix,
     distance_rolling_rows_with_workspace,
 };
+use stringcheese_core::DistanceMetric;
 
 /// Input lengths swept across every group. Bytes.
 const LENGTHS: &[usize] = &[8, 32, 128, 512, 2048];

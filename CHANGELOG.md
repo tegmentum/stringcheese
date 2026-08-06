@@ -11,7 +11,26 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-compare` crate.** Consolidates the nine sibling
+  comparison crates (`stringcheese-levenshtein`, `stringcheese-hamming`,
+  `stringcheese-jaro`, `stringcheese-damerau`, `stringcheese-lcs`,
+  `stringcheese-ngram`, `stringcheese-search`,
+  `stringcheese-set-similarity`, and `stringcheese-minhash`) into one
+  crate with a top-level module per family (`levenshtein`, `hamming`,
+  `jaro`, `damerau`, `lcs`, `ngram`, `search`, `set_similarity`,
+  `minhash`). Every load-bearing type each source crate re-exported
+  at its own root is also re-exported at `stringcheese-compare`'s root,
+  so `use stringcheese_compare::Levenshtein` and
+  `use stringcheese_compare::levenshtein::Levenshtein` both resolve.
+  Public API is preserved.
+
 ### Changed
+
+- **Import paths.** `use stringcheese_<family>::X` becomes
+  `use stringcheese_compare::<family>::X` (with `set-similarity`
+  spelled `set_similarity` on the Rust side). The umbrella `stringcheese`
+  facade re-exports the same nine module names as before, so
+  `use stringcheese::levenshtein::Levenshtein` keeps working unchanged.
 
 - **Project renamed from Comparand to StringCheese.** Every crate is renamed
   from `comparand-*` to `stringcheese-*`; the umbrella facade is `stringcheese`

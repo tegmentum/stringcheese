@@ -25,14 +25,14 @@
 //! # Matrix
 //!
 //! (length ∈ {8, 32, 128, 512, 2048}) × (regime ∈ {random, similar,
-//! identical}) × (implementation ∈ {`stringcheese_jaro`, `strsim_jaro`,
+//! identical}) × (implementation ∈ {`stringcheese_compare::jaro`, `strsim_jaro`,
 //! `stringcheese_jw`, `strsim_jw`}).
 
 use std::hint::black_box;
 
 use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
 use stringcheese_core::SimilarityMetric;
-use stringcheese_jaro::{Jaro, JaroWinkler};
+use stringcheese_compare::jaro::{Jaro, JaroWinkler};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SALTS: (u64, u64, u64) = (0xC1, 0xC2, 0xC3);

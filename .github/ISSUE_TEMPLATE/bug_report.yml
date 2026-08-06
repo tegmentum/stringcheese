@@ -19,15 +19,13 @@ body:
         - stringcheese
         - stringcheese-core
         - stringcheese-corpus
+        - stringcheese-compare
         - stringcheese-unicode
         - stringcheese-phonetic
-        - stringcheese-search
         - stringcheese-cdc
         - stringcheese-index
+        - stringcheese-align
         - stringcheese-bench
-        - stringcheese-levenshtein
-        - stringcheese-hamming
-        - stringcheese-jaro
         - other / not sure
     validations:
       required: true
@@ -77,7 +75,7 @@ body:
       description: A self-contained snippet that reproduces the defect.
       render: rust
       placeholder: |
-        use stringcheese_levenshtein::…;
+        use stringcheese_compare::levenshtein::…;
 
         fn main() {
             …

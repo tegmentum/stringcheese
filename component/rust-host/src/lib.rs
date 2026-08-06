@@ -89,7 +89,7 @@ struct Component;
 impl exports::stringcheese::core::distance::Guest for Component {
     fn levenshtein(a: Vec<u8>, b: Vec<u8>) -> u32 {
         use stringcheese_core::DistanceMetric;
-        stringcheese_levenshtein::Levenshtein
+        stringcheese_compare::levenshtein::Levenshtein
             .distance(&a[..], &b[..])
             .into_inner()
     }
@@ -101,7 +101,7 @@ impl exports::stringcheese::core::distance::Guest for Component {
     ) -> exports::stringcheese::core::distance::BoundedDistance {
         use stringcheese_core::{BoundedDistance as RustBounded, BoundedDistanceMetric};
         use exports::stringcheese::core::distance::BoundedDistance as WitBounded;
-        match stringcheese_levenshtein::Levenshtein.distance_within(&a[..], &b[..], cutoff) {
+        match stringcheese_compare::levenshtein::Levenshtein.distance_within(&a[..], &b[..], cutoff) {
             RustBounded::Within(d) => WitBounded::Within(d.into_inner()),
             RustBounded::Exceeded { cutoff } => WitBounded::Exceeded(cutoff),
         }
@@ -111,7 +111,7 @@ impl exports::stringcheese::core::distance::Guest for Component {
         // The Hamming trait impl panics on length mismatch; use the
         // fallible entry point and flatten the typed error to `string`
         // for the WIT boundary.
-        stringcheese_hamming::Hamming
+        stringcheese_compare::hamming::Hamming
             .try_distance(&a[..], &b[..])
             .map(|d| d.into_inner())
             .map_err(|e| {
@@ -124,7 +124,7 @@ impl exports::stringcheese::core::distance::Guest for Component {
 
     fn osa(a: Vec<u8>, b: Vec<u8>) -> u32 {
         use stringcheese_core::DistanceMetric;
-        stringcheese_damerau::Osa.distance(&a[..], &b[..]).into_inner()
+        stringcheese_compare::damerau::Osa.distance(&a[..], &b[..]).into_inner()
     }
 
     fn lcs_distance(a: Vec<u8>, b: Vec<u8>) -> u32 {
@@ -132,7 +132,7 @@ impl exports::stringcheese::core::distance::Guest for Component {
         // addition to its `DistanceMetric` impl, so the trait does not
         // need to be in scope here — unlike the `levenshtein` and `osa`
         // paths above, which reach through the trait exclusively.
-        stringcheese_lcs::LcsDistance
+        stringcheese_compare::lcs::LcsDistance
             .distance(&a[..], &b[..])
             .into_inner()
     }
@@ -144,27 +144,27 @@ impl exports::stringcheese::core::distance::Guest for Component {
 
 impl exports::stringcheese::core::similarity::Guest for Component {
     fn jaro(a: Vec<u8>, b: Vec<u8>) -> f64 {
-        stringcheese_jaro::Jaro
+        stringcheese_compare::jaro::Jaro
             .similarity_normalized(&a[..], &b[..])
             .into_inner()
     }
 
     fn jaro_winkler(a: Vec<u8>, b: Vec<u8>) -> f64 {
-        stringcheese_jaro::JaroWinkler::classic()
+        stringcheese_compare::jaro::JaroWinkler::classic()
             .similarity_normalized(&a[..], &b[..])
             .into_inner()
     }
 
     fn dice_bigrams(a: Vec<u8>, b: Vec<u8>) -> f64 {
         let (set_a, set_b) = byte_bigram_sets(&a, &b);
-        stringcheese_set_similarity::DiceOverSet
+        stringcheese_compare::set_similarity::DiceOverSet
             .similarity_normalized(&set_a, &set_b)
             .into_inner()
     }
 
     fn jaccard_bigrams(a: Vec<u8>, b: Vec<u8>) -> f64 {
         let (set_a, set_b) = byte_bigram_sets(&a, &b);
-        stringcheese_set_similarity::JaccardOverSet
+        stringcheese_compare::set_similarity::JaccardOverSet
             .similarity_normalized(&set_a, &set_b)
             .into_inner()
     }
@@ -183,10 +183,10 @@ fn byte_bigram_sets(
     a: &[u8],
     b: &[u8],
 ) -> (
-    stringcheese_ngram::GramSet<Vec<u8>>,
-    stringcheese_ngram::GramSet<Vec<u8>>,
+    stringcheese_compare::ngram::GramSet<Vec<u8>>,
+    stringcheese_compare::ngram::GramSet<Vec<u8>>,
 ) {
-    use stringcheese_ngram::{CharacterGrams, GramSet, PaddingPolicy};
+    use stringcheese_compare::ngram::{CharacterGrams, GramSet, PaddingPolicy};
     // `try_new` cannot fail with n=2, but pattern-matching the
     // Result keeps the panic path explicit rather than hidden behind
     // `.unwrap()`.
@@ -210,7 +210,7 @@ fn byte_bigram_sets(
 
 impl exports::stringcheese::core::search::Guest for Component {
     fn find_first(pattern: Vec<u8>, haystack: Vec<u8>) -> Option<u32> {
-        use stringcheese_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
+        use stringcheese_compare::search::{Kmp, SearchAlgorithm, SinglePatternSearch};
         let prep = Kmp::prepare(&pattern);
         Kmp::find(&prep, &haystack).map(|m| {
             // WIT `u32` matches most Wasm-land 32-bit indexing; the
@@ -222,7 +222,7 @@ impl exports::stringcheese::core::search::Guest for Component {
     }
 
     fn find_all(pattern: Vec<u8>, haystack: Vec<u8>) -> Vec<u32> {
-        use stringcheese_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
+        use stringcheese_compare::search::{Kmp, SearchAlgorithm, SinglePatternSearch};
         let prep = Kmp::prepare(&pattern);
         Kmp::find_all(&prep, &haystack)
             .into_iter()

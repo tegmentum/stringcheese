@@ -24,11 +24,7 @@ libfuzzer-sys = "0.4"
 # and everything they exercise is `alloc`-gated (or `std`-gated for the
 # Damerau production kernel, which uses `std::collections::HashMap`).
 stringcheese-core = { path = "../crates/stringcheese-core", default-features = false, features = ["std"] }
-stringcheese-levenshtein = { path = "../crates/stringcheese-levenshtein", default-features = false, features = ["std"] }
-stringcheese-hamming = { path = "../crates/stringcheese-hamming", default-features = false, features = ["std"] }
-stringcheese-jaro = { path = "../crates/stringcheese-jaro", default-features = false, features = ["std"] }
-stringcheese-damerau = { path = "../crates/stringcheese-damerau", default-features = false, features = ["std"] }
-stringcheese-ngram = { path = "../crates/stringcheese-ngram", default-features = false, features = ["std"] }
+stringcheese-compare = { path = "../crates/stringcheese-compare", default-features = false, features = ["std"] }
 
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`

@@ -43,19 +43,16 @@ Every crate is checked under three feature configurations:
 
 ## Crate coverage
 
-The matrix runs against the eleven workspace crates that ship code:
+The matrix runs against the workspace crates that ship code:
 
 - `stringcheese` (facade)
 - `stringcheese-core`
 - `stringcheese-corpus`
-- `stringcheese-levenshtein`
-- `stringcheese-hamming`
-- `stringcheese-jaro`
-- `stringcheese-damerau`
-- `stringcheese-ngram`
+- `stringcheese-compare` (the consolidated comparison-kernel crate:
+  Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, n-gram,
+  set similarity, substring search, MinHash/LSH)
 - `stringcheese-unicode`
 - `stringcheese-phonetic`
-- `stringcheese-set-similarity`
 
 Excluded:
 
@@ -63,9 +60,8 @@ Excluded:
   timing/IO machinery (criterion); benchmark code is not a wasm target.
   Excluded at the CI level via per-crate iteration rather than a
   workspace-wide `--exclude`.
-- `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index` — currently
-  empty placeholder crates. Will be added to the matrix as their
-  implementations land.
+- `stringcheese-cdc`, `stringcheese-index`, `stringcheese-align` — added
+  to the matrix as their runtime cross-target validations land.
 
 ## Compatibility matrix
 
@@ -78,21 +74,17 @@ under the workspace's current source; a regression in any cell fails the
 | `stringcheese`                  | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
 | `stringcheese-core`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
 | `stringcheese-corpus`           | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `stringcheese-levenshtein`      | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `stringcheese-hamming`          | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `stringcheese-jaro`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `stringcheese-damerau`          | PASS       | PASS         | PASS        | PASS [^2]   | PASS          | PASS         |
-| `stringcheese-ngram`            | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-compare`          | PASS       | PASS         | PASS        | PASS [^2]   | PASS          | PASS         |
 | `stringcheese-unicode`          | PASS       | PASS         | PASS        | PASS [^3]   | PASS          | PASS         |
 | `stringcheese-phonetic`         | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `stringcheese-set-similarity`   | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
 
-[^2]: `stringcheese-damerau`'s full-Damerau kernel uses `std::collections::HashMap`
-      and is gated behind the `std` feature. `HashMap`'s type is available in
-      the standard library on `wasm32-unknown-unknown`, so `cargo check`
-      succeeds. Constructing a `HashMap` at runtime lazily initializes
-      `RandomState`, which needs `getrandom` — and `getrandom` requires
-      explicit browser/JS wiring on `wasm32-unknown-unknown` (see
+[^2]: `stringcheese-compare`'s full-Damerau module uses
+      `std::collections::HashMap` and is gated behind the `std` feature.
+      `HashMap`'s type is available in the standard library on
+      `wasm32-unknown-unknown`, so `cargo check` succeeds. Constructing a
+      `HashMap` at runtime lazily initializes `RandomState`, which needs
+      `getrandom` — and `getrandom` requires explicit browser/JS wiring on
+      `wasm32-unknown-unknown` (see
       [`getrandom` docs](https://docs.rs/getrandom/latest/getrandom/#webassembly-support)).
       A crate that runs full-Damerau in a browser must add a top-level
       dependency on `getrandom` with the `js` feature — this crate does not
@@ -111,9 +103,7 @@ rustup target add wasm32-unknown-unknown wasm32-wasip1
 
 crates=(
   stringcheese stringcheese-core stringcheese-corpus
-  stringcheese-levenshtein stringcheese-hamming stringcheese-jaro
-  stringcheese-damerau stringcheese-ngram stringcheese-unicode
-  stringcheese-phonetic stringcheese-set-similarity
+  stringcheese-compare stringcheese-unicode stringcheese-phonetic
 )
 targets=(wasm32-wasip1 wasm32-unknown-unknown)
 flag_sets=(

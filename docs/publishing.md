@@ -66,26 +66,20 @@ yet exist on the index.
 
 1. `stringcheese-core` — substrate; depends on nothing in the workspace.
 2. `stringcheese-corpus` — depends on `stringcheese-core`.
-3. First-wave algorithm crates (parallelizable within this tier but
-   sequenced here for clarity):
-   1. `stringcheese-levenshtein`
-   2. `stringcheese-hamming`
-   3. `stringcheese-jaro`
-   4. `stringcheese-damerau`
-   5. `stringcheese-lcs`
-   6. `stringcheese-ngram`
-   7. `stringcheese-unicode`
-   8. `stringcheese-phonetic`
-   9. `stringcheese-align`
-   10. `stringcheese-search`
-   11. `stringcheese-cdc`
-   12. `stringcheese-minhash`
-4. Second-wave crates that depend on algorithm crates:
-   1. `stringcheese-set-similarity` — depends on `stringcheese-ngram`.
-   2. `stringcheese-index` — depends only on `stringcheese-core` at build
-      time; the `levenshtein` / `damerau` requirements are `dev-dependencies`
-      and do not gate publication.
-5. `stringcheese` — the facade; re-exports every algorithm crate above.
+3. First-wave crates (parallelizable within this tier but sequenced here
+   for clarity):
+   1. `stringcheese-compare` — the consolidated comparison-kernel crate
+      (Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS,
+      n-gram, set similarity, substring search, MinHash/LSH).
+   2. `stringcheese-unicode`
+   3. `stringcheese-phonetic`
+   4. `stringcheese-align`
+   5. `stringcheese-cdc`
+4. Second-wave crates that depend on first-wave crates:
+   1. `stringcheese-index` — depends only on `stringcheese-core` at build
+      time; the Levenshtein / OSA fixtures under `dev-dependencies`
+      pull in `stringcheese-compare` but do not gate publication.
+5. `stringcheese` — the facade; re-exports every published crate above.
 
 ## Publish sequence
 
@@ -100,19 +94,11 @@ set -euo pipefail
 crates=(
     stringcheese-core
     stringcheese-corpus
-    stringcheese-levenshtein
-    stringcheese-hamming
-    stringcheese-jaro
-    stringcheese-damerau
-    stringcheese-lcs
-    stringcheese-ngram
+    stringcheese-compare
     stringcheese-unicode
     stringcheese-phonetic
     stringcheese-align
-    stringcheese-search
     stringcheese-cdc
-    stringcheese-minhash
-    stringcheese-set-similarity
     stringcheese-index
     stringcheese
 )

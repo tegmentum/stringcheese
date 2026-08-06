@@ -19,7 +19,7 @@
 #![no_main]
 
 use stringcheese_core::BoundedDistance;
-use stringcheese_levenshtein::{
+use stringcheese_compare::levenshtein::{
     LevenshteinWorkspace, distance_banded_with_workspace, distance_full_matrix,
     distance_rolling_rows_with_workspace,
 };

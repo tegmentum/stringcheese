@@ -30,7 +30,7 @@
 use std::hint::black_box;
 
 use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair_equal_len};
-use stringcheese_hamming::{hamming_distance, hamming_distance_within};
+use stringcheese_compare::hamming::{hamming_distance, hamming_distance_within};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SALTS: (u64, u64, u64) = (0xD1, 0xD2, 0xD3);

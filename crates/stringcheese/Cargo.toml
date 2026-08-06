@@ -15,55 +15,31 @@ keywords = ["comparison", "distance", "similarity", "levenshtein", "phonetic"]
 default = ["std"]
 std = [
     "stringcheese-core/std",
-    "stringcheese-levenshtein/std",
-    "stringcheese-hamming/std",
-    "stringcheese-jaro/std",
-    "stringcheese-damerau/std",
-    "stringcheese-ngram/std",
+    "stringcheese-compare/std",
     "stringcheese-unicode/std",
     "stringcheese-phonetic/std",
-    "stringcheese-set-similarity/std",
-    "stringcheese-lcs/std",
-    "stringcheese-search/std",
     "stringcheese-cdc/std",
     "stringcheese-index/std",
     "stringcheese-align/std",
-    "stringcheese-minhash/std",
 ]
 alloc = [
     "stringcheese-core/alloc",
-    "stringcheese-levenshtein/alloc",
-    "stringcheese-hamming/alloc",
-    "stringcheese-jaro/alloc",
-    "stringcheese-damerau/alloc",
-    "stringcheese-ngram/alloc",
+    "stringcheese-compare/alloc",
     "stringcheese-unicode/alloc",
     "stringcheese-phonetic/alloc",
-    "stringcheese-set-similarity/alloc",
-    "stringcheese-lcs/alloc",
-    "stringcheese-search/alloc",
     "stringcheese-cdc/alloc",
     "stringcheese-index/alloc",
     "stringcheese-align/alloc",
-    "stringcheese-minhash/alloc",
 ]
 
 [dependencies]
 stringcheese-core = { workspace = true }
-stringcheese-levenshtein = { workspace = true }
-stringcheese-hamming = { workspace = true }
-stringcheese-jaro = { workspace = true }
-stringcheese-damerau = { workspace = true }
-stringcheese-ngram = { workspace = true }
+stringcheese-compare = { workspace = true }
 stringcheese-unicode = { workspace = true }
 stringcheese-phonetic = { workspace = true }
-stringcheese-set-similarity = { workspace = true }
-stringcheese-lcs = { workspace = true }
-stringcheese-search = { workspace = true }
 stringcheese-cdc = { workspace = true }
 stringcheese-index = { workspace = true }
 stringcheese-align = { workspace = true }
-stringcheese-minhash = { workspace = true }
 
 [lints]
 workspace = true

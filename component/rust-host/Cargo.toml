@@ -63,16 +63,9 @@ wit-bindgen = { version = "0.46", default-features = false, features = ["macros"
 # `--no-default-features` mode of this host crate can trim to `alloc`-
 # only if the size budget in
 # docs/design/wasm-and-wit-interface.md ever demands it.
-stringcheese-core          = { path = "../../crates/stringcheese-core",          default-features = false, features = ["std"] }
-stringcheese-levenshtein   = { path = "../../crates/stringcheese-levenshtein",   default-features = false, features = ["std"] }
-stringcheese-hamming       = { path = "../../crates/stringcheese-hamming",       default-features = false, features = ["std"] }
-stringcheese-damerau       = { path = "../../crates/stringcheese-damerau",       default-features = false, features = ["std"] }
-stringcheese-lcs           = { path = "../../crates/stringcheese-lcs",           default-features = false, features = ["std"] }
-stringcheese-jaro          = { path = "../../crates/stringcheese-jaro",          default-features = false, features = ["std"] }
-stringcheese-ngram         = { path = "../../crates/stringcheese-ngram",         default-features = false, features = ["std"] }
-stringcheese-set-similarity = { path = "../../crates/stringcheese-set-similarity", default-features = false, features = ["std"] }
-stringcheese-search        = { path = "../../crates/stringcheese-search",        default-features = false, features = ["std"] }
-stringcheese-phonetic      = { path = "../../crates/stringcheese-phonetic",      default-features = false, features = ["std"] }
+stringcheese-core          = { path = "../../crates/stringcheese-core",     default-features = false, features = ["std"] }
+stringcheese-compare       = { path = "../../crates/stringcheese-compare",  default-features = false, features = ["std"] }
+stringcheese-phonetic      = { path = "../../crates/stringcheese-phonetic", default-features = false, features = ["std"] }
 
 # cargo-component metadata. Points at the WIT interface and the world
 # to compile against; the tool auto-generates the bindings crate under

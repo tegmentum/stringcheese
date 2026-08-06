@@ -32,7 +32,7 @@ use std::hint::black_box;
 
 use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
 use stringcheese_core::DistanceMetric;
-use stringcheese_levenshtein::{
+use stringcheese_compare::levenshtein::{
     Levenshtein, LevenshteinWorkspace, distance_banded_with_workspace,
     distance_rolling_rows_with_workspace,
 };

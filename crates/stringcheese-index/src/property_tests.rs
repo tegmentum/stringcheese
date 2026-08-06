@@ -11,9 +11,9 @@
 use alloc::vec::Vec;
 use proptest::prelude::*;
 
+use stringcheese_compare::damerau::Osa;
+use stringcheese_compare::levenshtein::Levenshtein;
 use stringcheese_core::DistanceMetric;
-use stringcheese_damerau::Osa;
-use stringcheese_levenshtein::Levenshtein;
 
 use crate::bk_tree::BkTree;
 use crate::error::NotAMetricError;

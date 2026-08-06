@@ -47,12 +47,13 @@ coverage, and validation strategy.
 | `stringcheese`            | Facade crate re-exporting the public API                                       |
 | `stringcheese-core`       | Foundational traits, result types, algorithm descriptors, workspace and sequence abstractions |
 | `stringcheese-corpus`     | Golden-case schema and validation corpus (separately versioned deliverable)    |
-| `stringcheese-unicode`    | Unicode normalization, case folding, grapheme handling (placeholder)           |
-| `stringcheese-phonetic`   | Soundex, Metaphone, NYSIIS, multilingual phonetic packs (placeholder)          |
-| `stringcheese-search`     | Substring search: Rabin-Karp, KMP, Boyer-Moore, Aho-Corasick (placeholder)     |
-| `stringcheese-cdc`        | Content-defined chunking: FastCDC, Rabin CDC, Gear (placeholder)               |
-| `stringcheese-index`      | Index structures: BK-tree, VP-tree, q-gram, MinHash, LSH (placeholder)         |
-| `stringcheese-bench`      | Benchmark suite and comparative reporting (placeholder)                        |
+| `stringcheese-compare`    | Comparison kernels: Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, n-gram, set similarity (Dice/Jaccard/Overlap/Cosine), substring search (Rabin-Karp/KMP/Boyer-Moore/Aho-Corasick/Horspool/Two-way), MinHash and LSH |
+| `stringcheese-unicode`    | Unicode normalization, case folding, grapheme handling                         |
+| `stringcheese-phonetic`   | Soundex, NYSIIS, Double Metaphone, phonetic-matcher composer                   |
+| `stringcheese-cdc`        | Content-defined chunking: FastCDC, Rabin CDC, Gear rolling-hash                |
+| `stringcheese-index`      | Index structures: BK-tree, VP-tree, q-gram inverted index                      |
+| `stringcheese-align`      | Pairwise alignment: Needleman-Wunsch, Smith-Waterman, affine gaps              |
+| `stringcheese-bench`      | Benchmark suite and comparative reporting                                      |
 
 ## License
 

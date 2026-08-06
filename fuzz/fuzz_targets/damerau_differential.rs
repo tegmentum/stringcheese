@@ -10,8 +10,8 @@
 
 #![no_main]
 
-use stringcheese_damerau::DamerauWorkspace;
-use stringcheese_damerau::damerau::{distance_full_matrix, distance_production_with_workspace};
+use stringcheese_compare::damerau::DamerauWorkspace;
+use stringcheese_compare::damerau::damerau::{distance_full_matrix, distance_production_with_workspace};
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]

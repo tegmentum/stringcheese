@@ -4,21 +4,13 @@ members = [
     "crates/stringcheese",
     "crates/stringcheese-core",
     "crates/stringcheese-corpus",
-    "crates/stringcheese-levenshtein",
-    "crates/stringcheese-hamming",
-    "crates/stringcheese-jaro",
-    "crates/stringcheese-damerau",
-    "crates/stringcheese-ngram",
+    "crates/stringcheese-compare",
     "crates/stringcheese-unicode",
     "crates/stringcheese-phonetic",
-    "crates/stringcheese-set-similarity",
     "crates/stringcheese-bench",
-    "crates/stringcheese-lcs",
-    "crates/stringcheese-search",
     "crates/stringcheese-cdc",
     "crates/stringcheese-index",
     "crates/stringcheese-align",
-    "crates/stringcheese-minhash",
 ]
 exclude = [
     "fuzz",
@@ -48,19 +40,11 @@ must_use_candidate = "allow"
 stringcheese-core = { version = "0.1.0", path = "crates/stringcheese-core", default-features = false }
 stringcheese-unicode = { version = "0.1.0", path = "crates/stringcheese-unicode", default-features = false }
 stringcheese-phonetic = { version = "0.1.0", path = "crates/stringcheese-phonetic", default-features = false }
-stringcheese-search = { version = "0.1.0", path = "crates/stringcheese-search", default-features = false }
 stringcheese-cdc = { version = "0.1.0", path = "crates/stringcheese-cdc", default-features = false }
 stringcheese-index = { version = "0.1.0", path = "crates/stringcheese-index", default-features = false }
 stringcheese-corpus = { version = "0.1.0", path = "crates/stringcheese-corpus", default-features = false }
-stringcheese-levenshtein = { version = "0.1.0", path = "crates/stringcheese-levenshtein", default-features = false }
-stringcheese-hamming = { version = "0.1.0", path = "crates/stringcheese-hamming", default-features = false }
-stringcheese-jaro = { version = "0.1.0", path = "crates/stringcheese-jaro", default-features = false }
-stringcheese-damerau = { version = "0.1.0", path = "crates/stringcheese-damerau", default-features = false }
-stringcheese-ngram = { version = "0.1.0", path = "crates/stringcheese-ngram", default-features = false }
-stringcheese-set-similarity = { version = "0.1.0", path = "crates/stringcheese-set-similarity", default-features = false }
-stringcheese-lcs = { version = "0.1.0", path = "crates/stringcheese-lcs", default-features = false }
+stringcheese-compare = { version = "0.1.0", path = "crates/stringcheese-compare", default-features = false }
 stringcheese-align = { version = "0.1.0", path = "crates/stringcheese-align", default-features = false }
-stringcheese-minhash = { version = "0.1.0", path = "crates/stringcheese-minhash", default-features = false }
 
 [profile.release]
 lto = "thin"

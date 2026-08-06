@@ -20,7 +20,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::random_ascii;
-use stringcheese_ngram::{
+use stringcheese_compare::ngram::{
     CharacterGramSlices, CharacterGrams, GramMultiSet, GramSet, NGramGenerator, PaddingPolicy,
     count_grams,
 };

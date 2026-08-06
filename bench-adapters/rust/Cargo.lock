@@ -326,45 +326,21 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "rapidfuzz",
+ "stringcheese-compare",
  "stringcheese-core",
- "stringcheese-damerau",
- "stringcheese-hamming",
- "stringcheese-jaro",
- "stringcheese-levenshtein",
  "strsim",
+]
+
+[[package]]
+name = "stringcheese-compare"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
 ]
 
 [[package]]
 name = "stringcheese-core"
 version = "0.1.0"
-
-[[package]]
-name = "stringcheese-damerau"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-hamming"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-jaro"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
-
-[[package]]
-name = "stringcheese-levenshtein"
-version = "0.1.0"
-dependencies = [
- "stringcheese-core",
-]
 
 [[package]]
 name = "strsim"

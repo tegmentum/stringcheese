@@ -15,13 +15,13 @@
 //! eye without pulling in the n-gram crate.
 //!
 //! [`GoldenSource::IndependentlyDerived`]: stringcheese_corpus::GoldenSource::IndependentlyDerived
-//! [`Levenshtein`]: stringcheese_levenshtein::Levenshtein
+//! [`Levenshtein`]: stringcheese_compare::levenshtein::Levenshtein
 
 #![cfg(test)]
 
 use alloc::vec::Vec;
 
-use stringcheese_levenshtein::Levenshtein;
+use stringcheese_compare::levenshtein::Levenshtein;
 
 use crate::bk_tree::BkTree;
 use crate::qgram_index::QgramIndex;

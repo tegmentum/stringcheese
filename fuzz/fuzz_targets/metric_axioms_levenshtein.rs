@@ -20,7 +20,7 @@
 
 #![no_main]
 
-use stringcheese_levenshtein::{LevenshteinWorkspace, distance_rolling_rows_with_workspace};
+use stringcheese_compare::levenshtein::{LevenshteinWorkspace, distance_rolling_rows_with_workspace};
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]

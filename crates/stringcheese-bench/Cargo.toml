@@ -22,11 +22,7 @@ alloc-tracking = ["dep:dhat"]
 
 [dependencies]
 stringcheese-core = { workspace = true, features = ["std"] }
-stringcheese-levenshtein = { workspace = true, features = ["std"] }
-stringcheese-hamming = { workspace = true, features = ["std"] }
-stringcheese-jaro = { workspace = true, features = ["std"] }
-stringcheese-damerau = { workspace = true, features = ["std"] }
-stringcheese-ngram = { workspace = true, features = ["std"] }
+stringcheese-compare = { workspace = true, features = ["std"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }

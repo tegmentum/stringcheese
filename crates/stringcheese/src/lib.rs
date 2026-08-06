@@ -20,35 +20,21 @@
 
 pub use stringcheese_core::*;
 
-/// The Levenshtein subsystem: unit-cost edit distance with full-matrix,
-/// rolling-rows, and Ukkonen-style banded kernels, re-exported unchanged
-/// from the `stringcheese-levenshtein` crate.
-pub use stringcheese_levenshtein as levenshtein;
+/// The consolidated comparison-kernel crate: edit-distance metrics
+/// (Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS), n-gram
+/// representations, set-similarity coefficients (Dice, Jaccard, Overlap,
+/// Cosine), substring-search algorithms (Rabin-Karp, KMP, Boyer-Moore,
+/// Aho-Corasick, Horspool, Two-way), and `MinHash` sketches with LSH
+/// banding. Re-exported unchanged from the `stringcheese-compare` crate.
+pub use stringcheese_compare as compare;
 
-/// The Hamming subsystem: equal-length Hamming distance with a fallible
-/// entry point for callers who cannot statically establish equal length,
-/// re-exported unchanged from the `stringcheese-hamming` crate.
-pub use stringcheese_hamming as hamming;
-
-/// The Jaro subsystem: base Jaro (1989) similarity and the Jaro-Winkler
-/// variant family, re-exported unchanged from the `stringcheese-jaro` crate.
-pub use stringcheese_jaro as jaro;
-
-/// The Damerau subsystem: Optimal String Alignment (semimetric, restricted
-/// Damerau-Levenshtein) and the full unrestricted Damerau-Levenshtein
-/// (true metric per Damerau 1964), re-exported unchanged from the
-/// `stringcheese-damerau` crate.
-pub use stringcheese_damerau as damerau;
-
-/// The Longest Common Subsequence subsystem: LCS length (as `Score<u32>`)
-/// and the derived LCS distance metric (`|a| + |b| - 2 · lcs(a, b)`),
-/// re-exported unchanged from the `stringcheese-lcs` crate.
-pub use stringcheese_lcs as lcs;
-
-/// The substring-search subsystem: Rabin-Karp, KMP, Boyer-Moore
-/// (bad-character variant), and Aho-Corasick multi-pattern matching,
-/// re-exported unchanged from the `stringcheese-search` crate.
-pub use stringcheese_search as search;
+// Per-family module aliases preserved so downstream code that used to
+// import the algorithm crates individually keeps its short paths working
+// (`stringcheese::levenshtein::Levenshtein`, `stringcheese::ngram::GramSet`,
+// …). Every module here is exactly `stringcheese_compare::<module>`.
+pub use stringcheese_compare::{
+    damerau, hamming, jaro, lcs, levenshtein, minhash, ngram, search, set_similarity,
+};
 
 /// The content-defined chunking and rolling-hash fingerprint subsystem:
 /// Rabin (GF(2) polynomial), polynomial (mod Mersenne-61), and Gear
@@ -72,18 +58,6 @@ pub use stringcheese_index as index;
 /// `stringcheese-align` crate.
 pub use stringcheese_align as align;
 
-/// The `MinHash` subsystem: probabilistic Jaccard-similarity sketches
-/// and LSH banding for approximate-nearest-neighbor search at scale.
-/// K-permutation `MinHash` (Broder 1997) + weighted `MinHash`
-/// (Ioffe 2010 CWS) + banded LSH (Gionis-Indyk-Motwani 1999),
-/// re-exported unchanged from the `stringcheese-minhash` crate.
-pub use stringcheese_minhash as minhash;
-
-/// The n-gram representation layer: character, byte, and token n-gram
-/// generators plus set / multiset / weighted-vector representations,
-/// re-exported unchanged from the `stringcheese-ngram` crate.
-pub use stringcheese_ngram as ngram;
-
 /// The Unicode preprocessing subsystem: NFC/NFD/NFKC/NFKD normalization,
 /// full Unicode case folding, grapheme-cluster segmentation with an
 /// `IndexableSequence` bridge, diacritic stripping, and a composable
@@ -96,11 +70,6 @@ pub use stringcheese_unicode as unicode;
 /// `PhoneticEncoder` trait and `PhoneticMatcher` composer, re-exported
 /// unchanged from the `stringcheese-phonetic` crate.
 pub use stringcheese_phonetic as phonetic;
-
-/// The set-similarity subsystem: Dice, Jaccard, Overlap, and Cosine over
-/// the n-gram representations from `stringcheese_ngram`, re-exported
-/// unchanged from the `stringcheese-set-similarity` crate.
-pub use stringcheese_set_similarity as set_similarity;
 
 /// Metadata about this release.
 pub mod meta {

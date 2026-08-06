@@ -13,7 +13,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair_equal_len};
-use stringcheese_hamming::{hamming_distance, hamming_distance_within};
+use stringcheese_compare::hamming::{hamming_distance, hamming_distance_within};
 
 /// Hamming is O(n); large n stays cheap, so we sweep the same set of
 /// lengths the DP-based kernels use and extend up to 2048.

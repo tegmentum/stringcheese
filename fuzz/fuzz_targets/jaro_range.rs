@@ -22,7 +22,7 @@
 #![no_main]
 
 use stringcheese_core::SimilarityMetric;
-use stringcheese_jaro::Jaro;
+use stringcheese_compare::jaro::Jaro;
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]

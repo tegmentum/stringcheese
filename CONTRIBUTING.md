@@ -38,14 +38,16 @@ maintained in [`README.md`](README.md); the short version is:
   exhaustive generators, differential vocabulary. Test-only for the
   algorithm crates but a first-class published deliverable in its own
   right.
-- **`stringcheese-<algorithm>`** — one crate per algorithm family, each
-  ownership-scoped so it can evolve independently. `stringcheese-hamming`,
-  `stringcheese-levenshtein`, and `stringcheese-jaro` are the first three.
+- **`stringcheese-compare`** — the consolidated comparison-kernel crate.
+  One top-level module per algorithm family (`levenshtein`, `hamming`,
+  `jaro`, `damerau`, `lcs`, `ngram`, `search`, `set_similarity`,
+  `minhash`); each module is ownership-scoped so it can evolve
+  independently within a single unit of publication.
+- **`stringcheese-<subsystem>`** — sibling crates for the
+  non-comparison subsystems: `stringcheese-unicode`,
+  `stringcheese-phonetic`, `stringcheese-cdc`, `stringcheese-index`,
+  `stringcheese-align`, `stringcheese-bench`.
 - **`stringcheese`** — a thin facade that re-exports the stable public API.
-- Placeholder crates (`stringcheese-unicode`, `stringcheese-phonetic`,
-  `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index`,
-  `stringcheese-bench`) reserve names for milestones described in
-  [`docs/DESIGN.md`](docs/DESIGN.md).
 
 Design context lives under [`docs/`](docs/):
 
@@ -119,15 +121,15 @@ skipping steps causes rework.
 Each of the three shipped algorithms illustrates a different point on
 the spectrum:
 
-- [`crates/stringcheese-hamming`](crates/stringcheese-hamming) — the minimal
+- [`crates/stringcheese-compare/src/hamming`](crates/stringcheese-compare/src/hamming) — the minimal
   case: single kernel, single descriptor. Start here to understand the
-  smallest possible shape a crate can take.
-- [`crates/stringcheese-levenshtein`](crates/stringcheese-levenshtein) — the
+  smallest possible shape a module can take.
+- [`crates/stringcheese-compare/src/levenshtein`](crates/stringcheese-compare/src/levenshtein) — the
   multi-kernel case: `full_matrix.rs` (oracle), `rolling_rows.rs`
   (production), `banded.rs` (Ukkonen cutoff variant), plus a shared
   `workspace.rs` for scratch-buffer reuse. Study the module split
   before splitting your own algorithm across files.
-- [`crates/stringcheese-jaro`](crates/stringcheese-jaro) — the
+- [`crates/stringcheese-compare/src/jaro`](crates/stringcheese-compare/src/jaro) — the
   `FloatExpectation` case: because Jaro is a floating-point
   similarity, its golden cases and property tests use `FloatExpectation`
   to control comparison tolerance rather than exact equality.
@@ -200,12 +202,13 @@ Every algorithm PR should include:
 - **Unit tests.** Small, targeted, colocated with the code they
   exercise. Doc-tests count as unit tests for coverage purposes.
 - **Property tests via `proptest`.** One test per declared metric
-  property. See `crates/stringcheese-hamming/src/property_tests.rs` for
+  property. See
+  `crates/stringcheese-compare/src/hamming/property_tests.rs` for
   the pattern.
-- **Differential tests (oracle vs optimized).** When a crate has more
+- **Differential tests (oracle vs optimized).** When a module has more
   than one kernel, one is the oracle and the others must agree with it
-  on generated inputs. See `crates/stringcheese-levenshtein` for the
-  reference layout.
+  on generated inputs. See `crates/stringcheese-compare/src/levenshtein`
+  for the reference layout.
 - **Golden cases.** Fixed input-and-expected-output records that
   survive refactors and document the intended behavior. Use the
   `stringcheese-corpus` schema so a shared runner can execute them.

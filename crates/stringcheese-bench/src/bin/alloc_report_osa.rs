@@ -14,8 +14,7 @@
 
 use stringcheese_bench::alloc_harness::{AllocMeasurement, measure};
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_core::DistanceMetric;
-use stringcheese_damerau::{
+use stringcheese_compare::damerau::{
     Osa, OsaWorkspace,
     osa::{
         banded::distance_banded_with_workspace as osa_banded,
@@ -23,6 +22,7 @@ use stringcheese_damerau::{
         rolling_rows::distance_rolling_rows_with_workspace as osa_rolling_rows,
     },
 };
+use stringcheese_core::DistanceMetric;
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;

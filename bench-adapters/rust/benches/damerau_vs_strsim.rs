@@ -9,11 +9,11 @@
 //! * **Optimal String Alignment (OSA / "restricted Damerau")** — each
 //!   substring can be edited at most once, does not satisfy the
 //!   triangle inequality.
-//!   * StringCheese: `stringcheese_damerau::Osa`.
+//!   * StringCheese: `stringcheese_compare::damerau::Osa`.
 //!   * strsim:    `strsim::osa_distance`.
 //! * **Full (unrestricted) Damerau-Levenshtein** — substrings can be
 //!   edited unlimited times, is a true metric.
-//!   * StringCheese: `stringcheese_damerau::Damerau`.
+//!   * StringCheese: `stringcheese_compare::damerau::Damerau`.
 //!   * strsim:    `strsim::damerau_levenshtein`.
 //!
 //! Pairing them the other way — StringCheese's `Damerau` against
@@ -48,7 +48,7 @@ use std::hint::black_box;
 
 use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
 use stringcheese_core::DistanceMetric;
-use stringcheese_damerau::{Damerau, Osa};
+use stringcheese_compare::damerau::{Damerau, Osa};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SALTS: (u64, u64, u64) = (0xE1, 0xE2, 0xE3);

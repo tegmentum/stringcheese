@@ -39,10 +39,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{random_ascii, random_candidates};
+use stringcheese_compare::damerau::{Damerau, DamerauWorkspace, Osa, OsaWorkspace};
+use stringcheese_compare::jaro::{Jaro, JaroWorkspace};
+use stringcheese_compare::levenshtein::{Levenshtein, LevenshteinWorkspace};
 use stringcheese_core::{DistanceMetric, SimilarityMetric};
-use stringcheese_damerau::{Damerau, DamerauWorkspace, Osa, OsaWorkspace};
-use stringcheese_jaro::{Jaro, JaroWorkspace};
-use stringcheese_levenshtein::{Levenshtein, LevenshteinWorkspace};
 
 /// Fixed query length across every batch group.
 const QUERY_LEN: usize = 32;

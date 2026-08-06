@@ -1,0 +1,41 @@
+[package]
+name = "stringcheese-compare"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Comparison algorithms for the StringCheese toolkit: edit-distance metrics (Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS), set-similarity coefficients (Dice, Jaccard, Cosine, Overlap), n-gram representations, substring-search kernels (Rabin-Karp, KMP, Boyer-Moore, Aho-Corasick, Horspool, Two-Way), and MinHash sketches."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["string-comparison", "edit-distance", "similarity", "search", "minhash"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+# `std` gates:
+#   * Damerau's `HashMap`-backed production kernel and `DamerauWorkspace`
+#     (`damerau/production.rs`, cross-variant property tests).
+#   * Set-similarity's `Cosine` (uses `f64::sqrt`).
+#   * N-gram's `l2_norm` / `normalize_l2` on `GramVector` (`f64::sqrt`).
+#   * MinHash's weighted CWS sketch (`f64::ln`, `f64::exp`, `f64::floor`).
+std   = ["alloc", "stringcheese-core/std"]
+# When enabled, the crate exposes its heap-allocating public surface. Every
+# dynamic-programming kernel and every representation type requires this;
+# without it the crate compiles as an empty no-alloc surface for embedded
+# builds that only need to link against the substrate crates.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[dev-dependencies]
+# Golden-case schema (workspace-inherited so version and path stay in sync
+# with the rest of the workspace); test-only, never linked into a normal
+# library build. `alloc` is enabled so property tests can use the
+# exhaustive generators and the golden-case schema types.
+stringcheese-corpus = { workspace = true, features = ["alloc"] }
+proptest = "1"
+
+[lints]
+workspace = true

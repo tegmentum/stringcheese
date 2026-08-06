@@ -118,9 +118,7 @@ jobs:
           crates=(
             stringcheese-core
             stringcheese-corpus
-            stringcheese-levenshtein
-            stringcheese-hamming
-            stringcheese-jaro
+            stringcheese-compare
             stringcheese
           )
           for crate in "${crates[@]}"; do
@@ -181,14 +179,9 @@ jobs:
             stringcheese
             stringcheese-core
             stringcheese-corpus
-            stringcheese-levenshtein
-            stringcheese-hamming
-            stringcheese-jaro
-            stringcheese-damerau
-            stringcheese-ngram
+            stringcheese-compare
             stringcheese-unicode
             stringcheese-phonetic
-            stringcheese-set-similarity
           )
           targets=(wasm32-wasip1 wasm32-unknown-unknown)
           # Feature-set label -> flag string. Kept as parallel arrays so

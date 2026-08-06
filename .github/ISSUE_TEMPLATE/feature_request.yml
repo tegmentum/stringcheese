@@ -18,14 +18,12 @@ body:
       options:
         - stringcheese-core (traits, descriptors, result types)
         - stringcheese-corpus (golden schema, oracle framework)
+        - stringcheese-compare (edit-distance, similarity, search, ngram, minhash)
         - stringcheese-unicode
         - stringcheese-phonetic
-        - stringcheese-search
         - stringcheese-cdc
         - stringcheese-index
-        - stringcheese-levenshtein
-        - stringcheese-hamming
-        - stringcheese-jaro
+        - stringcheese-align
         - stringcheese (facade)
         - stringcheese-bench
         - new crate

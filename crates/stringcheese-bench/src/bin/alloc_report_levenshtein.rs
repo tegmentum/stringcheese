@@ -34,11 +34,11 @@
 
 use stringcheese_bench::alloc_harness::{AllocMeasurement, measure};
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_core::DistanceMetric;
-use stringcheese_levenshtein::{
+use stringcheese_compare::levenshtein::{
     Levenshtein, LevenshteinWorkspace, distance_banded_with_workspace, distance_full_matrix,
     distance_rolling_rows_with_workspace,
 };
+use stringcheese_core::DistanceMetric;
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;

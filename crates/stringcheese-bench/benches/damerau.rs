@@ -27,8 +27,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_core::DistanceMetric;
-use stringcheese_damerau::{
+use stringcheese_compare::damerau::{
     Damerau, DamerauWorkspace, Osa, OsaWorkspace,
     damerau::{
         full_matrix::distance_full_matrix as damerau_full_matrix,
@@ -40,6 +39,7 @@ use stringcheese_damerau::{
         rolling_rows::distance_rolling_rows_with_workspace as osa_rolling_rows,
     },
 };
+use stringcheese_core::DistanceMetric;
 
 const LENGTHS: &[usize] = &[8, 32, 128, 512, 2048];
 /// Sizes at which the Damerau oracle stays under a second per iteration.

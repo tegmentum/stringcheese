@@ -787,18 +787,10 @@ version = "0.1.0"
 dependencies = [
  "stringcheese-align",
  "stringcheese-cdc",
+ "stringcheese-compare",
  "stringcheese-core",
- "stringcheese-damerau",
- "stringcheese-hamming",
  "stringcheese-index",
- "stringcheese-jaro",
- "stringcheese-lcs",
- "stringcheese-levenshtein",
- "stringcheese-minhash",
- "stringcheese-ngram",
  "stringcheese-phonetic",
- "stringcheese-search",
- "stringcheese-set-similarity",
  "stringcheese-unicode",
 ]
 
@@ -817,16 +809,21 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "dhat",
+ "stringcheese-compare",
  "stringcheese-core",
- "stringcheese-damerau",
- "stringcheese-hamming",
- "stringcheese-jaro",
- "stringcheese-levenshtein",
- "stringcheese-ngram",
 ]
 
 [[package]]
 name = "stringcheese-cdc"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-core",
+ "stringcheese-corpus",
+]
+
+[[package]]
+name = "stringcheese-compare"
 version = "0.1.0"
 dependencies = [
  "proptest",
@@ -846,77 +843,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "stringcheese-damerau"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-hamming"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
 name = "stringcheese-index"
 version = "0.1.0"
 dependencies = [
  "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
- "stringcheese-damerau",
- "stringcheese-levenshtein",
-]
-
-[[package]]
-name = "stringcheese-jaro"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-lcs"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-levenshtein"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-minhash"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
- "stringcheese-ngram",
- "stringcheese-set-similarity",
-]
-
-[[package]]
-name = "stringcheese-ngram"
-version = "0.1.0"
-dependencies = [
- "proptest",
+ "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-corpus",
 ]
@@ -928,25 +859,6 @@ dependencies = [
  "proptest",
  "stringcheese-core",
  "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-search"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
-]
-
-[[package]]
-name = "stringcheese-set-similarity"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "stringcheese-core",
- "stringcheese-corpus",
- "stringcheese-ngram",
 ]
 
 [[package]]

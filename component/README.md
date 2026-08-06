@@ -205,21 +205,21 @@ and (b) an obvious counterpart in the StringCheese crates. This is the
 they turn up needing sequence comparison from a non-Rust host.
 
 - **Levenshtein**, **OSA**, and **LCS distance** — the three
-  workhorse edit-distance metrics from `stringcheese-levenshtein`,
-  `stringcheese-damerau`, and `stringcheese-lcs`.
+  workhorse edit-distance metrics from `stringcheese-compare`'s
+  `levenshtein`, `damerau`, and `lcs` modules.
 - **Bounded Levenshtein** (`levenshtein-within`) — the same, plus a
   cutoff, mapped to the WIT `bounded-distance` variant.
 - **Hamming** — with its length-mismatch error surfaced through
   `result<u32, string>`.
 - **Jaro** and **Jaro–Winkler (classic)** — the two Jaro-family
-  similarities from `stringcheese-jaro`.
+  similarities from `stringcheese-compare::jaro`.
 - **Dice-over-bigrams** and **Jaccard-over-bigrams** — set
   similarities on character (byte) bigrams, using the n-gram
-  generator from `stringcheese-ngram` as a small in-host shim
+  generator from `stringcheese-compare::ngram` as a small in-host shim
   (`byte_bigram_sets` in `src/lib.rs`) to build `GramSet<Vec<u8>>` on
-  each side before calling into `stringcheese-set-similarity`.
+  each side before calling into `stringcheese-compare::set_similarity`.
 - **KMP `find-first` / `find-all`** — substring search from
-  `stringcheese-search`, defaulting to KMP because it has cheap
+  `stringcheese-compare::search`, defaulting to KMP because it has cheap
   preparation and predictable worst-case search time.
 - **Soundex**, **NYSIIS**, **Double Metaphone (primary key)** — the
   three code-driven phonetic encoders from `stringcheese-phonetic`.

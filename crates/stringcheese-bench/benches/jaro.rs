@@ -20,8 +20,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
+use stringcheese_compare::jaro::{Jaro, JaroWinkler};
 use stringcheese_core::SimilarityMetric;
-use stringcheese_jaro::{Jaro, JaroWinkler};
 
 const LENGTHS: &[usize] = &[8, 32, 128, 512, 2048];
 

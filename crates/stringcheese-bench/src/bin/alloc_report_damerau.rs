@@ -24,14 +24,14 @@
 
 use stringcheese_bench::alloc_harness::{AllocMeasurement, measure};
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_core::DistanceMetric;
-use stringcheese_damerau::{
+use stringcheese_compare::damerau::{
     Damerau, DamerauWorkspace,
     damerau::{
         full_matrix::distance_full_matrix as damerau_full_matrix,
         production::distance_production_with_workspace as damerau_production,
     },
 };
+use stringcheese_core::DistanceMetric;
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;

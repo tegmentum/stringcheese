@@ -33,7 +33,7 @@ use std::hint::black_box;
 
 use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
 use stringcheese_core::DistanceMetric;
-use stringcheese_levenshtein::Levenshtein;
+use stringcheese_compare::levenshtein::Levenshtein;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 /// Per-length salts. Distinct from `stringcheese-bench`'s own
