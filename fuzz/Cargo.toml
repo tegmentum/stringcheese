@@ -1,0 +1,85 @@
+[workspace]
+# Fuzz targets live outside the main workspace so cargo-fuzz can manage their
+# build settings independently. The main workspace root also excludes `fuzz`
+# via its `[workspace] exclude = [...]` list; this sentinel `[workspace]`
+# here is the belt-and-braces companion that makes the fuzz crate a workspace
+# root in its own right regardless of which side of the divide is inspected
+# first by tooling.
+
+[package]
+name = "comparand-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+# Path deps back into the main workspace crates. `default-features = false`
+# with the `std` feature explicitly turned on matches the shape of every
+# other consumer in the workspace — the fuzz targets need heap allocation,
+# and everything they exercise is `alloc`-gated (or `std`-gated for the
+# Damerau production kernel, which uses `std::collections::HashMap`).
+comparand-core = { path = "../crates/comparand-core", default-features = false, features = ["std"] }
+comparand-levenshtein = { path = "../crates/comparand-levenshtein", default-features = false, features = ["std"] }
+comparand-hamming = { path = "../crates/comparand-hamming", default-features = false, features = ["std"] }
+comparand-jaro = { path = "../crates/comparand-jaro", default-features = false, features = ["std"] }
+comparand-damerau = { path = "../crates/comparand-damerau", default-features = false, features = ["std"] }
+comparand-ngram = { path = "../crates/comparand-ngram", default-features = false, features = ["std"] }
+
+# Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
+# up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
+# false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
+# which would otherwise try to build them without the libfuzzer harness.
+
+[[bin]]
+name = "levenshtein_differential"
+path = "fuzz_targets/levenshtein_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "osa_differential"
+path = "fuzz_targets/osa_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "damerau_differential"
+path = "fuzz_targets/damerau_differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hamming_symmetry"
+path = "fuzz_targets/hamming_symmetry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jaro_range"
+path = "fuzz_targets/jaro_range.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ngram_count_agreement"
+path = "fuzz_targets/ngram_count_agreement.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "metric_axioms_levenshtein"
+path = "fuzz_targets/metric_axioms_levenshtein.rs"
+test = false
+doc = false
+bench = false
