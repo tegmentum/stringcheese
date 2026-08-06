@@ -19,7 +19,7 @@ use crate::bk_tree::BkTree;
 use crate::error::NotAMetricError;
 use crate::prefix_filter::length_filter;
 use crate::qgram_index::QgramIndex;
-use crate::vp_tree::VpTree;
+use crate::vp_tree::{VantageStrategy, VpTree};
 
 /// A short byte-slice strategy over a small alphabet.
 fn arb_bytes() -> impl Strategy<Value = Vec<u8>> {
@@ -212,6 +212,97 @@ proptest! {
         prop_assert!(
             depth <= bound,
             "bulk-built tree unexpectedly deep: n={n} depth={depth} bound={bound}"
+        );
+    }
+
+    /// VP-tree strategy invariance for range queries: all three vantage
+    /// strategies must return the same range-query result set for any
+    /// random corpus and query. The trees are shaped differently, but the
+    /// answer is identical.
+    #[test]
+    fn vp_tree_strategy_invariance_range(
+        corpus in arb_corpus(),
+        query in arb_bytes(),
+        r in 0u32..=6,
+        seed in any::<u64>(),
+    ) {
+        let default_tree = VpTree::from_corpus(Levenshtein, corpus.clone());
+        let random_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus.clone(), VantageStrategy::Random { seed },
+        );
+        let farthest_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus.clone(), VantageStrategy::FarthestFromParent,
+        );
+
+        let mut a = default_tree.find_within(&query, r);
+        let mut b = random_tree.find_within(&query, r);
+        let mut c = farthest_tree.find_within(&query, r);
+        a.sort();
+        b.sort();
+        c.sort();
+
+        prop_assert_eq!(&a, &b, "Random strategy disagreed with FirstItem");
+        prop_assert_eq!(&a, &c, "FarthestFromParent strategy disagreed with FirstItem");
+    }
+
+    /// VP-tree strategy invariance for k-NN queries: identical
+    /// distance-sequences across all three strategies.
+    #[test]
+    fn vp_tree_strategy_invariance_k_nearest(
+        corpus in arb_corpus(),
+        query in arb_bytes(),
+        k in 0usize..=6,
+        seed in any::<u64>(),
+    ) {
+        let default_tree = VpTree::from_corpus(Levenshtein, corpus.clone());
+        let random_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus.clone(), VantageStrategy::Random { seed },
+        );
+        let farthest_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus.clone(), VantageStrategy::FarthestFromParent,
+        );
+
+        let a: Vec<u32> = default_tree.find_k_nearest(&query, k)
+            .into_iter().map(|(_, d)| d).collect();
+        let b: Vec<u32> = random_tree.find_k_nearest(&query, k)
+            .into_iter().map(|(_, d)| d).collect();
+        let c: Vec<u32> = farthest_tree.find_k_nearest(&query, k)
+            .into_iter().map(|(_, d)| d).collect();
+
+        prop_assert_eq!(&a, &b, "Random strategy k-NN disagreed with FirstItem");
+        prop_assert_eq!(&a, &c, "FarthestFromParent strategy k-NN disagreed with FirstItem");
+    }
+
+    /// Balance: the non-default strategies produce trees of depth
+    /// `<= ceil(log2(N)) + 3` — a single-node slack over the
+    /// `FirstItem` bound (`ceil(log2(N)) + 2`) to account for the
+    /// different vantage choice's effect on the boundary items.
+    #[test]
+    fn vp_tree_alternative_strategies_stay_balanced(
+        corpus in arb_balanced_corpus(),
+        seed in any::<u64>(),
+    ) {
+        let n = corpus.len();
+        prop_assume!(n >= 2);
+        let ceil_log2 = (usize::BITS - (n - 1).leading_zeros()) as usize;
+        let bound = ceil_log2 + 3;
+
+        let random_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus.clone(), VantageStrategy::Random { seed },
+        );
+        let farthest_tree = VpTree::from_corpus_with_strategy(
+            Levenshtein, corpus, VantageStrategy::FarthestFromParent,
+        );
+
+        let d_random = random_tree.max_depth();
+        prop_assert!(
+            d_random <= bound,
+            "Random strategy unexpectedly deep: n={n} depth={d_random} bound={bound}"
+        );
+        let d_farthest = farthest_tree.max_depth();
+        prop_assert!(
+            d_farthest <= bound,
+            "FarthestFromParent strategy unexpectedly deep: n={n} depth={d_farthest} bound={bound}"
         );
     }
 

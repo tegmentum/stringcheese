@@ -107,6 +107,64 @@ use comparand_core::DistanceMetric;
 
 use crate::error::NotAMetricError;
 
+/// Vantage-point selection strategy for [`VpTree::from_corpus_with_strategy`].
+///
+/// The vantage picked at each recursive level of the bulk build controls
+/// how balanced the tree stays and how tight the pruning bounds are. The
+/// three shipped strategies span the classical tradeoff:
+///
+/// * [`VantageStrategy::FirstItem`] — pick position 0 at every level. The
+///   simplest correct choice, and what [`VpTree::from_corpus`] uses. On
+///   random corpora this produces well-balanced trees; on inputs sorted or
+///   clustered around specific vantage-selection artifacts, it can leave
+///   pathological subtrees.
+/// * [`VantageStrategy::Random`] — pick a uniformly random remaining item
+///   at each level using a deterministic `SplitMix64` seeded from the
+///   provided seed. Reproducible across runs; robust against adversarial
+///   inputs whose "first item" happens to be a poor vantage.
+/// * [`VantageStrategy::FarthestFromParent`] — at each non-root level pick
+///   the item farthest from the parent's vantage, based on the distance
+///   annotations the parent already computed. This is the classical
+///   VP-tree literature's recommendation (Yianilos '93) for adversarial
+///   inputs — picking a vantage on the "edge" of the current subset's
+///   distance distribution tightens the two-child radii most effectively.
+///
+/// All three strategies preserve the invariants `find_within` and
+/// `find_k_nearest` rely on, so query results are identical (as sets)
+/// across strategies. See the [`VpTree::from_corpus_with_strategy`]
+/// docs for the balance vs. pruning tradeoff.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum VantageStrategy {
+    /// Pick the first item at each level as the vantage. Backwards-compatible
+    /// default; matches the behavior of the original [`VpTree::from_corpus`].
+    #[default]
+    FirstItem,
+    /// Pick a uniformly random remaining item at each level, using
+    /// `SplitMix64` seeded from `seed` for reproducibility.
+    Random {
+        /// Seed for the `SplitMix64` PRNG used to pick vantages. Two builds
+        /// with the same seed produce the same tree; different seeds
+        /// produce different trees over the same corpus.
+        seed: u64,
+    },
+    /// Pick the item farthest from the parent's vantage as the child's
+    /// vantage, based on the distances the parent already computed
+    /// (`O(1)` per level, reusing the parent's annotation array).
+    FarthestFromParent,
+}
+
+/// A tiny `SplitMix64` PRNG — deterministic, seedable, and requires no
+/// dependencies. Matches the pattern already established elsewhere in
+/// `comparand-bench` (see the random-corpus generators there).
+#[inline]
+fn splitmix64(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// A single VP-tree node: a vantage-point item plus an optional threshold
 /// and two child subtrees.
 ///
@@ -296,10 +354,7 @@ where
     /// [`slice::select_nth_unstable_by_key`]: https://doc.rust-lang.org/std/primitive.slice.html#method.select_nth_unstable_by_key
     #[must_use]
     pub fn from_corpus(metric: M, items: Vec<Vec<T>>) -> Self {
-        match Self::try_from_corpus(metric, items) {
-            Ok(t) => t,
-            Err(e) => panic!("VpTree requires a true metric: {e}"),
-        }
+        Self::from_corpus_with_strategy(metric, items, VantageStrategy::FirstItem)
     }
 
     /// Fallible sibling of [`VpTree::from_corpus`].
@@ -312,12 +367,74 @@ where
     ///
     /// [`MetricProperties`]: comparand_core::MetricProperties
     pub fn try_from_corpus(metric: M, items: Vec<Vec<T>>) -> Result<Self, NotAMetricError> {
+        Self::try_from_corpus_with_strategy(metric, items, VantageStrategy::FirstItem)
+    }
+
+    /// Builds a balanced VP-tree from a corpus in one shot, using the
+    /// supplied [`VantageStrategy`] to pick the vantage at each recursive
+    /// level.
+    ///
+    /// # Strategy tradeoff
+    ///
+    /// * [`VantageStrategy::FirstItem`] is the default (used by
+    ///   [`VpTree::from_corpus`]) and the simplest correct choice. On
+    ///   random corpora it produces trees of depth `<= ceil(log2(N)) + 2`.
+    /// * [`VantageStrategy::Random`] and
+    ///   [`VantageStrategy::FarthestFromParent`] target adversarial
+    ///   inputs — sorted corpora or corpora where the first item happens
+    ///   to be a degenerate vantage. Both remain balanced within a small
+    ///   slack over the [`VantageStrategy::FirstItem`] bound (property
+    ///   tests assert `<= ceil(log2(N)) + 3`) and, most importantly,
+    ///   return the *same* `find_within` and `find_k_nearest` result sets
+    ///   as the default strategy — the trees differ but the answers do
+    ///   not.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `metric.properties()` does not satisfy
+    /// [`MetricProperties::is_metric()`]. Use
+    /// [`VpTree::try_from_corpus_with_strategy`] for a fallible version.
+    ///
+    /// [`MetricProperties::is_metric()`]: comparand_core::MetricProperties::is_metric
+    #[must_use]
+    pub fn from_corpus_with_strategy(
+        metric: M,
+        items: Vec<Vec<T>>,
+        strategy: VantageStrategy,
+    ) -> Self {
+        match Self::try_from_corpus_with_strategy(metric, items, strategy) {
+            Ok(t) => t,
+            Err(e) => panic!("VpTree requires a true metric: {e}"),
+        }
+    }
+
+    /// Fallible sibling of [`VpTree::from_corpus_with_strategy`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotAMetricError`] carrying the observed
+    /// [`MetricProperties`][comparand_core::MetricProperties] when
+    /// `metric.properties().is_metric()` is `false`. The corpus is not
+    /// consumed on error.
+    pub fn try_from_corpus_with_strategy(
+        metric: M,
+        items: Vec<Vec<T>>,
+        strategy: VantageStrategy,
+    ) -> Result<Self, NotAMetricError> {
         let props = metric.properties();
         if !props.is_metric() {
             return Err(NotAMetricError::new(props));
         }
         let len = items.len();
-        let root = build_bulk(&metric, items);
+        let mut rng_state = match strategy {
+            VantageStrategy::Random { seed } => seed,
+            _ => 0,
+        };
+        // `None` as `parent_vantage_index` at the root: there is no parent
+        // vantage yet, so `FarthestFromParent` degrades to `FirstItem` at
+        // the top of the tree (the same behavior as the classical Yianilos
+        // formulation, which also has to bootstrap the recursion).
+        let root = build_bulk(&metric, items, strategy, &mut rng_state, None);
         Ok(Self { metric, root, len })
     }
 
@@ -458,7 +575,13 @@ impl<T, D: Ord> Ord for HeapEntry<T, D> {
 /// unchanged with `≥` in place of `>` on the outside side.
 ///
 /// [`slice::select_nth_unstable_by_key`]: https://doc.rust-lang.org/std/primitive.slice.html#method.select_nth_unstable_by_key
-fn build_bulk<T, M>(metric: &M, items: Vec<Vec<T>>) -> Option<Node<T, M::Output>>
+fn build_bulk<T, M>(
+    metric: &M,
+    mut items: Vec<Vec<T>>,
+    strategy: VantageStrategy,
+    rng_state: &mut u64,
+    parent_vantage: Option<&[T]>,
+) -> Option<Node<T, M::Output>>
 where
     T: Clone,
     M: DistanceMetric<[T]>,
@@ -467,10 +590,47 @@ where
     if items.is_empty() {
         return None;
     }
-    let mut iter = items.into_iter();
-    // Safe: we just checked non-emptiness above.
-    let vantage = iter.next().expect("non-empty by prior check");
-    let rest: Vec<Vec<T>> = iter.collect();
+
+    // Pick the vantage index according to the strategy. `FarthestFromParent`
+    // degrades to `FirstItem` at the root (no parent) — this matches the
+    // classical Yianilos formulation, which also has to bootstrap the
+    // recursion somehow.
+    let vantage_idx = match (strategy, parent_vantage) {
+        // `FirstItem`, and `FarthestFromParent` at the root: identical
+        // bootstrap of "just pick position 0". Clippy would flag two
+        // separate arms with the same body, so combine them.
+        (VantageStrategy::FirstItem, _) | (VantageStrategy::FarthestFromParent, None) => 0,
+        (VantageStrategy::Random { .. }, _) => {
+            // Uniformly random position in [0, items.len()). `SplitMix64`
+            // outputs a u64; taking modulo `items.len()` is fine for the
+            // corpus sizes any VP-tree ever sees.
+            let r = splitmix64(rng_state);
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "corpus sizes fit in usize by construction; the u64 truncation is meaningful here"
+            )]
+            let idx = (r % (items.len() as u64)) as usize;
+            idx
+        }
+        (VantageStrategy::FarthestFromParent, Some(parent)) => {
+            // Farthest from the parent's vantage. `O(n)` here — one
+            // metric call per remaining item — reusing the distance
+            // computation pattern the position-partition step below also
+            // uses.
+            let mut best = 0usize;
+            let mut best_d = metric.distance(parent, &items[0]).into_inner();
+            for (i, item) in items.iter().enumerate().skip(1) {
+                let d = metric.distance(parent, item).into_inner();
+                if d > best_d {
+                    best = i;
+                    best_d = d;
+                }
+            }
+            best
+        }
+    };
+    let vantage = items.swap_remove(vantage_idx);
+    let rest = items;
     if rest.is_empty() {
         return Some(Node::new(vantage));
     }
@@ -519,8 +679,10 @@ where
         .collect();
     let inside_items: Vec<Vec<T>> = annotated.into_iter().map(|(item, _)| item).collect();
 
-    let inside = build_bulk(metric, inside_items).map(Box::new);
-    let outside = build_bulk(metric, outside_items).map(Box::new);
+    let inside =
+        build_bulk(metric, inside_items, strategy, rng_state, Some(&vantage)).map(Box::new);
+    let outside =
+        build_bulk(metric, outside_items, strategy, rng_state, Some(&vantage)).map(Box::new);
 
     Some(Node {
         vantage,

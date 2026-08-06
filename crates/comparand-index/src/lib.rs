@@ -138,4 +138,4 @@ pub use prefix_filter::length_filter;
 #[cfg(feature = "alloc")]
 pub use qgram_index::QgramIndex;
 #[cfg(feature = "alloc")]
-pub use vp_tree::VpTree;
+pub use vp_tree::{VantageStrategy, VpTree};
