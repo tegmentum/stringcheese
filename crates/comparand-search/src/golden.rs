@@ -16,9 +16,11 @@ use comparand_corpus::{GoldenCase, GoldenSource};
 
 use crate::aho_corasick::AhoCorasick;
 use crate::api::{Match, SinglePatternSearch};
-use crate::boyer_moore::BoyerMoore;
+use crate::boyer_moore::{BoyerMoore, BoyerMooreFull};
+use crate::horspool::Horspool;
 use crate::kmp::Kmp;
 use crate::rabin_karp::RabinKarp;
+use crate::two_way::TwoWay;
 
 /// A single-pattern search input: pattern and haystack.
 pub type SingleInput = (&'static [u8], &'static [u8]);
@@ -206,6 +208,182 @@ pub const GOLDEN_BOYER_MOORE: &[SingleCase] = &[
     },
 ];
 
+// ---- Boyer-Moore (full) cases -----------------------------------------
+
+/// Golden cases exercising the full Boyer-Moore variant (bad-character
+/// plus good-suffix). The differential property test pins these outputs
+/// against the bad-character-only variant on random inputs; the golden
+/// cases here focus on classical textbook patterns that historically
+/// exercise the good-suffix path.
+pub const GOLDEN_BOYER_MOORE_FULL: &[SingleCase] = &[
+    GoldenCase {
+        id: "search/boyer-moore-full/textbook-anpanman",
+        descriptor: BoyerMooreFull::DESCRIPTOR,
+        // Boyer & Moore's own paper uses "ANPANMAN" as a pedagogical
+        // pattern that exercises the good-suffix shift after a partial
+        // right-to-left match.
+        input: (b"ANPANMAN", b"WOWANPANMANMANPANMANANPANMAN"),
+        expected: &[
+            Match {
+                position: 3,
+                pattern_index: 0,
+            },
+            Match {
+                position: 12,
+                pattern_index: 0,
+            },
+            Match {
+                position: 20,
+                pattern_index: 0,
+            },
+        ],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Boyer-Moore's canonical example — a repeating substring that exercises the good-suffix jump on repeated near-matches.",
+        tags: &["good-suffix", "canonical"],
+    },
+    GoldenCase {
+        id: "search/boyer-moore-full/periodic-pattern-overlap",
+        descriptor: BoyerMooreFull::DESCRIPTOR,
+        input: (b"abab", b"ababab"),
+        expected: &[
+            Match {
+                position: 0,
+                pattern_index: 0,
+            },
+            Match {
+                position: 2,
+                pattern_index: 0,
+            },
+        ],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Periodic pattern with overlap; good-suffix's period-based fallback shift interacts with the +1 overlap step.",
+        tags: &["good-suffix", "overlap", "period"],
+    },
+    GoldenCase {
+        id: "search/boyer-moore-full/empty-haystack",
+        descriptor: BoyerMooreFull::DESCRIPTOR,
+        input: (b"abc", b""),
+        expected: &[],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Boundary check identical in shape to the bad-character-only variant.",
+        tags: &["boundary", "empty-haystack"],
+    },
+];
+
+// ---- Horspool cases ---------------------------------------------------
+
+/// Golden cases exercising the Horspool implementation. The differential
+/// property test pins these outputs against KMP on random inputs; the
+/// golden cases here fix Horspool's distinguishing behavior — the shift
+/// table always driven by the byte aligned with the rightmost pattern
+/// position.
+pub const GOLDEN_HORSPOOL: &[SingleCase] = &[
+    GoldenCase {
+        id: "search/horspool/rightmost-byte-shift",
+        descriptor: Horspool::DESCRIPTOR,
+        input: (b"BCDFGH", b"aaaaaaBCDFGH"),
+        expected: &[Match {
+            position: 6,
+            pattern_index: 0,
+        }],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "The initial 'a' byte at the window's rightmost position is not in the pattern; Horspool shifts by the full pattern length each time.",
+        tags: &["shift-table", "large-shift"],
+    },
+    GoldenCase {
+        id: "search/horspool/overlapping-matches",
+        descriptor: Horspool::DESCRIPTOR,
+        input: (b"aa", b"aaaa"),
+        expected: &[
+            Match {
+                position: 0,
+                pattern_index: 0,
+            },
+            Match {
+                position: 1,
+                pattern_index: 0,
+            },
+            Match {
+                position: 2,
+                pattern_index: 0,
+            },
+        ],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Overlapping matches of a two-byte pattern; verifies the +1 advance after each match.",
+        tags: &["overlap"],
+    },
+    GoldenCase {
+        id: "search/horspool/empty-pattern",
+        descriptor: Horspool::DESCRIPTOR,
+        input: (b"", b"abc"),
+        expected: &[Match {
+            position: 0,
+            pattern_index: 0,
+        }],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Empty pattern matches at position 0 exactly once — same as every other single-pattern algorithm in this crate.",
+        tags: &["boundary", "empty-pattern"],
+    },
+];
+
+// ---- Two-way cases ----------------------------------------------------
+
+/// Golden cases exercising the Two-way (Crochemore-Perrin 1991)
+/// implementation. The differential property test pins these outputs
+/// against KMP on random inputs; the golden cases here focus on
+/// factorization shapes — periodic vs non-periodic, textbook worst-case
+/// patterns for naive algorithms.
+pub const GOLDEN_TWO_WAY: &[SingleCase] = &[
+    GoldenCase {
+        id: "search/two-way/periodic-pattern",
+        descriptor: TwoWay::DESCRIPTOR,
+        input: (b"abcabc", b"abcabcabc"),
+        expected: &[
+            Match {
+                position: 0,
+                pattern_index: 0,
+            },
+            Match {
+                position: 3,
+                pattern_index: 0,
+            },
+        ],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Periodic pattern (period 3, length 6) exercises the memory-based branch of the two-way scan.",
+        tags: &["periodic", "critical-factorization"],
+    },
+    GoldenCase {
+        id: "search/two-way/non-periodic-pattern",
+        descriptor: TwoWay::DESCRIPTOR,
+        input: (b"abcdef", b"xxabcdefyyabcdef"),
+        expected: &[
+            Match {
+                position: 2,
+                pattern_index: 0,
+            },
+            Match {
+                position: 10,
+                pattern_index: 0,
+            },
+        ],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Non-periodic pattern uses the widened-period, no-memory branch of the two-way scan.",
+        tags: &["non-periodic", "critical-factorization"],
+    },
+    GoldenCase {
+        id: "search/two-way/naive-worst-case",
+        descriptor: TwoWay::DESCRIPTOR,
+        input: (b"aaaaab", b"aaaaaaaaaab"),
+        expected: &[Match {
+            position: 5,
+            pattern_index: 0,
+        }],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "A pattern that is O(n*m) for naive left-to-right search; two-way handles it in linear time.",
+        tags: &["worst-case", "linear-guarantee"],
+    },
+];
+
 // ---- Aho-Corasick cases ------------------------------------------------
 
 const AC_HE_SET: &[&[u8]] = &[b"he", b"she", b"his", b"hers"];
@@ -309,6 +487,30 @@ mod tests {
                 c.id
             );
         }
+        for c in GOLDEN_BOYER_MOORE_FULL {
+            assert_eq!(
+                c.descriptor,
+                BoyerMooreFull::DESCRIPTOR,
+                "wrong descriptor in {}",
+                c.id
+            );
+        }
+        for c in GOLDEN_HORSPOOL {
+            assert_eq!(
+                c.descriptor,
+                Horspool::DESCRIPTOR,
+                "wrong descriptor in {}",
+                c.id
+            );
+        }
+        for c in GOLDEN_TWO_WAY {
+            assert_eq!(
+                c.descriptor,
+                TwoWay::DESCRIPTOR,
+                "wrong descriptor in {}",
+                c.id
+            );
+        }
         for c in GOLDEN_AHO_CORASICK {
             assert_eq!(
                 c.descriptor,
@@ -344,6 +546,30 @@ mod tests {
     }
 
     #[test]
+    fn every_boyer_moore_full_case_matches_algorithm() {
+        for c in GOLDEN_BOYER_MOORE_FULL {
+            let observed = run_single::<BoyerMooreFull>(c);
+            assert_eq!(&observed[..], c.expected, "case {} disagreed", c.id);
+        }
+    }
+
+    #[test]
+    fn every_horspool_case_matches_algorithm() {
+        for c in GOLDEN_HORSPOOL {
+            let observed = run_single::<Horspool>(c);
+            assert_eq!(&observed[..], c.expected, "case {} disagreed", c.id);
+        }
+    }
+
+    #[test]
+    fn every_two_way_case_matches_algorithm() {
+        for c in GOLDEN_TWO_WAY {
+            let observed = run_single::<TwoWay>(c);
+            assert_eq!(&observed[..], c.expected, "case {} disagreed", c.id);
+        }
+    }
+
+    #[test]
     fn every_aho_corasick_case_matches_algorithm() {
         for c in GOLDEN_AHO_CORASICK {
             let ac = AhoCorasick::build(c.input.0);
@@ -354,10 +580,14 @@ mod tests {
 
     #[test]
     fn corpus_meets_minimum_size() {
-        // Spec asks for at least 15 golden cases across the four algorithms.
+        // Spec asks for at least 15 golden cases across the algorithms;
+        // the current corpus significantly exceeds that.
         let total = GOLDEN_RABIN_KARP.len()
             + GOLDEN_KMP.len()
             + GOLDEN_BOYER_MOORE.len()
+            + GOLDEN_BOYER_MOORE_FULL.len()
+            + GOLDEN_HORSPOOL.len()
+            + GOLDEN_TWO_WAY.len()
             + GOLDEN_AHO_CORASICK.len();
         assert!(
             total >= 15,
@@ -371,6 +601,9 @@ mod tests {
         ids.extend(GOLDEN_RABIN_KARP.iter().map(|c| c.id));
         ids.extend(GOLDEN_KMP.iter().map(|c| c.id));
         ids.extend(GOLDEN_BOYER_MOORE.iter().map(|c| c.id));
+        ids.extend(GOLDEN_BOYER_MOORE_FULL.iter().map(|c| c.id));
+        ids.extend(GOLDEN_HORSPOOL.iter().map(|c| c.id));
+        ids.extend(GOLDEN_TWO_WAY.iter().map(|c| c.id));
         ids.extend(GOLDEN_AHO_CORASICK.iter().map(|c| c.id));
         let mut sorted = ids.clone();
         sorted.sort_unstable();

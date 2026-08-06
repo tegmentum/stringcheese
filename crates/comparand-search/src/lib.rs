@@ -16,15 +16,28 @@
 //! * [`kmp`] — Knuth-Morris-Pratt (`Knuth`, `Morris`, `Pratt` 1977). Builds
 //!   the classical failure function and scans the haystack in a single pass
 //!   that never re-reads any byte.
-//! * [`boyer_moore`] — Boyer-Moore with the bad-character heuristic (`Boyer`,
-//!   `Moore` 1977). The good-suffix heuristic is deferred to a future
-//!   descriptor variant; the current implementation carries the variant
-//!   slug `"bad-character-only"` so a future upgrade cannot be silently
-//!   mistaken for the classical full variant.
+//! * [`boyer_moore`] — Boyer-Moore search shipped as two related
+//!   handles: [`BoyerMoore`] with the bad-character heuristic only
+//!   (variant slug `"bad-character-only"`) and [`BoyerMooreFull`] with
+//!   both the bad-character and the good-suffix heuristics (variant
+//!   slug `"full-with-good-suffix"`). Both produce the same match set;
+//!   the two variants exist so a golden case pinned to one shape
+//!   cannot be silently validated against the other, and so callers
+//!   can pick a performance profile.
+//! * [`horspool`] — Horspool 1980, a simpler bad-character-only
+//!   Boyer-Moore variant that always shifts based on the byte aligned
+//!   with the pattern's rightmost position.
+//! * [`two_way`] — Crochemore-Perrin 1991 two-way string matching,
+//!   `O(1)` extra space at preprocessing and `O(n)` worst-case scan
+//!   (for [`SinglePatternSearch::find`]).
 //! * [`aho_corasick`] — Aho-Corasick multi-pattern automaton (`Aho`,
 //!   `Corasick` 1975). Streams a haystack against an arbitrary set of
 //!   patterns in a single pass and reports every match — including
 //!   overlapping matches from different patterns.
+//! * [`stream`] — streaming state-machine wrappers for the algorithms
+//!   that admit them (KMP, Rabin-Karp, Aho-Corasick). Boyer-Moore and
+//!   its variants are deliberately omitted; see the module
+//!   documentation for the rationale.
 //!
 //! # Common surface
 //!
@@ -78,9 +91,15 @@ pub mod aho_corasick;
 #[cfg(feature = "alloc")]
 pub mod boyer_moore;
 #[cfg(feature = "alloc")]
+pub mod horspool;
+#[cfg(feature = "alloc")]
 pub mod kmp;
 #[cfg(feature = "alloc")]
 pub mod rabin_karp;
+#[cfg(feature = "alloc")]
+pub mod stream;
+#[cfg(feature = "alloc")]
+pub mod two_way;
 
 #[cfg(all(test, feature = "alloc"))]
 mod golden;
@@ -95,8 +114,14 @@ pub use api::{Match, SearchAlgorithm};
 #[cfg(feature = "alloc")]
 pub use aho_corasick::AhoCorasick;
 #[cfg(feature = "alloc")]
-pub use boyer_moore::BoyerMoore;
+pub use boyer_moore::{BoyerMoore, BoyerMooreFull};
+#[cfg(feature = "alloc")]
+pub use horspool::Horspool;
 #[cfg(feature = "alloc")]
 pub use kmp::Kmp;
 #[cfg(feature = "alloc")]
 pub use rabin_karp::RabinKarp;
+#[cfg(feature = "alloc")]
+pub use stream::{SearchStream, StreamingSearch};
+#[cfg(feature = "alloc")]
+pub use two_way::TwoWay;

@@ -217,6 +217,50 @@ impl AhoCorasick {
         self.pattern_count
     }
 
+    /// Returns the length of the pattern at the given index in the input
+    /// slice passed to [`AhoCorasick::build`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pattern_index >= self.pattern_count()`.
+    #[inline]
+    #[must_use]
+    pub fn pattern_length(&self, pattern_index: usize) -> usize {
+        self.pattern_lengths[pattern_index]
+    }
+
+    /// Returns whether state `s` has a goto transition on byte `b`.
+    ///
+    /// Exposed as a `pub(crate)` accessor so the streaming wrapper in
+    /// [`crate::stream`] can drive the automaton without duplicating
+    /// the goto/failure/output data structures. Not part of the
+    /// long-term public API.
+    #[inline]
+    #[must_use]
+    pub(crate) fn goto_contains_key(&self, s: u32, b: u8) -> bool {
+        self.states[s as usize].goto.contains_key(&b)
+    }
+
+    /// Returns the goto destination from state `s` on byte `b`, if any.
+    #[inline]
+    #[must_use]
+    pub(crate) fn goto_transition(&self, s: u32, b: u8) -> Option<u32> {
+        self.states[s as usize].goto.get(&b).copied()
+    }
+
+    /// Returns the failure link of state `s`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn failure_of(&self, s: u32) -> u32 {
+        self.states[s as usize].failure
+    }
+
+    /// Returns the output pattern indices attached to state `s`.
+    #[inline]
+    pub(crate) fn outputs_of(&self, s: u32) -> impl Iterator<Item = usize> + '_ {
+        self.states[s as usize].outputs.iter().copied()
+    }
+
     /// Streams every match of every registered pattern through
     /// `haystack`.
     ///

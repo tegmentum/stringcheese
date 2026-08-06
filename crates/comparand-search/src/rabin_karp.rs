@@ -112,6 +112,19 @@ impl RabinKarpPrepared {
     pub fn pattern_hash(&self) -> u64 {
         self.pattern_hash
     }
+
+    /// Returns `BASE^(pattern.len() − 1) mod MODULUS`, used by the
+    /// streaming wrapper to subtract the leaving byte's contribution on
+    /// each rolling update. `0` when the pattern is empty.
+    ///
+    /// `pub(crate)` because the wire between the batch and streaming
+    /// implementations is an implementation detail. Not part of the
+    /// long-term public API.
+    #[inline]
+    #[must_use]
+    pub(crate) fn leading_factor(&self) -> u64 {
+        self.leading_factor
+    }
 }
 
 impl RabinKarp {
