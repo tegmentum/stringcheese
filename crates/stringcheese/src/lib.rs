@@ -71,6 +71,13 @@ pub use stringcheese_unicode as unicode;
 /// unchanged from the `stringcheese-phonetic` crate.
 pub use stringcheese_phonetic as phonetic;
 
+/// The string-manipulation subsystem — inspect, trim, case, split, join,
+/// replace, normalize, pad, slice, find, escape, quote, lines, template,
+/// plus the `TextPipeline` transformation IR. Scaffold only in v0.1;
+/// modules populate in subsequent releases. Re-exported unchanged from
+/// the `stringcheese-manip` crate.
+pub use stringcheese_manip as manip;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `stringcheese` crate's semantic version.

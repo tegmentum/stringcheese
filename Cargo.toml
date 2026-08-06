@@ -11,6 +11,7 @@ members = [
     "crates/stringcheese-cdc",
     "crates/stringcheese-index",
     "crates/stringcheese-align",
+    "crates/stringcheese-manip",
 ]
 exclude = [
     "fuzz",
@@ -45,6 +46,7 @@ stringcheese-index = { version = "0.1.0", path = "crates/stringcheese-index", de
 stringcheese-corpus = { version = "0.1.0", path = "crates/stringcheese-corpus", default-features = false }
 stringcheese-compare = { version = "0.1.0", path = "crates/stringcheese-compare", default-features = false }
 stringcheese-align = { version = "0.1.0", path = "crates/stringcheese-align", default-features = false }
+stringcheese-manip = { version = "0.1.0", path = "crates/stringcheese-manip", default-features = false }
 
 [profile.release]
 lto = "thin"

@@ -1,0 +1,24 @@
+[package]
+name = "stringcheese-manip"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Scaffold-only in v0.1 — modules are placeholders that record the charter; items land in subsequent releases."
+categories = ["text-processing", "no-std"]
+keywords = ["string", "text", "manipulation", "no-std", "wasm"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "stringcheese-core/std"]
+# When enabled, the crate may use heap-allocating types from `alloc`.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[lints]
+workspace = true

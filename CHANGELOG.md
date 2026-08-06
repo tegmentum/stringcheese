@@ -24,6 +24,24 @@ bump; `0.x` versions are pre-stability.
   `use stringcheese_compare::levenshtein::Levenshtein` both resolve.
   Public API is preserved.
 
+- **`stringcheese-manip` crate.** New sub-project — the manipulation
+  half of the StringCheese charter. Scaffold only in v0.1: every
+  module (`inspect`, `trim`, `case`, `split`, `join`, `replace`,
+  `normalize`, `pad`, `slice`, `find`, `escape`, `quote`, `lines`,
+  `template`, `pipeline`) is declared with module-level docs
+  describing its scope, but no items ship yet. Depending on
+  `stringcheese-manip` today is safe — items will only be added at
+  this pre-1.0 stage, never removed. Also re-exported from the
+  facade as `stringcheese::manip`.
+
+- **`docs/DESIGN.md` Charter/Scope/Architecture rewrite.** The Vision,
+  Scope, and Architecture sections now reflect the umbrella charter
+  (string processing, not just comparison) — sub-project map, the
+  planned language packs (`stringcheese-<language>`), and the planned
+  WIT-based i18n direction (SCUD data packs) are documented. Record
+  linkage stays a sibling library (planned rename to
+  `stringcheese-linkage`); the substantive scope split is unchanged.
+
 ### Changed
 
 - **Import paths.** `use stringcheese_<family>::X` becomes

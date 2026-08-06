@@ -16,61 +16,163 @@ interface — will be added under `docs/` as their scope is fleshed out.
 
 ## Vision
 
-StringCheese is a comprehensive, high-performance Rust library for sequence
-comparison. While its primary API targets strings, the underlying
-architecture is designed around generic sequences.
+StringCheese is a comprehensive, high-performance Rust and WebAssembly
+toolkit for **string processing** — the full arc from inspecting and
+shaping text (comparing, transforming, segmenting, encoding) through to
+the language-specific and locale-aware operations that most string work
+sooner or later needs.
+
+The umbrella pursues three commitments existing string libraries treat
+as tradeoffs, not as coherent whole:
+
+1. **Explicit Unicode semantics at every boundary.** Every operation
+   names the level it works at — bytes, Unicode Scalar Values, extended
+   grapheme clusters, or display width. Nothing silently picks a
+   segmentation.
+2. **Allocation-conscious layered APIs.** Where the operation permits,
+   borrowed / iterator / into-buffer / owned variants are all exposed;
+   the pleasant default doesn't preclude the tight-loop form.
+3. **Pluggable, opt-in globalization.** ICU-alternative i18n via the
+   WebAssembly Component Model, with locale/capability data loaded
+   from compressed data packs rather than the full monolithic ICU
+   binary. Callers pay for the languages and features they use.
 
 The library emphasizes:
 
-- Mathematical correctness
-- Explicit semantics
-- Performance
-- Low memory overhead
+- Mathematical correctness (for comparison)
+- Explicit semantics (for every text-touching API)
+- Performance (runtime, allocation count, peak memory, binary size)
 - Predictable allocation behavior
-- WebAssembly support
-- Composability
-- Explainability
-- Multilingual support
+- WebAssembly support (Wasm-first, no assumption of host runtime)
+- Composability (pipelines, extension traits, configured operations)
+- Explainability (algorithm descriptors, inspectable pipelines)
+- Multilingual support (language packs; locale-aware Unicode)
 
 Unlike existing libraries, the goal is not simply to expose implementations
-of known algorithms. The goal is to provide a coherent, semantically rigorous
-comparison framework where the meaning, properties, costs, and limitations
-of every comparison are explicit.
+of known algorithms. The goal is to provide a coherent, semantically
+rigorous string-processing framework where the meaning, properties,
+costs, and limitations of every operation are explicit.
 
 ## Scope
 
-StringCheese's mission is **string comparison** — given two sequences,
-produce a distance, similarity, alignment, phonetic key, or match
-result whose semantics are precise, whose cost is inspectable, and
-whose correctness is testable.
+StringCheese is an **umbrella** — a set of coordinated crates that
+together form one coherent string-processing toolkit. Each sub-project
+owns a slice of the mission; the umbrella keeps them coherent.
 
-Two adjacent problem spaces are **deliberately out of scope** and live
-in separate downstream libraries:
+### In scope
 
-- **String manipulation** — tokenization, splitting, joining, general
-  string transformation beyond what a comparison requires as
-  preprocessing. StringCheese's `stringcheese-unicode` preprocessing
-  pipeline is explicitly comparison-oriented (normalize before
-  comparing); general-purpose string manipulation belongs elsewhere.
+**Comparison** — `stringcheese-compare`, `stringcheese-align`.
+Given two sequences, produce a distance, similarity, alignment, or
+match result whose semantics are precise, whose cost is inspectable,
+and whose correctness is testable. Every metric declares its
+mathematical properties (metric axioms, bounds, normalization
+policy).
 
-- **Record linkage** — combining per-field comparisons into whole-record
-  match/non-match decisions, blocking strategies, learned or
-  probabilistic classifiers that consume per-field scores. StringCheese
-  supplies the per-field scores; deciding whether two records refer to
-  the same real-world entity is a downstream concern.
-  See [record-linkage](https://github.com/tegmentum/record-linkage)
-  for the sibling library that implements the Fellegi-Sunter classifier
-  and sorted-neighborhood blocking on top of StringCheese.
+**Manipulation** — `stringcheese-manip`. Inspect, trim, case, split,
+join, replace, normalize, pad, slice, find, escape, quote, line
+handling, and templating. Four API levels (free functions, extension
+trait, configured operations, `TextPipeline` IR) so both the
+pleasant one-liner and the allocation-controlled hot loop are
+first-class. See the [`stringcheese-manip` module docs](../crates/stringcheese-manip/src/lib.rs)
+for the module map.
+
+**Preprocessing** — `stringcheese-unicode`. Normalization
+(NFC/NFD/NFKC/NFKD), case folding, grapheme-cluster segmentation,
+diacritic stripping — the Unicode-aware primitives that comparison,
+manipulation, and language layers all consume.
+
+**Phonetic** — `stringcheese-phonetic`. Sound-alike keys (Soundex,
+NYSIIS, Double Metaphone) with a `PhoneticEncoder` trait so
+language-specific encoders can plug in via the pack crates.
+
+**Fingerprinting & Chunking** — `stringcheese-cdc`. Rolling-hash
+fingerprints (Rabin, polynomial, Gear) and FastCDC content-defined
+chunking, exposed as a streaming state machine.
+
+**Indexing** — `stringcheese-index`. BK-tree, VP-tree, and q-gram
+inverted index for metric-space and set-similarity nearest-neighbor
+queries. Metric-space structures enforce metric properties at
+construction.
+
+**Language packs** (planned) — `stringcheese-<language>` (e.g.,
+`stringcheese-en`, `stringcheese-de`, `stringcheese-ja`, …).
+Data-driven implementations of stemming, stopword lists,
+language-specific phonetic encoders, tokenization rules, collation
+tailoring, and morphological analysis — one opt-in crate per
+supported language.
+
+**Component-model globalization** (planned) — `stringcheese-icu-*`
+WIT interfaces and data packs. Callers instantiate just the
+interfaces they need (case mapping, collation, plural rules, date
+formatting) and load only the locales they support. A proposed
+compressed data-pack format (SCUD — StringCheese Unicode Data)
+packages CLDR-derived tables at a fraction of ICU's binary size by
+composing range deltas, adaptive paging, packed integers, and outer
+Brotli/Zstd compression.
+
+**Substrate** — `stringcheese-core`, `stringcheese-corpus`. Traits,
+result newtypes, algorithm-variant descriptors, workspace/sequence
+abstractions, and the golden-case validation schema every sub-project
+uses.
+
+### Not in scope for the umbrella
+
+**Record linkage** — combining per-field comparisons into whole-record
+match/non-match decisions, blocking strategies, learned or
+probabilistic classifiers that consume per-field scores. StringCheese
+supplies the per-field scores and the metric-space blocking indexes;
+deciding whether two records refer to the same real-world entity is
+a downstream concern.
+See [record-linkage](https://github.com/tegmentum/record-linkage)
+for the sibling library that implements the Fellegi-Sunter classifier
+and sorted-neighborhood blocking on top of StringCheese. The sibling
+will be renamed to `stringcheese-linkage` and moved under the
+umbrella name in a follow-up wave; the substantive scope split
+(compute per-field vs decide per-record) remains.
+
+**Regex engines** — StringCheese's `find` / `replace` accept
+`Pattern`s in the `str::find` sense (literals, closures, char sets).
+Full regex is a separate library, not an umbrella responsibility.
+
+**I/O and reader-driven pipelines** — manipulation and comparison
+operate on in-memory `&str` / `&[u8]`. Streaming from a reader is a
+downstream concern.
+
+**Full ICU parity** — the WIT-based i18n interfaces target the
+80/90/95 % of locale-aware use cases with pluggable, opt-in data
+packs; parity with ICU's every corner (Java-only APIs, historical
+calendar edge cases, deep transliteration graphs) is not the goal.
+Callers who need that reach for ICU4X directly.
+
+Historically, this repo shipped a `stringcheese-linkage` crate and a
+`sorted_neighborhood` module in `stringcheese-index`; both were
+extracted to the sibling record-linkage repo when the scope decision
+crystallized. See the extraction commit for the migration record.
+
+### Sub-project map
+
+| Crate | Charter |
+| --- | --- |
+| `stringcheese` | Facade — re-exports every sub-project under one dependency |
+| `stringcheese-core` | Traits, result types, descriptors, workspace/sequence abstractions |
+| `stringcheese-corpus` | Golden-case schema, oracle framework, differential harness |
+| `stringcheese-compare` | Comparison kernels: Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, n-gram, set-similarity, MinHash, substring search |
+| `stringcheese-align` | Pairwise alignment: Needleman-Wunsch, Smith-Waterman, edit scripts |
+| `stringcheese-manip` | Manipulation: inspect/trim/case/split/join/replace/normalize/pad/slice/find/escape/quote/lines/template + `TextPipeline` IR |
+| `stringcheese-unicode` | Preprocessing: NFC/NFD/NFKC/NFKD, case folding, graphemes, diacritics |
+| `stringcheese-phonetic` | Phonetic keys: Soundex, NYSIIS, Double Metaphone (language-neutral core) |
+| `stringcheese-cdc` | Rolling-hash fingerprints + FastCDC content-defined chunking |
+| `stringcheese-index` | Metric-space and set-similarity indexes: BK-tree, VP-tree, q-gram inverted |
+| `stringcheese-bench` | Criterion benchmarks + allocation-counting harness |
+| `stringcheese-<lang>` | Language-specific implementations (planned; one opt-in crate per language) |
+| `stringcheese-icu-*` | WIT interfaces + SCUD data packs for i18n (planned) |
 
 The scope boundary is a coherent commitment, not a fence against
-convenience. Sketches, small helpers, or "we already computed the
-number, we may as well combine them" utilities that drift into these
-adjacent spaces belong in the downstream libraries.
-
-Historically StringCheese shipped a `stringcheese-linkage` crate and a
-`sorted_neighborhood` module in `stringcheese-index`; both were
-extracted to the sibling record-linkage repo when this scope decision
-crystallized. See the extraction commit for the migration record.
+convenience. Utilities that drift outside these charters belong in
+downstream libraries. Utilities that would sit awkwardly across two
+sub-projects (e.g., "manip needs to know something a lang pack knows")
+are handled through explicit dependency edges, not by expanding a
+crate's scope.
 
 ## Philosophy
 
@@ -134,25 +236,69 @@ Every design decision should consider:
 
 ## Architecture
 
+The umbrella is a set of coordinated Rust crates in one workspace,
+plus a WIT component-model surface and (planned) opt-in language and
+i18n data packs.
+
 ```
-stringcheese/
-    core/           — sequence abstractions, traits, comparison types
-    distance/
-    similarity/
-    alignment/
-    phonetic/
-    normalization/
-    unicode/
-    ngram/
-    fingerprint/
-    search/
-    chunking/
-    indexing/
-    preprocessing/
-    language/
-    benchmarks/
-    component/
+stringcheese/                       — the workspace root
+├── crates/
+│   ├── stringcheese                — facade (re-exports every sub-project)
+│   ├── stringcheese-core           — traits, result types, descriptors,
+│   │                                 workspace/sequence abstractions
+│   ├── stringcheese-corpus         — golden-case schema, oracle framework
+│   │
+│   ├── stringcheese-compare        — comparison kernels (edit distance,
+│   │                                 similarity, n-gram, MinHash, search)
+│   │     src/
+│   │       ├── levenshtein/        — module per algorithm family
+│   │       ├── hamming/            — (was 9 sibling crates before consolidation)
+│   │       ├── jaro/
+│   │       ├── damerau/
+│   │       ├── lcs/
+│   │       ├── ngram/
+│   │       ├── search/
+│   │       ├── set_similarity/
+│   │       └── minhash/
+│   │
+│   ├── stringcheese-align          — pairwise alignment (NW, SW, edit scripts)
+│   ├── stringcheese-manip          — inspect/trim/case/split/…/pipeline
+│   │                                 (scaffold in v0.1; populates in
+│   │                                 subsequent releases)
+│   │
+│   ├── stringcheese-unicode        — normalization, case folding, graphemes
+│   ├── stringcheese-phonetic       — Soundex, NYSIIS, Double Metaphone
+│   ├── stringcheese-cdc            — rolling-hash + FastCDC chunking
+│   ├── stringcheese-index          — BK-tree, VP-tree, q-gram inverted
+│   │
+│   └── stringcheese-bench          — criterion + allocation-counting harness
+│
+├── component/                      — WebAssembly Component Model surface
+│   ├── wit/stringcheese.wit        — interface definition
+│   └── rust-host/                  — reference host binding
+│
+├── fuzz/                           — cargo-fuzz differential + axiom targets
+├── bench-adapters/                 — head-to-head vs strsim, rapidfuzz, …
+└── docs/                           — design docs, references, publish runbook
+
+# Planned, not shipped in v0.1
+crates/
+  ├── stringcheese-en, -de, -fr, -ja, …   — one crate per supported language
+  └── stringcheese-icu-*                    — WIT interfaces for i18n
+
+data/
+  └── *.scud                                — compressed CLDR-derived data
+                                              packs (StringCheese Unicode Data)
 ```
+
+Sub-projects depend upward, not sideways. `stringcheese-manip` uses
+`stringcheese-unicode` and (for `find`/`replace`) `stringcheese-compare`;
+`stringcheese-index` uses `stringcheese-compare` for the metrics it
+indexes; the language packs use `stringcheese-phonetic` /
+`stringcheese-unicode` / `stringcheese-manip`. The facade
+`stringcheese` re-exports the public surface of every sub-project so
+callers who don't need fine-grained dependency selection can add one
+crate to `Cargo.toml`.
 
 ## Core Sequence Model
 

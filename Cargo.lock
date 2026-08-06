@@ -790,6 +790,7 @@ dependencies = [
  "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-index",
+ "stringcheese-manip",
  "stringcheese-phonetic",
  "stringcheese-unicode",
 ]
@@ -850,6 +851,13 @@ dependencies = [
  "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-corpus",
+]
+
+[[package]]
+name = "stringcheese-manip"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
 ]
 
 [[package]]

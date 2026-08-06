@@ -16,6 +16,7 @@ default = ["std"]
 std = [
     "stringcheese-core/std",
     "stringcheese-compare/std",
+    "stringcheese-manip/std",
     "stringcheese-unicode/std",
     "stringcheese-phonetic/std",
     "stringcheese-cdc/std",
@@ -25,6 +26,7 @@ std = [
 alloc = [
     "stringcheese-core/alloc",
     "stringcheese-compare/alloc",
+    "stringcheese-manip/alloc",
     "stringcheese-unicode/alloc",
     "stringcheese-phonetic/alloc",
     "stringcheese-cdc/alloc",
@@ -35,6 +37,7 @@ alloc = [
 [dependencies]
 stringcheese-core = { workspace = true }
 stringcheese-compare = { workspace = true }
+stringcheese-manip = { workspace = true }
 stringcheese-unicode = { workspace = true }
 stringcheese-phonetic = { workspace = true }
 stringcheese-cdc = { workspace = true }
