@@ -13,5 +13,40 @@ publish = false
 default = ["std"]
 std = []
 
+[dependencies]
+comparand-core = { workspace = true, features = ["std"] }
+comparand-levenshtein = { workspace = true, features = ["std"] }
+comparand-hamming = { workspace = true, features = ["std"] }
+comparand-jaro = { workspace = true, features = ["std"] }
+comparand-damerau = { workspace = true, features = ["std"] }
+comparand-ngram = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+[[bench]]
+name = "levenshtein"
+harness = false
+
+[[bench]]
+name = "hamming"
+harness = false
+
+[[bench]]
+name = "jaro"
+harness = false
+
+[[bench]]
+name = "damerau"
+harness = false
+
+[[bench]]
+name = "ngram"
+harness = false
+
+[[bench]]
+name = "batch"
+harness = false
+
 [lints]
 workspace = true

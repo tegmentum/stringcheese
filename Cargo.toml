@@ -15,9 +15,9 @@ members = [
     "crates/comparand-unicode",
     "crates/comparand-phonetic",
     "crates/comparand-set-similarity",
+    "crates/comparand-bench",
 ]
 exclude = [
-    "crates/comparand-bench",
     "fuzz",
 ]
 
