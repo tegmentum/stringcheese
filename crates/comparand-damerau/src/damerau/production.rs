@@ -28,17 +28,19 @@
 //!
 //! # Workspace
 //!
-//! The DP matrix is held in the caller-owned [`DamerauWorkspace`], grown
-//! to `(m + 1) · (n + 1)` cells and left at that capacity across calls. The
-//! `HashMap` itself is *not* held in the workspace: its keys `&T` borrow
-//! into the input slices for that call, so it cannot outlive the call
-//! frame. Allocating a fresh `HashMap` per call is dominated by the DP
-//! matrix cost in the batch-comparison workloads this workspace targets.
+//! Both the DP matrix *and* the auxiliary "last position of symbol in `a`"
+//! `HashMap` are held in the caller-owned [`DamerauWorkspace`]. The DP
+//! matrix grows to `(m + 1) · (n + 1)` cells and stays at that capacity
+//! across calls; the `HashMap` is cleared (retaining its allocated capacity)
+//! at the top of every call, so once the workspace has been warmed up on
+//! one comparison a second comparison of the same shape does zero
+//! allocation. That is the point of the workspace-reuse pattern — see
+//! [`crate::workspace`] for the type-parameter rationale behind why the
+//! `HashMap` can be held here in safe Rust at all.
 
 use core::hash::Hash;
-use std::collections::HashMap;
 
-use comparand_core::{Distance, Workspace};
+use comparand_core::Distance;
 
 use crate::workspace::DamerauWorkspace;
 
@@ -48,7 +50,9 @@ use crate::workspace::DamerauWorkspace;
 ///
 /// The workspace is grown to `(a.len() + 1) · (b.len() + 1)` cells if
 /// needed, and left at that capacity on return so repeated calls of the
-/// same size perform no further allocation.
+/// same size perform no further allocation. The auxiliary `HashMap` in `ws`
+/// is cleared (retaining its capacity) at the top of the call and refilled
+/// during the DP.
 ///
 /// # Panics
 ///
@@ -59,10 +63,10 @@ use crate::workspace::DamerauWorkspace;
     clippy::many_single_char_names,
     reason = "the names `a`, `b`, `m`, `n`, `d`, `i`, `j`, `k`, `l` follow Lowrance and Wagner's original 1975 notation; renaming would put a translation layer between the code and the paper it implements"
 )]
-pub fn distance_production_with_workspace<T: Eq + Hash>(
+pub fn distance_production_with_workspace<T: Eq + Hash + Clone>(
     a: &[T],
     b: &[T],
-    ws: &mut DamerauWorkspace,
+    ws: &mut DamerauWorkspace<T>,
 ) -> Distance<u32> {
     let m = a.len();
     let n = b.len();
@@ -75,8 +79,13 @@ pub fn distance_production_with_workspace<T: Eq + Hash>(
     }
 
     let stride = n + 1;
-    ws.ensure_capacity((m + 1) * stride);
-    let d = ws.buffer_mut((m + 1) * stride);
+    // Split-borrow the DP matrix and the auxiliary map out of the workspace
+    // in one call: both live for the entire DP below, and a two-step
+    // sequence of `buffer_mut(...)` followed by `last_positions_mut()`
+    // would fail to compile (both borrow the same `ws` mutably). The
+    // accessor also clears the map on the way out, so the previous call's
+    // keys are gone before this call inserts anything.
+    let (d, da) = ws.split_mut((m + 1) * stride);
 
     // Boundary conditions: `d[i][0] = i`, `d[0][j] = j`.
     for i in 0..=m {
@@ -88,10 +97,6 @@ pub fn distance_production_with_workspace<T: Eq + Hash>(
     // The remaining cells were zero-filled or left dirty by a previous call;
     // every one of them will be overwritten by the DP loop below before it
     // is read, so no explicit reset is needed.
-
-    // `da`: last row where each symbol of `a` was seen. Empty at the start;
-    // grows to at most `|Σ ∩ a|` unique entries by the end.
-    let mut da: HashMap<&T, usize> = HashMap::new();
 
     for i in 1..=m {
         // `db`: the largest column j' < j seen *this row* where
@@ -127,7 +132,9 @@ pub fn distance_production_with_workspace<T: Eq + Hash>(
         }
 
         // Register (or update) the most recent row where `a[i-1]` appeared.
-        da.insert(&a[i - 1], i);
+        // `Clone` here is trivial for `Copy` symbol types (`u8`, `char`); for
+        // other `T` the clone cost is dominated by the DP inner loop above.
+        da.insert(a[i - 1].clone(), i);
     }
 
     Distance::new(d[m * stride + n])
@@ -137,9 +144,10 @@ pub fn distance_production_with_workspace<T: Eq + Hash>(
 mod tests {
     use super::*;
     use crate::damerau::full_matrix::distance_full_matrix;
+    use comparand_core::Workspace;
 
     fn production(a: &[u8], b: &[u8]) -> u32 {
-        let mut ws = DamerauWorkspace::new();
+        let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
         distance_production_with_workspace(a, b, &mut ws).into_inner()
     }
 
@@ -176,7 +184,7 @@ mod tests {
 
     #[test]
     fn workspace_reuse_matches_fresh_workspace() {
-        let mut ws = DamerauWorkspace::new();
+        let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
         let a: &[u8] = b"prefix-common-tail-A";
         let b: &[u8] = b"prefix-common-tail-B";
         let d1 = distance_production_with_workspace(a, b, &mut ws).into_inner();

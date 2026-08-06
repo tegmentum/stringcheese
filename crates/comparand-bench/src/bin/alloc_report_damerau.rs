@@ -74,16 +74,16 @@ fn main() {
             let (_, m) = measure(|| Damerau.distance(&a, &b));
             print_row("damerau", "trait_call", len, regime, m);
 
-            let mut ws_cold = DamerauWorkspace::new();
+            let mut ws_cold: DamerauWorkspace<u8> = DamerauWorkspace::new();
             let (_, m) = measure(|| Damerau.distance_with_workspace(&a, &b, &mut ws_cold));
             print_row("damerau", "reused_workspace_first", len, regime, m);
 
-            let mut ws_hot = DamerauWorkspace::new();
+            let mut ws_hot: DamerauWorkspace<u8> = DamerauWorkspace::new();
             let _ = Damerau.distance_with_workspace(&a, &b, &mut ws_hot);
             let (_, m) = measure(|| Damerau.distance_with_workspace(&a, &b, &mut ws_hot));
             print_row("damerau", "reused_workspace_hot", len, regime, m);
 
-            let mut ws_prod = DamerauWorkspace::new();
+            let mut ws_prod: DamerauWorkspace<u8> = DamerauWorkspace::new();
             let _ = damerau_production(&a, &b, &mut ws_prod);
             let (_, m) = measure(|| damerau_production(&a, &b, &mut ws_prod));
             print_row("damerau", "production_hot", len, regime, m);

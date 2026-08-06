@@ -161,10 +161,36 @@ proptest! {
     /// every generated input.
     #[test]
     fn damerau_production_matches_oracle(a in arb_bytes(), b in arb_bytes()) {
-        let mut ws = DamerauWorkspace::new();
+        let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
         let observed = damerau_production(&a, &b, &mut ws).into_inner();
         let expected = damerau_full_matrix(&a, &b);
         prop_assert_eq!(observed, expected, "Damerau production disagreed with oracle");
+    }
+
+    /// Workspace-reuse correctness: for any two generated pairs, running
+    /// them back-to-back through a single reused workspace must produce the
+    /// same answers as running each with a fresh workspace. This is the
+    /// load-bearing test that the HashMap-in-workspace reuse from Item 1
+    /// preserves correctness — a stale key or a partial clear would surface
+    /// here as a shrunk counterexample.
+    #[test]
+    fn damerau_production_workspace_reuse_matches_fresh(
+        a1 in arb_bytes(),
+        b1 in arb_bytes(),
+        a2 in arb_bytes(),
+        b2 in arb_bytes(),
+    ) {
+        let mut fresh1: DamerauWorkspace<u8> = DamerauWorkspace::new();
+        let mut fresh2: DamerauWorkspace<u8> = DamerauWorkspace::new();
+        let fresh_d1 = damerau_production(&a1, &b1, &mut fresh1).into_inner();
+        let fresh_d2 = damerau_production(&a2, &b2, &mut fresh2).into_inner();
+
+        let mut hot: DamerauWorkspace<u8> = DamerauWorkspace::new();
+        let hot_d1 = damerau_production(&a1, &b1, &mut hot).into_inner();
+        let hot_d2 = damerau_production(&a2, &b2, &mut hot).into_inner();
+
+        prop_assert_eq!(hot_d1, fresh_d1, "reused workspace disagreed on first call");
+        prop_assert_eq!(hot_d2, fresh_d2, "reused workspace disagreed on second call");
     }
 
     /// The `Damerau` trait-impl entry point must agree with the direct oracle.
@@ -257,7 +283,7 @@ fn non_negative_on_empty_pair() {
         osa_rolling_rows::<u8>(b"", b"", &mut osa_ws).into_inner(),
         0
     );
-    let mut dam_ws = DamerauWorkspace::new();
+    let mut dam_ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
     assert_eq!(
         damerau_production::<u8>(b"", b"", &mut dam_ws).into_inner(),
         0

@@ -24,19 +24,22 @@
 //! largest per-call allocation of any algorithm in the suite; reusing
 //! it should be the biggest single win in the whole bench.
 //!
-//! # Jaro deferral
+//! # Jaro workspace reuse
 //!
-//! The Jaro crate does not yet expose a workspace-aware entry point —
-//! the crate's module docs list this as future work — so there is no
-//! `Jaro`-vs-`Jaro-with-workspace` measurement to make. That's still
-//! useful to note: the delta between `Jaro`'s per-call `Vec<bool>`
-//! allocations (visible as an absolute cost in the `jaro/*` groups) and
-//! the workspace-free Hamming loop is the ceiling on the win a future
-//! Jaro workspace could deliver.
+//! The Jaro crate now exposes a workspace-aware entry point
+//! ([`JaroWorkspace`]), so the `batch/jaro` group below mirrors the
+//! Levenshtein/OSA/Damerau shape: one "fresh workspace per call" bench
+//! against the trait-based entry point, one "single workspace reused
+//! across the batch" bench pre-sized to `QUERY_LEN + QUERY_LEN` cells.
+//! The Jaro bitmap is `Vec<bool>`, considerably smaller than the DP
+//! matrices the edit-distance families need, so the absolute win per
+//! comparison is smaller — but the workload characteristic (allocate
+//! twice per call vs. never) is the same.
 
 use comparand_bench::inputs::{random_ascii, random_candidates};
-use comparand_core::DistanceMetric;
+use comparand_core::{DistanceMetric, SimilarityMetric};
 use comparand_damerau::{Damerau, DamerauWorkspace, Osa, OsaWorkspace};
+use comparand_jaro::{Jaro, JaroWorkspace};
 use comparand_levenshtein::{Levenshtein, LevenshteinWorkspace};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -193,7 +196,8 @@ fn bench_damerau_batch(c: &mut Criterion) {
             |bencher, (query, cands)| {
                 bencher.iter(|| {
                     // Damerau needs the whole (m+1) · (n+1) DP matrix.
-                    let mut ws = DamerauWorkspace::with_capacity((QUERY_LEN + 1) * (QUERY_LEN + 1));
+                    let mut ws: DamerauWorkspace<u8> =
+                        DamerauWorkspace::with_capacity((QUERY_LEN + 1) * (QUERY_LEN + 1));
                     let mut sink: u64 = 0;
                     for c in cands.iter() {
                         let d = alg.distance_with_workspace(
@@ -211,10 +215,65 @@ fn bench_damerau_batch(c: &mut Criterion) {
     group.finish();
 }
 
+// ---- Jaro -----------------------------------------------------------
+
+fn bench_jaro_batch(c: &mut Criterion) {
+    let mut group = c.benchmark_group("batch/jaro");
+    let query = query();
+    let alg = Jaro;
+
+    for &count in COUNTS {
+        let cands = candidates(count);
+        group.throughput(Throughput::Elements(count as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("no_workspace", count),
+            &(&query, &cands),
+            |bencher, (query, cands)| {
+                bencher.iter(|| {
+                    // Trait-based entry point allocates two fresh
+                    // `Vec<bool>` per candidate — the pre-Item-2 shape.
+                    let mut sink: f64 = 0.0;
+                    for c in cands.iter() {
+                        let s =
+                            alg.similarity(black_box(query.as_slice()), black_box(c.as_slice()));
+                        sink += s.into_inner();
+                    }
+                    black_box(sink);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("reused_workspace", count),
+            &(&query, &cands),
+            |bencher, (query, cands)| {
+                bencher.iter(|| {
+                    // Single workspace held across the batch, pre-sized
+                    // to hold both bitmaps for the fixed-length query.
+                    let mut ws = JaroWorkspace::with_capacity(QUERY_LEN + QUERY_LEN);
+                    let mut sink: f64 = 0.0;
+                    for c in cands.iter() {
+                        let s = alg.similarity_with_workspace(
+                            black_box(query.as_slice()),
+                            black_box(c.as_slice()),
+                            &mut ws,
+                        );
+                        sink += s.into_inner();
+                    }
+                    black_box(sink);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_levenshtein_batch,
     bench_osa_batch,
     bench_damerau_batch,
+    bench_jaro_batch,
 );
 criterion_main!(benches);

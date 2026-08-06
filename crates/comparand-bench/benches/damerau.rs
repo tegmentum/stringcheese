@@ -185,7 +185,7 @@ fn bench_damerau_production(c: &mut Criterion) {
         for &kind in &["random", "similar", "identical"] {
             let (a, b) = build_pair(len, kind);
             group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
-                let mut ws = DamerauWorkspace::new();
+                let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
                 bencher.iter(|| {
                     damerau_production(black_box(a.as_slice()), black_box(b.as_slice()), &mut ws)
                 });
