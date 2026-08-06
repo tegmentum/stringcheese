@@ -9,13 +9,14 @@
 //!
 //! # Status
 //!
-//! **Second wave shipped in v0.1.** Eleven modules — [`inspect`], [`trim`],
-//! [`case`], [`split`], [`join`], [`replace`], [`normalize`],
-//! [`mod@slice`], [`find`], [`pad`], and [`lines`] — carry real
-//! implementations. The remaining four modules ([`escape`], [`quote`],
-//! [`template`], [`pipeline`]) are still placeholders whose doc comments
-//! record the intended scope. Items land in follow-on releases,
-//! module-by-module.
+//! **Second wave shipped in v0.1.** Fourteen of the fifteen modules —
+//! [`inspect`], [`trim`], [`case`], [`split`], [`join`], [`replace`],
+//! [`normalize`], [`mod@slice`], [`find`], [`pad`], [`lines`], [`escape`],
+//! [`quote`], and [`template`] — carry real implementations. The only
+//! remaining placeholder is [`pipeline`] (the transformation IR); its doc
+//! comment records the intended scope. `pipeline` lands in a follow-on
+//! wave once the shipping modules have settled and their operations can
+//! be lifted into the IR without churn.
 //!
 //! Depending on `stringcheese-manip` today is safe — the crate compiles
 //! and re-releases will only *add* items, never remove them at this
@@ -82,17 +83,24 @@
 //!   `contains`, `starts_with`, `ends_with`, `count_matches`, plus the
 //!   multi-pattern `find_any` — thin ergonomic wrappers that delegate to
 //!   the substring-search kernels in `stringcheese-compare::search`.
-//! - [`escape`] — encode for a target syntax: HTML, JSON, shell,
-//!   percent-encoding, C-string.
-//! - [`quote`] — wrap in delimiters: single, double, backtick, custom;
-//!   with escaping to make the result parseable.
+//! - [`escape`] — *shipped.* Encode for a target syntax: HTML, JSON,
+//!   POSIX / Windows shell, RFC 3986 percent-encoding, C-string, regex.
+//!   `Cow<str>` returns keep the common no-escape-needed path
+//!   allocation-free.
+//! - [`quote`] — *shipped.* Wrap in delimiters: single, double,
+//!   backtick, angle, custom, and typographic curly variants; a
+//!   `quote_smart` picker that minimises embedded escapes; a zero-alloc
+//!   [`quote::unquote`] that strips any standard quote pair.
 //! - [`lines`] — *shipped.* Line-oriented operations: iterate lines
 //!   (with or without terminators), non-empty lines, prefix / suffix
 //!   lines, trim per line, plus `dedent` and `indent` for Python-style
 //!   block-level whitespace shaping.
-//! - [`template`] — placeholder substitution: `{name}` interpolation
-//!   from a map, positional `{0}` args, escape rules for literal
-//!   braces.
+//! - [`template`] — *shipped.* Placeholder substitution — `str.format`-
+//!   lite. Strict, permissive, and positional variants over a
+//!   [`template::TemplateContext`] trait; a streaming iterator form for
+//!   writing directly to a `Write`. Not a general templating engine (no
+//!   conditionals, loops, or filters); reach for `askama` / `handlebars`
+//!   / `tera` for that.
 //! - [`pipeline`] — `TextPipeline`, a transformation IR that stages
 //!   multiple operations for one-pass application. Operations expose
 //!   their memory footprint and are combinable into a single fused
@@ -123,44 +131,23 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-// Modules shipped with real implementations (11 of 15). Empty-brace stubs
-// remain below for modules that still ship as scaffolds; their doc
-// comments record the intended scope for readers of `docs/DESIGN.md`.
+// Modules shipped with real implementations (14 of 15). The only remaining
+// scaffold is `pipeline` (the transformation IR), whose doc comment records
+// the intended scope for readers of `docs/DESIGN.md`.
 pub mod case;
+pub mod escape;
 pub mod find;
 pub mod inspect;
 pub mod join;
 pub mod lines;
 pub mod normalize;
 pub mod pad;
+pub mod quote;
 pub mod replace;
 pub mod slice;
 pub mod split;
+pub mod template;
 pub mod trim;
-
-/// Encode for a target syntax: HTML, JSON, shell, percent-encoding,
-/// C-string.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod escape {}
-
-/// Wrap in delimiters: single, double, backtick, custom; with escaping
-/// to make the result parseable.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod quote {}
-
-/// Placeholder substitution: `{name}` interpolation from a map,
-/// positional `{0}` args, escape rules for literal braces.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod template {}
 
 /// Declarative transformation pipeline — `TextPipeline` IR that
 /// stages multiple operations for one-pass application.

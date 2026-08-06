@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Unicode-aware and allocation-conscious; 11 of 15 modules ship in v0.1 (escape, quote, template, pipeline remain scaffold and land in subsequent releases)."
+description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Unicode-aware and allocation-conscious; 14 of 15 modules ship in v0.1 (only the pipeline transformation IR remains scaffold and lands in a subsequent release)."
 categories = ["text-processing", "no-std"]
 keywords = ["string", "text", "manipulation", "no-std", "wasm"]
 
