@@ -1,0 +1,78 @@
+[workspace]
+# Standalone-crate sentinel — bench-adapters/rust/ is deliberately not a
+# member of the outer Comparand workspace. The workspace root at
+# /Cargo.toml uses an explicit `members = [...]` list (not a glob), so
+# nothing would drag this crate in even without a sentinel; the empty
+# `[workspace]` table here is a belt-and-braces guarantee that the
+# external `strsim` and `rapidfuzz` dependencies never leak into the
+# main dependency tree, and that `cargo` commands invoked from inside
+# `bench-adapters/rust/` resolve against a fresh, isolated
+# `Cargo.lock`.
+
+[package]
+name = "comparand-bench-adapters-rust"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <mail@zacharywhitley.com>"]
+repository = "https://github.com/zacharywhitley/comparand"
+description = "Head-to-head Rust-ecosystem benchmark adapters for the Comparand toolkit (strsim, rapidfuzz)."
+publish = false
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+# Comparand crates via path into the sibling workspace. `default-features = false`
+# with an explicit `["std"]` matches how `comparand-bench` pulls them in and
+# keeps the adapter's dependency graph identical to the toolkit's own bench
+# suite for a fair head-to-head.
+comparand-core = { path = "../../crates/comparand-core", default-features = false, features = ["std"] }
+comparand-levenshtein = { path = "../../crates/comparand-levenshtein", default-features = false, features = ["std"] }
+comparand-hamming = { path = "../../crates/comparand-hamming", default-features = false, features = ["std"] }
+comparand-jaro = { path = "../../crates/comparand-jaro", default-features = false, features = ["std"] }
+comparand-damerau = { path = "../../crates/comparand-damerau", default-features = false, features = ["std"] }
+
+# External Rust libraries under comparison. Pinned to current-stable
+# minor as of 2026-08:
+#   * strsim   0.11.1  (Jan 2024; last release Apr 2024) — the long-standing
+#                     reference in the Rust ecosystem; simple &str / &[T] API.
+#   * rapidfuzz 0.5.0  (Dec 2023)                       — Rust port of the
+#                     RapidFuzz C++/Python library; iterator-based API with
+#                     `distance_with_args` for score-cutoff variants.
+# Both are wildcarded to their current minor so `cargo update` inside this
+# isolated workspace can pick up patch releases without a manifest edit.
+strsim = "0.11"
+rapidfuzz = "0.5"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+[[bench]]
+name = "levenshtein_vs_strsim"
+harness = false
+
+[[bench]]
+name = "levenshtein_vs_rapidfuzz"
+harness = false
+
+[[bench]]
+name = "jaro_vs_strsim"
+harness = false
+
+[[bench]]
+name = "hamming_vs_strsim"
+harness = false
+
+[[bench]]
+name = "damerau_vs_strsim"
+harness = false
+
+[profile.release]
+# Match the outer workspace's release profile so the adapter builds
+# under the same optimisation regime the toolkit is benched under; the
+# comparison is otherwise not meaningful.
+lto = "thin"
+codegen-units = 1
