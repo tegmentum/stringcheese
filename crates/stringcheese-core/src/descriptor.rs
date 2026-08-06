@@ -74,6 +74,13 @@ pub enum AlgorithmFamily {
     OptimalStringAlignment,
     LongestCommonSubsequence,
     LongestCommonSubstring,
+    /// Ristad-Yianilos (1998) learned string-edit distance — a memoryless
+    /// stochastic transducer whose per-character insert, delete, and
+    /// substitute costs are trained from labeled string pairs via
+    /// Expectation-Maximization. The distance between two strings is the
+    /// negative log-probability the trained transducer assigns to the most
+    /// probable edit sequence transducing source to target.
+    RistadYianilos,
 
     // — Alignment —
     NeedlemanWunsch,

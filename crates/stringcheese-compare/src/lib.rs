@@ -5,6 +5,13 @@
 //!
 //! * [`levenshtein`] — unit-cost Levenshtein edit distance with
 //!   full-matrix, rolling-rows, and Ukkonen-style banded kernels.
+//! * [`learned`] — Ristad-Yianilos (1998) learned string-edit distance:
+//!   a memoryless stochastic transducer with per-character insert /
+//!   delete / substitute costs trained from labeled pairs via
+//!   Expectation-Maximization. Distance-side surface (`LearnedEdit`,
+//!   `LearnedEditModel`) is available under `alloc`; the training
+//!   estimator (`RistadYianilosEstimator`) requires `std` for `f64::ln`
+//!   and `f64::exp`.
 //! * [`hamming`] — equal-length Hamming distance with a fallible entry
 //!   point for callers who cannot statically prove equal length.
 //! * [`jaro`] — the base Jaro similarity and the Jaro-Winkler variant
@@ -73,6 +80,7 @@ pub mod damerau;
 pub mod hamming;
 pub mod jaro;
 pub mod lcs;
+pub mod learned;
 pub mod levenshtein;
 pub mod minhash;
 pub mod ngram;
@@ -94,6 +102,12 @@ pub use crate::levenshtein::{
     Levenshtein, LevenshteinWorkspace, distance_banded_with_workspace, distance_full_matrix,
     distance_rolling_rows_with_workspace,
 };
+
+// learned (Ristad-Yianilos)
+#[cfg(feature = "std")]
+pub use crate::learned::RistadYianilosEstimator;
+#[cfg(feature = "alloc")]
+pub use crate::learned::{LearnedEdit, LearnedEditModel};
 
 // hamming
 pub use crate::hamming::{Hamming, LengthMismatch, hamming_distance, hamming_distance_within};
