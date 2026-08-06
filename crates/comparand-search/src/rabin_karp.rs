@@ -46,6 +46,13 @@
 //! cases reference this variant rather than the common name so that a
 //! future implementation with a different modulus, base, or hash
 //! definition cannot be silently validated against these cases.
+//!
+//! # References
+//!
+//! * Karp, R. M., & Rabin, M. O. (1987). "Efficient randomized
+//!   pattern-matching algorithms." *IBM Journal of Research and
+//!   Development*, 31(2), 249-260.
+//!   <https://doi.org/10.1147/rd.312.0249>
 
 use alloc::vec::Vec;
 

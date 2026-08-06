@@ -47,6 +47,19 @@
 //!
 //! [`GearHash`]: crate::fingerprint::GearHash
 //! [`ChunkBoundary`]: crate::cdc::ChunkBoundary
+//!
+//! # References
+//!
+//! * Xia, W., Jiang, H., Feng, D., Douglis, F., Shilane, P., Hua, Y., Fu,
+//!   M., Zhang, Y., & Zhou, Y. (2016). "`FastCDC`: a fast and efficient
+//!   content-defined chunking approach for data deduplication."
+//!   *2016 USENIX Annual Technical Conference (USENIX ATC 16)*, 101-114.
+//!   <https://www.usenix.org/conference/atc16/technical-sessions/presentation/xia>
+//! * Muthitacharoen, A., Chen, B., & Mazières, D. (2001). "A low-bandwidth
+//!   network file system." *Proceedings of the eighteenth ACM symposium on
+//!   Operating systems principles (SOSP '01)*, 174-187.
+//!   <https://doi.org/10.1145/502034.502052> — background on the CDC
+//!   deduplication model this algorithm targets.
 
 use comparand_core::{
     AlgorithmDescriptor, AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId,

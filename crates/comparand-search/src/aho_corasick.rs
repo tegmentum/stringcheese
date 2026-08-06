@@ -47,6 +47,12 @@
 //! algorithms' "empty pattern matches at position 0 exactly once"
 //! policy, empty patterns in the input to [`AhoCorasick::build`] are
 //! reported once at position 0 for each occurrence in the pattern set.
+//!
+//! # References
+//!
+//! * Aho, A. V., & Corasick, M. J. (1975). "Efficient string matching: an
+//!   aid to bibliographic search." *Communications of the ACM*, 18(6),
+//!   333-340. <https://doi.org/10.1145/360825.360855>
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

@@ -56,12 +56,15 @@
 //! returns a [`NotAMetricError`] instead, for callers that assemble a
 //! metric dynamically and prefer to handle the rejection explicitly.
 //!
-//! # Sources
+//! # References
 //!
-//! * W. A. Burkhard and R. M. Keller, *Some approaches to best-match file
-//!   searching*, Communications of the ACM 16(4), 1973, pp. 230-236.
-//! * Baeza-Yates and Ribeiro-Neto, *Modern Information Retrieval*, 2nd ed.,
-//!   ACM Press, chapter on similarity search.
+//! * Burkhard, W. A., & Keller, R. M. (1973). "Some approaches to
+//!   best-match file searching." *Communications of the ACM*, 16(4),
+//!   230-236. <https://doi.org/10.1145/362003.362025>
+//! * Baeza-Yates, R., & Ribeiro-Neto, B. (2011). *Modern Information
+//!   Retrieval: The Concepts and Technology behind Search* (2nd ed.).
+//!   Addison-Wesley. ISBN 978-0-321-41691-9 — chapter on similarity search
+//!   for a modern textbook treatment.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;

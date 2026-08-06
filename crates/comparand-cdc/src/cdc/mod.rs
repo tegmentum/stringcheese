@@ -17,6 +17,14 @@
 //!
 //! [`GearHash`]: crate::fingerprint::GearHash
 //! [`AlgorithmFamily::RabinCdc`]: comparand_core::AlgorithmFamily::RabinCdc
+//!
+//! # References
+//!
+//! * Muthitacharoen, A., Chen, B., & Mazières, D. (2001). "A low-bandwidth
+//!   network file system." *Proceedings of the eighteenth ACM symposium on
+//!   Operating systems principles (SOSP '01)*, 174-187.
+//!   <https://doi.org/10.1145/502034.502052> — the LBFS paper that
+//!   popularized content-defined chunking as a deduplication primitive.
 
 pub mod fastcdc;
 

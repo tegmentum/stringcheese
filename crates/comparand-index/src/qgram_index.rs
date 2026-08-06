@@ -53,6 +53,21 @@
 //! work.
 //!
 //! [`BTreeMap`]: alloc::collections::BTreeMap
+//!
+//! # References
+//!
+//! * Ukkonen, E. (1992). "Approximate string-matching with q-grams and
+//!   maximal matches." *Theoretical Computer Science*, 92(1), 191-211.
+//!   <https://doi.org/10.1016/0304-3975(92)90143-4> — establishes the
+//!   q-gram overlap bound that
+//!   [`QgramIndex::overlap_candidates`] exploits.
+//! * Sarawagi, S., & Kirpal, A. (2004). "Efficient set joins on similarity
+//!   predicates." *Proceedings of the 2004 ACM SIGMOD international
+//!   conference on Management of data*, 743-754.
+//!   <https://doi.org/10.1145/1007568.1007652> — the length-filter bound
+//!   used by
+//!   [`QgramIndex::length_filter_candidates`], derived in
+//!   [`crate::prefix_filter`].
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;

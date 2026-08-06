@@ -34,6 +34,14 @@
 //! on the "reject nothing" side: an out-of-range threshold is a caller bug
 //! and we prefer to keep the pre-filter transparent rather than silently
 //! filter items out.
+//!
+//! # References
+//!
+//! * Sarawagi, S., & Kirpal, A. (2004). "Efficient set joins on similarity
+//!   predicates." *Proceedings of the 2004 ACM SIGMOD international
+//!   conference on Management of data*, 743-754.
+//!   <https://doi.org/10.1145/1007568.1007652> — presents the
+//!   length-filter bound used here in the context of set-similarity joins.
 
 use core::ops::RangeInclusive;
 

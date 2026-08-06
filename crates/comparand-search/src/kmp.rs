@@ -26,6 +26,12 @@
 //! reference this variant so that a future implementation with a
 //! restructured failure function or a different empty-pattern policy
 //! cannot be silently validated against these cases.
+//!
+//! # References
+//!
+//! * Knuth, D. E., Morris, J. H., & Pratt, V. R. (1977). "Fast pattern
+//!   matching in strings." *SIAM Journal on Computing*, 6(2), 323-350.
+//!   <https://doi.org/10.1137/0206024>
 
 use alloc::vec::Vec;
 

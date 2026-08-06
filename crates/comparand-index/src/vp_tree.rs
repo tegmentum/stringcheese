@@ -88,11 +88,12 @@
 //! [`BkTree`], [`VpTree::new`] panics on non-metric input and
 //! [`VpTree::try_new`] returns a [`NotAMetricError`] instead.
 //!
-//! # Source
+//! # References
 //!
-//! P. N. Yianilos, *Data structures and algorithms for nearest neighbor
-//! search in general metric spaces*, Proceedings of the fourth annual
-//! ACM-SIAM Symposium on Discrete algorithms (SODA '93), pp. 311-321.
+//! * Yianilos, P. N. (1993). "Data structures and algorithms for nearest
+//!   neighbor search in general metric spaces." *Proceedings of the fourth
+//!   annual ACM-SIAM symposium on Discrete algorithms (SODA '93)*, 311-321.
+//!   <https://dl.acm.org/doi/10.5555/313559.313789>
 //!
 //! [`BkTree`]: crate::bk_tree::BkTree
 

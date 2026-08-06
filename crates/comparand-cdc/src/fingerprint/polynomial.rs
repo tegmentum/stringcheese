@@ -34,6 +34,14 @@
 //! circular buffer sized to the window. Gated on the `alloc` feature.
 //!
 //! [`DefinitionSource::IndependentlyDerived`]: comparand_core::DefinitionSource::IndependentlyDerived
+//!
+//! # References
+//!
+//! * Karp, R. M., & Rabin, M. O. (1987). "Efficient randomized
+//!   pattern-matching algorithms." *IBM Journal of Research and
+//!   Development*, 31(2), 249-260.
+//!   <https://doi.org/10.1147/rd.312.0249> — the earliest formalization of
+//!   the polynomial rolling-hash construction this module implements.
 
 #![cfg(feature = "alloc")]
 

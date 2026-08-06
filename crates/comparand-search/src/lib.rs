@@ -76,6 +76,14 @@
 //! full-good-suffix variant.
 //!
 //! [`AlgorithmDescriptor`]: comparand_core::AlgorithmDescriptor
+//!
+//! # References
+//!
+//! * Charras, C., & Lecroq, T. (2004). *Handbook of Exact String-Matching
+//!   Algorithms*. King's College Publications. ISBN 0-9543006-2-X. — a
+//!   uniform presentation of every algorithm in this crate, useful as
+//!   secondary background alongside the primary sources cited on each
+//!   module.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

@@ -34,6 +34,14 @@
 //! the same items disagreeing on their signatures, which would make
 //! [`MinHashSketch::estimated_jaccard`] useless as a cross-corpus
 //! comparator.
+//!
+//! # References
+//!
+//! * Broder, A. Z. (1997). "On the resemblance and containment of
+//!   documents." *Proceedings of the Compression and Complexity of
+//!   Sequences 1997*, 21-29.
+//!   <https://doi.org/10.1109/SEQUEN.1997.666900> — introduces the
+//!   `MinHash` sketch and the Jaccard estimator implemented here.
 
 use alloc::vec;
 use alloc::vec::Vec;

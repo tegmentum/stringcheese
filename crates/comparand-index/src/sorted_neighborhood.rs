@@ -44,6 +44,18 @@
 //! [`VpTree`]: crate::vp_tree::VpTree
 //! [`candidate_pairs`]: SortedNeighborhoodBlocker::candidate_pairs
 //! [`candidates_of`]: SortedNeighborhoodBlocker::candidates_of
+//!
+//! # References
+//!
+//! * Hernández, M. A., & Stolfo, S. J. (1995). "The merge/purge problem
+//!   for large databases." *ACM SIGMOD Record*, 24(2), 127-138.
+//!   <https://doi.org/10.1145/568271.223807> — the original
+//!   sorted-neighborhood method for record linkage.
+//! * Christen, P. (2012). *Data Matching: Concepts and Techniques for
+//!   Record Linkage, Entity Resolution, and Duplicate Detection*.
+//!   Springer. ISBN 978-3-642-31163-5 — modern reference for blocking
+//!   techniques, including sorted-neighborhood variants and key-design
+//!   considerations.
 
 use alloc::vec::Vec;
 

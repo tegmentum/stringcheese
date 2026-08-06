@@ -25,10 +25,12 @@
 //!
 //! # References
 //!
-//! * M. Crochemore and D. Perrin, "Two-way string-matching",
-//!   *Journal of the ACM*, 38(3):651-675, 1991.
-//! * M. Crochemore, C. Hancart, T. Lecroq, *Algorithms on Strings*,
-//!   Cambridge University Press, 2007 — chapter on two-way matching.
+//! * Crochemore, M., & Perrin, D. (1991). "Two-way string-matching."
+//!   *Journal of the ACM*, 38(3), 651-675.
+//!   <https://doi.org/10.1145/116825.116845>
+//! * Crochemore, M., Hancart, C., & Lecroq, T. (2007). *Algorithms on
+//!   Strings*. Cambridge University Press. ISBN 978-0-521-84899-2 —
+//!   chapter on two-way matching.
 //! * glibc's `str-two-way.h` — reference implementation whose structure
 //!   this implementation mirrors, adapted to Rust with signed indices in
 //!   place of the C code's `SIZE_MAX` sentinel.

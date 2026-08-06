@@ -75,6 +75,17 @@
 //! that a bad-character-only case cannot be silently validated against
 //! the full variant, and vice versa.
 //!
+//! # References
+//!
+//! * Boyer, R. S., & Moore, J. S. (1977). "A fast string searching
+//!   algorithm." *Communications of the ACM*, 20(10), 762-772.
+//!   <https://doi.org/10.1145/359842.359859>
+//! * Galil, Z. (1979). "On improving the worst case running time of the
+//!   Boyer-Moore string matching algorithm." *Communications of the ACM*,
+//!   22(9), 505-508. <https://doi.org/10.1145/359146.359148> — worst-case
+//!   analysis and the linear-time bound for the full good-suffix variant
+//!   under the non-overlapping-match convention.
+//!
 //! [`AlgorithmFamily::BoyerMoore`]: comparand_core::AlgorithmFamily::BoyerMoore
 
 use alloc::vec::Vec;

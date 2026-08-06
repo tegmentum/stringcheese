@@ -31,6 +31,18 @@
 //! rather than exact: a true-positive at similarity `s` is returned with
 //! probability `P_collision(s)` per query, not with certainty. Callers
 //! wanting an exact-recall guarantee at any threshold should not use `LSH`.
+//!
+//! # References
+//!
+//! * Gionis, A., Indyk, P., & Motwani, R. (1999). "Similarity search in
+//!   high dimensions via hashing." *Proceedings of the 25th International
+//!   Conference on Very Large Data Bases (VLDB '99)*, 518-529.
+//!   <https://dl.acm.org/doi/10.5555/645925.671516> — the original
+//!   locality-sensitive-hashing paper.
+//! * Leskovec, J., Rajaraman, A., & Ullman, J. D. (2020). *Mining of
+//!   Massive Datasets* (3rd ed.). Cambridge University Press. ISBN
+//!   978-1-108-47634-8. <http://www.mmds.org/> — Chapter 3 for the
+//!   practical `MinHash`-`LSH` banding formulation implemented here.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

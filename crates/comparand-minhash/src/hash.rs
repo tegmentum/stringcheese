@@ -25,6 +25,16 @@
 //! WebAssembly targets and across debug vs. release builds. The sketch
 //! and the `LSH` index depend on this determinism — a golden case's stored
 //! signatures would silently rot otherwise.
+//!
+//! # References
+//!
+//! * Fowler, G., Noll, L. C., & Vo, K.-P. "FNV Hash."
+//!   <http://www.isthe.com/chongo/tech/comp/fnv/> — reference for the
+//!   `FNV-1a` construction underlying [`PortableHasher`].
+//! * Steele, G. L., Lea, D., & Flood, C. H. (2014). "Fast splittable
+//!   pseudorandom number generators." *ACM SIGPLAN Notices*, 49(10),
+//!   453-472. <https://doi.org/10.1145/2714064.2660195> — the
+//!   `SplitMix64` finalizer used by [`splitmix64`].
 
 use core::hash::{Hash, Hasher};
 

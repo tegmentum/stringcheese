@@ -46,6 +46,13 @@
 //! `--no-default-features --features alloc` builds see an empty module,
 //! which is the same rule `comparand-set-similarity` applies to its
 //! `Cosine` implementation.
+//!
+//! # References
+//!
+//! * Ioffe, S. (2010). "Improved consistent sampling, weighted minhash
+//!   and L1 sketching." *2010 IEEE International Conference on Data
+//!   Mining*, 246-255. <https://doi.org/10.1109/ICDM.2010.80> —
+//!   introduces the Consistent Weighted Sampling scheme implemented here.
 
 #![cfg(feature = "std")]
 

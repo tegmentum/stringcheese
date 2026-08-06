@@ -50,6 +50,17 @@
 //! which in turn requires a circular buffer sized to the window. On a
 //! no-alloc build there is no way to size that buffer at run time, so the
 //! type is available only with the `alloc` feature enabled.
+//!
+//! # References
+//!
+//! * Rabin, M. O. (1981). *Fingerprinting by Random Polynomials*. Harvard
+//!   University Center for Research in Computing Technology, TR-15-81.
+//! * Broder, A. Z. (1993). "Some applications of Rabin's fingerprinting
+//!   method." In *Sequences II: Methods in Communication, Security, and
+//!   Computer Science*, 143-152. Springer.
+//!   <https://doi.org/10.1007/978-1-4613-9323-8_11> — introduces the
+//!   rolling-window application of the Rabin fingerprint that this module
+//!   implements.
 
 #![cfg(feature = "alloc")]
 

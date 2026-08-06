@@ -32,6 +32,16 @@
 //!
 //! Gear does not need a per-instance window buffer, so it is available in
 //! every feature configuration — including the pure no-alloc build.
+//!
+//! # References
+//!
+//! * Xia, W., Jiang, H., Feng, D., Douglis, F., Shilane, P., Hua, Y., Fu,
+//!   M., Zhang, Y., & Zhou, Y. (2016). "`FastCDC`: a fast and efficient
+//!   content-defined chunking approach for data deduplication."
+//!   *2016 USENIX Annual Technical Conference (USENIX ATC 16)*, 101-114.
+//!   <https://www.usenix.org/conference/atc16/technical-sessions/presentation/xia>
+//!   — introduces the Gear rolling-hash construction this module
+//!   implements as the primitive underlying `FastCDC`.
 
 use comparand_core::{
     AlgorithmDescriptor, AlgorithmFamily, DefinitionSource, DescriptorVersion, VariantId,

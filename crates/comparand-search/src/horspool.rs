@@ -45,6 +45,12 @@
 //! # Descriptor
 //!
 //! The variant slug is `"classic-1980"`, matching Horspool's paper.
+//!
+//! # References
+//!
+//! * Horspool, R. N. (1980). "Practical fast searching in strings."
+//!   *Software: Practice and Experience*, 10(6), 501-506.
+//!   <https://doi.org/10.1002/spe.4380100608>
 
 use alloc::vec::Vec;
 
