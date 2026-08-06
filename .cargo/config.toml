@@ -1,0 +1,14 @@
+# Test-runner configuration for cross-compiled targets.
+#
+# When `cargo test --target wasm32-wasip1` is invoked, cargo cross-
+# compiles each test binary to a `.wasm` file. The `runner` entry below
+# tells cargo how to actually EXECUTE those binaries: it invokes
+# `wasmtime`, passing the wasm module as the first positional argument
+# and the test-harness's own args (--nocapture, test filters, etc.)
+# after `--`.
+#
+# --dir=. mounts the current working directory into the wasm sandbox
+# so tests can read fixtures relative to the crate root if needed.
+
+[target.wasm32-wasip1]
+runner = 'wasmtime --dir=. --'
