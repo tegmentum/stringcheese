@@ -45,6 +45,7 @@ dependencies = [
  "comparand-jaro",
  "comparand-levenshtein",
  "comparand-ngram",
+ "comparand-phonetic",
  "comparand-unicode",
 ]
 
@@ -105,6 +106,15 @@ dependencies = [
 
 [[package]]
 name = "comparand-ngram"
+version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "proptest",
+]
+
+[[package]]
+name = "comparand-phonetic"
 version = "0.1.0"
 dependencies = [
  "comparand-core",

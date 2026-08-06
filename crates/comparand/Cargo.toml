@@ -21,6 +21,7 @@ std = [
     "comparand-damerau/std",
     "comparand-ngram/std",
     "comparand-unicode/std",
+    "comparand-phonetic/std",
 ]
 alloc = [
     "comparand-core/alloc",
@@ -30,6 +31,7 @@ alloc = [
     "comparand-damerau/alloc",
     "comparand-ngram/alloc",
     "comparand-unicode/alloc",
+    "comparand-phonetic/alloc",
 ]
 
 [dependencies]
@@ -40,6 +42,7 @@ comparand-jaro = { workspace = true }
 comparand-damerau = { workspace = true }
 comparand-ngram = { workspace = true }
 comparand-unicode = { workspace = true }
+comparand-phonetic = { workspace = true }
 
 [lints]
 workspace = true

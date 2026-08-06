@@ -52,6 +52,12 @@ pub use comparand_ngram as ngram;
 /// `comparand-unicode` crate.
 pub use comparand_unicode as unicode;
 
+/// The phonetic subsystem: Soundex (NARA 1918), NYSIIS (Taft 1970), and
+/// Double Metaphone (Philips 1999, primary-only) encoders plus the
+/// `PhoneticEncoder` trait and `PhoneticMatcher` composer, re-exported
+/// unchanged from the `comparand-phonetic` crate.
+pub use comparand_phonetic as phonetic;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

@@ -13,9 +13,9 @@ members = [
     "crates/comparand-damerau",
     "crates/comparand-ngram",
     "crates/comparand-unicode",
+    "crates/comparand-phonetic",
 ]
 exclude = [
-    "crates/comparand-phonetic",
     "crates/comparand-bench",
     "fuzz",
 ]
