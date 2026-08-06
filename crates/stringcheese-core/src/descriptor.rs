@@ -119,6 +119,9 @@ pub enum AlgorithmFamily {
     GearHash,
     RabinCdc,
     FastCdc,
+
+    // — Locality-sensitive hashing —
+    PStableLsh,
 }
 
 /// A stable, human-readable identifier for a variant within an algorithm

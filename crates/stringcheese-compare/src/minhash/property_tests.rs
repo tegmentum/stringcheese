@@ -34,6 +34,10 @@ use proptest::prelude::*;
 
 use crate::minhash::hash::{permutation_seed, permuted_hash, portable_hash};
 use crate::minhash::lsh::LshIndex;
+use crate::minhash::one_permutation::OnePermutationMinHashSketch;
+#[cfg(feature = "std")]
+use crate::minhash::p_stable::{PStableFamily, PStableLshSketch};
+use crate::minhash::simhash::SimHashSketch;
 use crate::minhash::sketch::MinHashSketch;
 
 use crate::ngram::GramSet;
@@ -139,6 +143,206 @@ proptest! {
         let s1 = permutation_seed(0, 1);
         prop_assume!(s0 != s1);
         prop_assert_ne!(permuted_hash(base, s0), permuted_hash(base, s1));
+    }
+
+    // -------- SimHash --------
+
+    #[test]
+    fn simhash_is_deterministic(a in arb_items()) {
+        let s1 = SimHashSketch::from_iter(42, a.iter().copied());
+        let s2 = SimHashSketch::from_iter(42, a.iter().copied());
+        prop_assert_eq!(s1.signature(), s2.signature());
+    }
+
+    #[test]
+    fn simhash_hamming_symmetric(a in arb_items(), b in arb_items()) {
+        let sa = SimHashSketch::from_iter(42, a.iter().copied());
+        let sb = SimHashSketch::from_iter(42, b.iter().copied());
+        prop_assert_eq!(sa.hamming_distance(&sb), sb.hamming_distance(&sa));
+    }
+
+    #[test]
+    fn simhash_identity_hamming_zero(a in arb_items()) {
+        let s = SimHashSketch::from_iter(42, a.iter().copied());
+        prop_assert_eq!(s.hamming_distance(&s), 0);
+    }
+
+    #[test]
+    fn simhash_hamming_bounded_by_width(a in arb_items(), b in arb_items()) {
+        let sa = SimHashSketch::from_iter(42, a.iter().copied());
+        let sb = SimHashSketch::from_iter(42, b.iter().copied());
+        prop_assert!(sa.hamming_distance(&sb) <= SimHashSketch::bits());
+    }
+
+    // -------- One-permutation MinHash --------
+
+    #[test]
+    fn one_permutation_is_deterministic(a in arb_items()) {
+        let s1 = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        let s2 = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        prop_assert_eq!(s1.signatures(), s2.signatures());
+    }
+
+    #[test]
+    fn one_permutation_is_set_invariant(a in arb_items()) {
+        let doubled: alloc::vec::Vec<u32> = a.iter().chain(a.iter()).copied().collect();
+        let s1 = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        let s2 = OnePermutationMinHashSketch::from_iter(64, 42, doubled.iter().copied());
+        prop_assert_eq!(s1.signatures(), s2.signatures());
+    }
+
+    #[test]
+    fn one_permutation_is_permutation_invariant(a in arb_items()) {
+        let mut rev = a.clone();
+        rev.reverse();
+        let s1 = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        let s2 = OnePermutationMinHashSketch::from_iter(64, 42, rev.iter().copied());
+        prop_assert_eq!(s1.signatures(), s2.signatures());
+    }
+
+    #[test]
+    fn one_permutation_estimator_bounded(a in arb_items(), b in arb_items()) {
+        let sa = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        let sb = OnePermutationMinHashSketch::from_iter(64, 42, b.iter().copied());
+        let j = sa.estimated_jaccard(&sb);
+        prop_assert!((0.0..=1.0).contains(&j), "out of range: {j}");
+    }
+
+    #[test]
+    fn one_permutation_estimator_symmetric(a in arb_items(), b in arb_items()) {
+        let sa = OnePermutationMinHashSketch::from_iter(64, 42, a.iter().copied());
+        let sb = OnePermutationMinHashSketch::from_iter(64, 42, b.iter().copied());
+        prop_assert_eq!(
+            sa.estimated_jaccard(&sb).to_bits(),
+            sb.estimated_jaccard(&sa).to_bits(),
+        );
+    }
+}
+
+// -------- One-permutation MinHash: agreement with k-permutation --------
+
+/// The one-permutation estimator, averaged across many random pairs at
+/// large `k`, should track the k-permutation estimator to within a
+/// bounded error. This is the load-bearing correctness assertion for
+/// the densified sketch.
+#[test]
+fn one_permutation_agrees_with_k_permutation_at_large_k() {
+    let mut rng_state: u64 = 0xa5a5_5a5a_1234_beef;
+    let mut next = |m: u32| -> u32 {
+        rng_state = crate::minhash::hash::splitmix64(rng_state);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "truncation is the intended behavior of this test PRNG"
+        )]
+        let low = rng_state as u32;
+        low % m
+    };
+
+    let n_pairs: usize = 200;
+    let k: usize = 512;
+    let seed: u64 = 42;
+
+    let mut total_gap: f64 = 0.0;
+
+    for _ in 0..n_pairs {
+        let alpha: u32 = 40;
+        let len_a = 1 + (next(15) as usize);
+        let len_b = 1 + (next(15) as usize);
+        let a: alloc::vec::Vec<u32> = (0..len_a).map(|_| next(alpha)).collect();
+        let b: alloc::vec::Vec<u32> = (0..len_b).map(|_| next(alpha)).collect();
+
+        let mh_a = MinHashSketch::from_iter(k, seed, a.iter().copied());
+        let mh_b = MinHashSketch::from_iter(k, seed, b.iter().copied());
+        let op_a = OnePermutationMinHashSketch::from_iter(k, seed, a.iter().copied());
+        let op_b = OnePermutationMinHashSketch::from_iter(k, seed, b.iter().copied());
+
+        let mh_est = mh_a.estimated_jaccard(&mh_b);
+        let op_est = op_a.estimated_jaccard(&op_b);
+        total_gap += (mh_est - op_est).abs();
+    }
+
+    #[allow(clippy::cast_precision_loss, reason = "n_pairs is small")]
+    let avg_gap = total_gap / n_pairs as f64;
+
+    // At k=512 both estimators have standard error ~0.02; the
+    // densified estimator introduces some additional variance for
+    // empty-bin bins, but on average the two agree to well under 0.05.
+    assert!(
+        avg_gap < 0.05,
+        "one-permutation vs k-permutation average gap {avg_gap} exceeds tolerance"
+    );
+}
+
+// -------- p-stable LSH: scale invariance and determinism --------
+
+/// The Datar et al. paper's scale-invariance property: scaling both
+/// input vectors and the bucket width by the same positive constant
+/// leaves the collision behavior invariant. Framed as an average over
+/// many random pairs.
+#[cfg(feature = "std")]
+#[test]
+fn p_stable_scale_invariance_preserves_collisions() {
+    let mut rng_state: u64 = 0xfeed_face_beef_1234;
+    let mut next_u = || -> f64 {
+        rng_state = crate::minhash::hash::splitmix64(rng_state);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "state is bounded and only used for a rough uniform draw"
+        )]
+        let n = (rng_state >> 11) as f64;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "1u64 << 53 is exactly representable in f64 (2^53)"
+        )]
+        let denom = (1u64 << 53) as f64;
+        n / denom
+    };
+
+    let dim: usize = 4;
+    let n_pairs: usize = 40;
+    let mut agreements: usize = 0;
+
+    for iter in 0..n_pairs {
+        let v: alloc::vec::Vec<f64> = (0..dim).map(|_| next_u() * 4.0 - 2.0).collect();
+        let w: alloc::vec::Vec<f64> = (0..dim).map(|_| next_u() * 4.0 - 2.0).collect();
+        let seed = iter as u64;
+
+        let sv = PStableLshSketch::from_vector(dim, 1.0, PStableFamily::L2, seed, &v);
+        let sw = PStableLshSketch::from_vector(dim, 1.0, PStableFamily::L2, seed, &w);
+        let base_collide = sv.collide_with(&sw);
+
+        let alpha = 2.5_f64;
+        let v_s: alloc::vec::Vec<f64> = v.iter().map(|x| x * alpha).collect();
+        let w_s: alloc::vec::Vec<f64> = w.iter().map(|x| x * alpha).collect();
+
+        let sv2 = PStableLshSketch::from_vector(dim, alpha, PStableFamily::L2, seed, &v_s);
+        let sw2 = PStableLshSketch::from_vector(dim, alpha, PStableFamily::L2, seed, &w_s);
+        let scaled_collide = sv2.collide_with(&sw2);
+
+        if base_collide == scaled_collide {
+            agreements += 1;
+        }
+    }
+
+    // Perfect agreement is the theoretical prediction; small
+    // finite-precision rounding at bucket boundaries can flip one
+    // pair or two. 90% suffices as a defect-free floor.
+    assert!(
+        agreements * 10 >= n_pairs * 9,
+        "scale-invariance held on only {agreements} / {n_pairs} pairs"
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn p_stable_same_seed_reproduces_bucket() {
+    let v = alloc::vec![1.0_f64, 2.0, -3.0, 4.5];
+    for family in [PStableFamily::L1, PStableFamily::L2] {
+        for seed in 0u64..16 {
+            let a = PStableLshSketch::from_vector(4, 2.0, family, seed, &v);
+            let b = PStableLshSketch::from_vector(4, 2.0, family, seed, &v);
+            assert_eq!(a.bucket(), b.bucket(), "seed={seed}, family={family:?}");
+        }
     }
 }
 

@@ -14,11 +14,24 @@
 //!   sketch of size `k` estimates Jaccard between two sets with standard
 //!   error `~1/sqrt(k)`. Bigger `k` costs proportionally more memory and
 //!   more hash computations at construction time and estimator time.
+//! * [`OnePermutationMinHashSketch`] — the Li-Owen-Zhang 2012
+//!   one-permutation variant with rotation-based densification for empty
+//!   bins. A single hash pass over the input rather than `k`, at
+//!   comparable large-`k` accuracy to the k-permutation sketch.
 //! * [`WeightedMinHashSketch`] — the Ioffe 2010 Consistent Weighted
 //!   Sampling variant. Estimates the generalized ("weighted") Jaccard
 //!   similarity `Σ min(w_a, w_b) / Σ max(w_a, w_b)` on non-negatively
 //!   weighted multisets. Reduces to regular `MinHash` when every weight is
 //!   `1`.
+//! * [`SimHashSketch`] — Charikar 2002 `SimHash` for cosine similarity: a
+//!   64-bit signature of signed random projections whose Hamming distance
+//!   approximates the angle between the two multiset-implied vectors.
+//! * [`PStableLshSketch`] — Datar-Immorlica-Indyk-Mirrokni 2004
+//!   `p`-stable LSH for `L_p` distances (`p ∈ (0, 2]`). Cauchy
+//!   projections for `L_1`, Gaussian for `L_2`. Returns an integer
+//!   bucket per input; two buckets collide iff the vectors are close in
+//!   the target `L_p` metric with probability decreasing in their
+//!   distance.
 //! * [`LshIndex`] — banded locality-sensitive hashing (Gionis, Indyk,
 //!   Motwani 1999) over [`MinHashSketch`]es. Answers approximate
 //!   Jaccard-nearest-neighbor queries: hands back candidate item ids whose
@@ -47,20 +60,15 @@
 //!   of the estimator's variance is subtly different from the
 //!   k-permutation case.
 //!
-//! This crate ships **k-permutation** as its v0.1 approach. Rationale:
-//!
-//! * The estimator is unambiguously unbiased; there is no densification
-//!   subroutine that could ship with a subtle correctness defect.
-//! * The property tests can hold the estimator to `E[jhat] ≈ J` at every
-//!   `k` without disentangling densification-induced biases.
-//! * The extra hash mixings are cheap — `splitmix64` is a handful of
-//!   scalar operations — and `MinHash`'s practical bottleneck at large
-//!   scale is I/O, not hash CPU.
-//!
-//! A one-permutation variant remains a plausible future sibling; if it
-//! lands, its variant slug will be distinct (`"minhash-one-permutation-*"`)
-//! so a golden case for one variant cannot be silently validated against
-//! the other.
+//! This crate ships **both** variants — [`MinHashSketch`] (k-permutation)
+//! and [`OnePermutationMinHashSketch`] (one-permutation with rotation
+//! densification). Their variant slugs are distinct
+//! (`"minhash-k-permutation-*"` vs `"minhash-one-permutation-*"`) so a
+//! golden case for one cannot silently be validated against the other.
+//! Callers who want unambiguous unbiasedness at every `k` should prefer
+//! the k-permutation variant; callers whose input-side hash-CPU
+//! dominates (very large corpora, large `k`) should prefer the
+//! one-permutation variant.
 //!
 //! # Design decision: hash function
 //!
@@ -110,15 +118,23 @@
 //!
 //! # `AlgorithmDescriptor` scope
 //!
-//! Only the *comparison* the crate performs carries a descriptor: the
-//! Jaccard estimator on [`MinHashSketch`] (see
-//! [`sketch::MINHASH_JACCARD_DESCRIPTOR`]) and its weighted counterpart
-//! on [`WeightedMinHashSketch`] (see
-//! [`weighted::WEIGHTED_MINHASH_JACCARD_DESCRIPTOR`]).
+//! Only the *comparison* the crate performs carries a descriptor:
 //!
-//! The sketch types and [`LshIndex`] themselves are *representation and
-//! infrastructure* — they organize inputs and outputs for the estimator
-//! but do not implement a distinct comparison. This mirrors the same rule
+//! * The Jaccard estimator on [`MinHashSketch`]
+//!   ([`sketch::MINHASH_JACCARD_DESCRIPTOR`]).
+//! * The Jaccard estimator on [`OnePermutationMinHashSketch`]
+//!   ([`one_permutation::ONE_PERMUTATION_MINHASH_JACCARD_DESCRIPTOR`]).
+//! * The weighted-Jaccard estimator on [`WeightedMinHashSketch`]
+//!   ([`weighted::WEIGHTED_MINHASH_JACCARD_DESCRIPTOR`]).
+//! * The cosine estimator on [`SimHashSketch`]
+//!   ([`simhash::SIMHASH_COSINE_DESCRIPTOR`]).
+//! * The `p`-stable LSH hash function on [`PStableLshSketch`]
+//!   ([`p_stable::P_STABLE_LSH_L1_DESCRIPTOR`] for `L_1`,
+//!   [`p_stable::P_STABLE_LSH_L2_DESCRIPTOR`] for `L_2`).
+//!
+//! [`LshIndex`] itself is *representation and infrastructure* — it
+//! organizes inputs and outputs for the estimator but does not implement
+//! a distinct comparison. This mirrors the same rule
 //! `stringcheese-index` follows for BK-tree / VP-tree / q-gram-index: index
 //! structures wrap descriptor-carrying algorithms but do not themselves
 //! carry a descriptor.
@@ -144,6 +160,16 @@ pub mod hash;
 #[cfg(feature = "alloc")]
 pub mod lsh;
 #[cfg(feature = "alloc")]
+pub mod one_permutation;
+// `p`-stable LSH uses `f64::tan`, `f64::cos`, `f64::ln`, and `f64::sqrt`
+// (via inversion-sampling Cauchy and Box-Muller Gaussian) — all `std`
+// operations. Gated on `std` for the same reason
+// `stringcheese-set-similarity`'s `Cosine` and `minhash::weighted` are.
+#[cfg(all(feature = "alloc", feature = "std"))]
+pub mod p_stable;
+#[cfg(feature = "alloc")]
+pub mod simhash;
+#[cfg(feature = "alloc")]
 pub mod sketch;
 // Weighted `MinHash` uses `f64::ln`, `f64::exp`, and `f64::floor` — `std`
 // operations, not `core`. Gated on `std` for the same reason
@@ -159,6 +185,16 @@ mod property_tests;
 
 #[cfg(feature = "alloc")]
 pub use lsh::LshIndex;
+#[cfg(feature = "alloc")]
+pub use one_permutation::{
+    ONE_PERMUTATION_MINHASH_JACCARD_DESCRIPTOR, OnePermutationMinHashSketch,
+};
+#[cfg(all(feature = "alloc", feature = "std"))]
+pub use p_stable::{
+    P_STABLE_LSH_L1_DESCRIPTOR, P_STABLE_LSH_L2_DESCRIPTOR, PStableFamily, PStableLshSketch,
+};
+#[cfg(feature = "alloc")]
+pub use simhash::{SIMHASH_COSINE_DESCRIPTOR, SimHashSketch};
 #[cfg(feature = "alloc")]
 pub use sketch::{MINHASH_JACCARD_DESCRIPTOR, MinHashSketch};
 #[cfg(all(feature = "alloc", feature = "std"))]

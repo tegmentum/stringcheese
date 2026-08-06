@@ -133,6 +133,13 @@ pub use crate::set_similarity::{
 
 // minhash
 #[cfg(feature = "alloc")]
-pub use crate::minhash::{LshIndex, MINHASH_JACCARD_DESCRIPTOR, MinHashSketch};
+pub use crate::minhash::{
+    LshIndex, MINHASH_JACCARD_DESCRIPTOR, MinHashSketch,
+    ONE_PERMUTATION_MINHASH_JACCARD_DESCRIPTOR, OnePermutationMinHashSketch,
+    SIMHASH_COSINE_DESCRIPTOR, SimHashSketch,
+};
 #[cfg(all(feature = "std", feature = "alloc"))]
-pub use crate::minhash::{WEIGHTED_MINHASH_JACCARD_DESCRIPTOR, WeightedMinHashSketch};
+pub use crate::minhash::{
+    P_STABLE_LSH_L1_DESCRIPTOR, P_STABLE_LSH_L2_DESCRIPTOR, PStableFamily, PStableLshSketch,
+    WEIGHTED_MINHASH_JACCARD_DESCRIPTOR, WeightedMinHashSketch,
+};
