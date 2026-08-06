@@ -13,8 +13,13 @@
 //!
 //! * Soundex: 10 encoding cases + 3 match-pair cases (12 unique inputs)
 //! * NYSIIS: 10 encoding cases + 3 match-pair cases
-//! * Double Metaphone (primary-only): 10 encoding cases + 3 match-pair cases
-//! * Double Metaphone (full): 10 encoding cases + 3 match-pair cases
+//! * Double Metaphone (primary-only): 10 encoding cases + 3 match-pair cases,
+//!   plus ~40 additional cases (10+ per rule set) that exercise the full
+//!   Philips-1999 rule set — Slavo-Germanic modifications, `SC` before
+//!   `I`/`E`/`Y`, French silent-terminal endings, and surname exceptions.
+//! * Double Metaphone (full): 10 encoding cases + 3 match-pair cases, plus
+//!   cases exercising the alternate divergence points added for the full
+//!   Philips-1999 rule set.
 
 use alloc::string::String;
 
@@ -366,6 +371,11 @@ fn dm_primary(s: &str) -> DoubleMetaphoneKey {
 /// A function (not a `const`) because `DoubleMetaphoneKey::primary` is
 /// `String`, which cannot appear in a `const` context.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the golden cases read best as a single vec![] literal so the \
+              full case list stays inspectable at a glance"
+)]
 pub fn double_metaphone_encoding_cases() -> alloc::vec::Vec<DoubleMetaphoneCase> {
     alloc::vec![
         GoldenCase {
@@ -459,6 +469,412 @@ pub fn double_metaphone_encoding_cases() -> alloc::vec::Vec<DoubleMetaphoneCase>
             source: GoldenSource::IndependentlyDerived,
             notes: "Empty input yields a primary-only key with an empty primary.",
             tags: &["edge", "empty"],
+        },
+        // ---- Rule set 1: Slavo-Germanic modifications --------------------
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/rabinowitz",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Rabinowitz",
+            expected: dm_primary("RPNT"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-WITZ ending in Slavo-Germanic context (has W): primary \
+                    keeps W silent and encodes I(skip), T→T, Z→S, giving \
+                    R+P+N+T+S truncated to RPNT.",
+            tags: &["primary-only", "slavo-germanic", "witz-ending"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/horowitz",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Horowitz",
+            expected: dm_primary("HRTS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-WITZ ending: primary keeps W silent, ITZ → T+S. H \
+                    emits as first-vowel-adjacent; R→R; final S from Z.",
+            tags: &["primary-only", "slavo-germanic", "witz-ending"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/slavik",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Slavik",
+            expected: dm_primary("SLFK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+L: primary emits S \
+                    (only the alternate diverges to X).",
+            tags: &["primary-only", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/sluski",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Sluski",
+            expected: dm_primary("SLSK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+L: same as Slavik; \
+                    primary emits normal S, only alternate diverges.",
+            tags: &["primary-only", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/smetak",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Smetak",
+            expected: dm_primary("SMTK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+M: only the alternate \
+                    diverges to X.",
+            tags: &["primary-only", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/swartz",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Swartz",
+            expected: dm_primary("SRTS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has W) initial S+W: only the alternate \
+                    diverges to X; primary keeps W silent per default rule.",
+            tags: &["primary-only", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/czajka",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Czajka",
+            expected: dm_primary("SJK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic CZ at start (has CZ and K): primary \
+                    emits S for the whole CZ digraph, then J→J and K→K.",
+            tags: &["primary-only", "slavo-germanic", "cz"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/bilewicz",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Bilewicz",
+            expected: dm_primary("PLS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has W and CZ) -WICZ ending: primary \
+                    keeps W silent, C+Z is folded to a single S under the \
+                    Slavo-Germanic CZ rule. → P, L, S.",
+            tags: &["primary-only", "slavo-germanic", "wicz-ending", "cz"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/wojcik",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Wojcik",
+            expected: dm_primary("AJSK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has W and K) with initial W-before-vowel: \
+                    W silent, O becomes first-committed A, then J→J, C+I \
+                    soft-S, K→K.",
+            tags: &["primary-only", "slavo-germanic", "initial-w"],
+        },
+        GoldenCase {
+            id: "double-metaphone/slavo-germanic/snoek",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Snoek",
+            expected: dm_primary("SNK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+N: primary emits S, \
+                    alternate emits X (see full-variant golden).",
+            tags: &["primary-only", "slavo-germanic", "initial-s"],
+        },
+        // ---- Rule set 2: SC before I/E/Y ---------------------------------
+        GoldenCase {
+            id: "double-metaphone/sc-iey/scientific",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Scientific",
+            expected: dm_primary("SNTF"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SC + I (Italian sci-): the whole SC cluster collapses to \
+                    a single S. Without the rule the C would emit a second \
+                    S (soft-C) yielding SSN...; the rule prevents that.",
+            tags: &["primary-only", "sc-iey"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/scenic",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Scenic",
+            expected: dm_primary("SNK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SC + E: SC collapses to single S; C then N, final C hard \
+                    → K.",
+            tags: &["primary-only", "sc-iey"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/scylla",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Scylla",
+            expected: dm_primary("SL"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SC + Y: SC collapses to S; then Y skipped, doubled L \
+                    collapsed, A skipped.",
+            tags: &["primary-only", "sc-iey"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/schenker",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Schenker",
+            expected: dm_primary("SKNK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH + EN (Schenker exception): the SCH cluster emits SK \
+                    in both branches — the German consonantal reading — \
+                    instead of the default X.",
+            tags: &["primary-only", "sc-iey", "schenk"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/scherzo",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Scherzo",
+            expected: dm_primary("SKRS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH + ER (Scherzo German exception): SK; then R→R and \
+                    Z→S.",
+            tags: &["primary-only", "sc-iey", "schenk"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/schooner",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Schooner",
+            expected: dm_primary("SKNR"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH + OO (Schooner): SK; OO skipped as internal vowels; \
+                    N→N; R→R.",
+            tags: &["primary-only", "sc-iey", "schenk"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/schuyler",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Schuyler",
+            expected: dm_primary("SKLR"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH + UY (Schuyler): SK; then U/Y skipped, L→L, R→R.",
+            tags: &["primary-only", "sc-iey", "schenk"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/schema",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Schema",
+            expected: dm_primary("SKM"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH + EM (Schema German exception): SK; then E skip, \
+                    M→M, A skip.",
+            tags: &["primary-only", "sc-iey", "schenk"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/ascension",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Ascension",
+            expected: dm_primary("ASNS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SC + E internal (not at start): SC collapses to S even \
+                    mid-word. A first-vowel; SC→S; E skip; N→N; S→S.",
+            tags: &["primary-only", "sc-iey", "internal"],
+        },
+        GoldenCase {
+            id: "double-metaphone/sc-iey/fascist",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Fascist",
+            expected: dm_primary("FSST"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SC + I internal: F→F, A skip, SC→S, I skip, S→S, T→T. \
+                    The rule fires at internal SC too.",
+            tags: &["primary-only", "sc-iey", "internal"],
+        },
+        // ---- Rule set 3: French silent-terminal endings ------------------
+        GoldenCase {
+            id: "double-metaphone/french-endings/reign",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Reign",
+            expected: dm_primary("RN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Word-final -GN: G silent, N emits. Without the rule G \
+                    would emit a hard K (giving RKN).",
+            tags: &["primary-only", "french-endings", "silent-gn"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/coign",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Coign",
+            expected: dm_primary("KN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Word-final -GN: C→K, O/I skip, G silent, N→N.",
+            tags: &["primary-only", "french-endings", "silent-gn"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/cologn",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Cologn",
+            expected: dm_primary("KLN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Word-final -GN: C→K, O skip, L→L, O skip, G silent, N→N.",
+            tags: &["primary-only", "french-endings", "silent-gn"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/lamb",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Lamb",
+            expected: dm_primary("LM"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Word-final -MB: B silent, M emits (dumb, thumb, lamb).",
+            tags: &["primary-only", "french-endings", "silent-mb"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/thumb",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Thumb",
+            expected: dm_primary("0M"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "TH theta plus silent -MB ending: '0' + M. (Alternate \
+                    emits TM under the theta split; see the full-variant \
+                    golden.)",
+            tags: &["primary-only", "french-endings", "silent-mb", "th-theta"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/coulomb",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Coulomb",
+            expected: dm_primary("KLM"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Word-final -MB after a vowel cluster: C→K, vowels skip, \
+                    L→L, M→M, B silent.",
+            tags: &["primary-only", "french-endings", "silent-mb"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/compton",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Compton",
+            expected: dm_primary("KMTN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-MPT- middle-P silent: C→K, O skip, M→M, P silent \
+                    (between M and T), T→T, O skip, N→N.",
+            tags: &["primary-only", "french-endings", "silent-mpt"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/hampton",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Hampton",
+            expected: dm_primary("HMTN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-MPT- middle-P silent: H first-emit, A skip, M→M, P \
+                    silent, T→T, O skip, N→N.",
+            tags: &["primary-only", "french-endings", "silent-mpt"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/empty",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Empty",
+            expected: dm_primary("AMT"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-MPT- with initial vowel: E→A (first-vowel), M→M, P \
+                    silent, T→T, Y skip.",
+            tags: &["primary-only", "french-endings", "silent-mpt"],
+        },
+        GoldenCase {
+            id: "double-metaphone/french-endings/symptom",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Symptom",
+            expected: dm_primary("SMTM"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-MPT- interior: S→S, Y skip, M→M, P silent (between M \
+                    and T), T→T, O skip, final M→M.",
+            tags: &["primary-only", "french-endings", "silent-mpt"],
+        },
+        // ---- Rule set 4: Surname exceptions -------------------------------
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/chianti",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Chianti",
+            expected: dm_primary("KNT"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH + IA start-of-word chemistry exception: primary K, \
+                    not the default X. → K, N, T.",
+            tags: &["primary-only", "surname-exceptions", "chemistry-ch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/chiaroscuro",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Chiaroscuro",
+            expected: dm_primary("KRSK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH + IA chemistry exception: K; then R→R, S→S, C→K.",
+            tags: &["primary-only", "surname-exceptions", "chemistry-ch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/chemist",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Chemist",
+            expected: dm_primary("KMST"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH + EM chemistry exception: K; then E skip, M→M, I \
+                    skip, S→S, T→T.",
+            tags: &["primary-only", "surname-exceptions", "chemistry-ch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/chemistry",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Chemistry",
+            expected: dm_primary("KMST"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH + EM chemistry exception: same 4-char truncated \
+                    output as Chemist.",
+            tags: &["primary-only", "surname-exceptions", "chemistry-ch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/chemical",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "Chemical",
+            expected: dm_primary("KMKL"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH + EM chemistry exception: K; M→M; internal hard C→K; \
+                    L→L.",
+            tags: &["primary-only", "surname-exceptions", "chemistry-ch"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/mcdonald",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "McDonald",
+            expected: dm_primary("MKTN"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "MC prefix: C at position 1 emits K (would also emit K \
+                    by the default hard-C rule since D follows — the Mc \
+                    prefix rule still applies without harm).",
+            tags: &["primary-only", "surname-exceptions", "mc-prefix"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/mciver",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "McIver",
+            expected: dm_primary("MKFR"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "MC prefix + soft-C context: without the Mc rule, C+I \
+                    would emit S (soft C), giving MSFR. The Mc rule forces \
+                    K, giving MKFR.",
+            tags: &["primary-only", "surname-exceptions", "mc-prefix"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/maciver",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "MacIver",
+            expected: dm_primary("MKFR"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "MAC prefix + soft-C context: same-as-Mc but with three-\
+                    letter Mac. Without the rule → MSFR; with → MKFR.",
+            tags: &["primary-only", "surname-exceptions", "mac-prefix"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/macintyre",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "MacIntyre",
+            expected: dm_primary("MKNT"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "MAC prefix: M→M, A skip, C→K (forced), I skip, N→N, T→T.",
+            tags: &["primary-only", "surname-exceptions", "mac-prefix"],
+        },
+        GoldenCase {
+            id: "double-metaphone/surname-exceptions/macbride",
+            descriptor: DoubleMetaphone::DESCRIPTOR,
+            input: "MacBride",
+            expected: dm_primary("MKPR"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "MAC prefix + hard-C context: M→M, A skip, C→K (forced), \
+                    B→P, R→R (truncated at 4).",
+            tags: &["primary-only", "surname-exceptions", "mac-prefix"],
         },
     ]
 }
@@ -605,6 +1021,120 @@ pub fn double_metaphone_full_encoding_cases() -> alloc::vec::Vec<DoubleMetaphone
             source: GoldenSource::IndependentlyDerived,
             notes: "Empty input yields an empty primary and no alternate.",
             tags: &["full", "edge", "empty"],
+        },
+        // ---- Rule set 1: Slavo-Germanic divergent alternates -------------
+        GoldenCase {
+            id: "double-metaphone/full/rabinowitz",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Rabinowitz",
+            expected: dm_pair("RPNT", "RPNF"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-WITZ ending: alternate emits F for the W and consumes \
+                    the entire WITZ cluster, yielding RPNF; primary keeps \
+                    the classical W-silent, encode-remaining reading.",
+            tags: &["full", "slavo-germanic", "witz-ending"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/horowitz",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Horowitz",
+            expected: dm_pair("HRTS", "HRF"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-WITZ ending same pattern as Rabinowitz; alternate is \
+                    truncated shorter because the WITZ takes the last four \
+                    characters that the primary would otherwise encode.",
+            tags: &["full", "slavo-germanic", "witz-ending"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/slavik",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Slavik",
+            expected: dm_pair("SLFK", "XLFK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+L: alternate emits X \
+                    (the sh-onset reading typical of transliterated Slavic \
+                    surnames), primary emits S.",
+            tags: &["full", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/swartz",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Swartz",
+            expected: dm_pair("SRTS", "XRTS"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has W) initial S+W: alternate diverges \
+                    to X. W is silent in both branches after the initial S.",
+            tags: &["full", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/snoek",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Snoek",
+            expected: dm_pair("SNK", "XNK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic (has K) initial S+N: alternate diverges \
+                    to X for the S.",
+            tags: &["full", "slavo-germanic", "initial-s"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/czajka",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Czajka",
+            expected: dm_pair("SJK", "XJK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Slavo-Germanic CZ digraph at start: primary S, alternate \
+                    X — the two readings of Slavic CZ.",
+            tags: &["full", "slavo-germanic", "cz"],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/bilewicz",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Bilewicz",
+            expected: dm_pair("PLS", "PLFX"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "-WICZ ending: alternate emits F for W and X for CZ, \
+                    giving PLFX; primary keeps W silent and folds CZ to a \
+                    single S under the Slavo-Germanic CZ rule.",
+            tags: &["full", "slavo-germanic", "wicz-ending"],
+        },
+        // ---- Rule set 3: French endings (theta interaction) -------------
+        GoldenCase {
+            id: "double-metaphone/full/thumb",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Thumb",
+            expected: dm_pair("0M", "TM"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "Silent -MB with the TH-theta split: primary '0M', \
+                    alternate 'TM'. Both branches honor the -MB silent-B \
+                    ending.",
+            tags: &["full", "french-endings", "silent-mb", "th-theta"],
+        },
+        // ---- Rule set 4: chemistry-CH agreement (no divergence) ----------
+        GoldenCase {
+            id: "double-metaphone/full/chianti-no-divergence",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Chianti",
+            expected: dm_primary("KNT"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "CH+IA chemistry exception applies to *both* branches — \
+                    no divergence, alternate is None. Verifies the primary's \
+                    chemistry-K is mirrored by the alternate's chemistry-K.",
+            tags: &[
+                "full",
+                "surname-exceptions",
+                "chemistry-ch",
+                "no-divergence"
+            ],
+        },
+        GoldenCase {
+            id: "double-metaphone/full/schenker-no-divergence",
+            descriptor: DoubleMetaphone::FULL_DESCRIPTOR,
+            input: "Schenker",
+            expected: dm_primary("SKNK"),
+            source: GoldenSource::IndependentlyDerived,
+            notes: "SCH+EN Schenker exception: both branches emit SK, so no \
+                    divergence and the alternate is None.",
+            tags: &["full", "sc-iey", "schenk", "no-divergence"],
         },
     ]
 }

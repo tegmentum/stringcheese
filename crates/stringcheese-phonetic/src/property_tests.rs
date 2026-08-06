@@ -222,6 +222,132 @@ proptest! {
         let _ = DoubleMetaphone::primary_only().encode(&w);
         let _ = DoubleMetaphone::full().encode(&w);
     }
+
+    // -- Whole-rule-set invariants for the completed Philips-1999 encoder --
+    //
+    // Each property below is a general invariant that must hold across the
+    // entire rule set — Slavo-Germanic, SC-before-IEY, French endings, and
+    // surname exceptions all obey these together.
+
+    /// Any ASCII-letter input containing at least one vowel (A/E/I/O/U/Y)
+    /// or one emitting consonant produces a non-empty primary key. Only
+    /// pathological all-silent inputs like a lone "W" (silent with no
+    /// following vowel to promote to first-committed) map to empty; the
+    /// strategy filter carves those out.
+    #[test]
+    fn dm_input_with_emitting_letter_produces_nonempty_primary(
+        w in "[A-Za-z]{1,20}".prop_filter(
+            "must contain at least one vowel or non-silent consonant",
+            |s| s.bytes().any(|b| {
+                let u = b.to_ascii_uppercase();
+                // Vowels emit as first char. Consonants except a lone
+                // silent-in-context W also always emit something.
+                matches!(u, b'A'|b'E'|b'I'|b'O'|b'U'|b'Y') ||
+                    (u.is_ascii_alphabetic() && u != b'W')
+            })
+        )
+    ) {
+        let po = DoubleMetaphone::primary_only().encode(&w);
+        prop_assert!(!po.primary.is_empty(),
+            "DM({:?}).primary is empty for input with emitting letter", w);
+        let f = DoubleMetaphone::full().encode(&w);
+        prop_assert!(!f.primary.is_empty(),
+            "DM.full({:?}).primary is empty for input with emitting letter", w);
+    }
+
+    /// The alternate key is `None` or a non-empty `String` — never
+    /// `Some("")`. Enforced by the encoder's `encode_full` merge step.
+    #[test]
+    fn dm_full_alternate_is_none_or_nonempty_string(w in arb_ascii_word()) {
+        let out = DoubleMetaphone::full().encode(&w);
+        if let Some(alt) = &out.alternate {
+            prop_assert!(!alt.is_empty(),
+                "DM.full({:?}).alternate is Some(\"\") — should be None", w);
+        }
+    }
+
+    /// Both keys are ASCII uppercase (plus the theta placeholder `'0'`).
+    /// Every rule the encoder implements emits ASCII characters in the
+    /// [A-Z0] set, never lowercase, never non-ASCII, never punctuation.
+    #[test]
+    fn dm_keys_are_ascii_uppercase_or_theta(w in arb_ascii_word()) {
+        let out = DoubleMetaphone::full().encode(&w);
+        for c in out.primary.chars() {
+            prop_assert!(
+                c.is_ascii_uppercase() || c == '0',
+                "DM.full({:?}).primary = {:?} contains non-uppercase/non-theta char {:?}",
+                w, out.primary, c
+            );
+        }
+        if let Some(alt) = &out.alternate {
+            for c in alt.chars() {
+                prop_assert!(
+                    c.is_ascii_uppercase() || c == '0',
+                    "DM.full({:?}).alternate = {:?} contains non-uppercase/non-theta char {:?}",
+                    w, alt, c
+                );
+            }
+        }
+    }
+
+    /// Both keys match the regex `^[A-Z0]{0,4}$` given the four-character
+    /// truncation Philips (1999) specifies. The primary may be empty for
+    /// pathological all-silent inputs (a lone "W", for instance); the
+    /// alternate, when `Some`, is always non-empty per the encoder's merge
+    /// contract.
+    #[test]
+    fn dm_keys_match_regex_shape(w in arb_ascii_word()) {
+        fn well_shaped_primary(s: &str) -> bool {
+            let n = s.chars().count();
+            n <= crate::double_metaphone::MAX_KEY_LEN &&
+                s.chars().all(|c| c.is_ascii_uppercase() || c == '0')
+        }
+        fn well_shaped_alternate(s: &str) -> bool {
+            let n = s.chars().count();
+            (1..=crate::double_metaphone::MAX_KEY_LEN).contains(&n) &&
+                s.chars().all(|c| c.is_ascii_uppercase() || c == '0')
+        }
+        let out = DoubleMetaphone::full().encode(&w);
+        prop_assert!(well_shaped_primary(&out.primary),
+            "DM.full({:?}).primary = {:?} does not match ^[A-Z0]{{0,4}}$",
+            w, out.primary);
+        if let Some(alt) = &out.alternate {
+            prop_assert!(well_shaped_alternate(alt),
+                "DM.full({:?}).alternate = {:?} does not match ^[A-Z0]{{1,4}}$",
+                w, alt);
+        }
+    }
+
+    /// The Slavo-Germanic heuristic never crashes and gates only alternate
+    /// divergence (never a primary divergence beyond what non-SG inputs
+    /// would produce for the same letter sequence): specifically, appending
+    /// a `K` to a non-SG input to make it SG must not change the primary
+    /// key beyond the effect of the new `K` letter itself. This property
+    /// checks the SG detection is not smuggling primary-encoding changes.
+    #[test]
+    fn dm_slavo_germanic_gates_only_alternate(w in "[BCDFGHJLMNPQRSTVXYZ]{2,10}") {
+        // Base word has no W/K/CZ/WITZ so is not Slavo-Germanic. Adding a
+        // K flips SG; the primary must equal what you'd get from the base
+        // followed by 'K' in a non-SG context — which we cannot construct.
+        // Instead, we check the SG-only *alternate* rules do not fire for
+        // the primary: primary(base) prefix-relates to primary(base+"K").
+        // Both end at MAX_KEY_LEN, so the prefix relation is truncated.
+        let base = DoubleMetaphone::primary_only().encode(&w).primary;
+        let with_k = DoubleMetaphone::primary_only().encode(&(w.clone() + "K")).primary;
+        // The two primaries either agree (if base already reached the cap)
+        // or the augmented one differs only by a trailing 'K' (or nothing,
+        // if the base was already at cap).
+        let n = base.len();
+        if n == crate::double_metaphone::MAX_KEY_LEN {
+            prop_assert_eq!(base.clone(), with_k.clone(),
+                "primary({:?}) at cap should equal primary({:?}+K)", w, w);
+        } else {
+            let prefix_ok = with_k.starts_with(&base);
+            prop_assert!(prefix_ok,
+                "primary({:?})={:?} is not a prefix of primary({:?}+K)={:?}",
+                w, base, w, with_k);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
