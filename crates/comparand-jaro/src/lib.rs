@@ -75,6 +75,8 @@ extern crate alloc;
 pub mod jaro;
 #[cfg(feature = "alloc")]
 pub mod jaro_winkler;
+#[cfg(feature = "alloc")]
+pub mod workspace;
 
 #[cfg(all(test, feature = "alloc"))]
 mod golden;
@@ -86,3 +88,5 @@ mod property_tests;
 pub use jaro::Jaro;
 #[cfg(feature = "alloc")]
 pub use jaro_winkler::{JaroWinkler, JaroWinklerError};
+#[cfg(feature = "alloc")]
+pub use workspace::JaroWorkspace;

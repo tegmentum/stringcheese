@@ -40,7 +40,8 @@ use comparand_core::{
     MetricProperties, NormalizedSimilarity, Similarity, SimilarityMetric, VariantId,
 };
 
-use crate::jaro::jaro_similarity;
+use crate::jaro::{jaro_similarity, jaro_similarity_with_workspace};
+use crate::workspace::JaroWorkspace;
 
 /// The Jaro-Winkler similarity family.
 ///
@@ -88,6 +89,14 @@ impl JaroWinkler {
         },
     };
 
+    // NOTE (descriptor `source` choice): `DefinitionSource::Paper` holds a
+    // single citation, so we cannot list both Winkler (1990) — the base
+    // Jaro-Winkler paper — and Winkler (1999) — the paper introducing the
+    // 0.7-threshold gating this variant implements. We cite 1999 because
+    // this descriptor identifies the *specific variant* (threshold-gated),
+    // not the Jaro-Winkler family in general; the family paper lives on
+    // `CLASSIC_DESCRIPTOR` and the crate-level `References` section lists
+    // both papers for readers tracing the historical relationship.
     /// Descriptor for the threshold-gated variant returned by
     /// [`JaroWinkler::with_threshold`].
     pub const WITH_THRESHOLD_DESCRIPTOR: AlgorithmDescriptor = AlgorithmDescriptor {
@@ -240,10 +249,53 @@ impl JaroWinkler {
     /// The raw floating-point Jaro-Winkler score. Internal helper used by
     /// [`similarity_normalized`] and the [`SimilarityMetric`] impl.
     ///
+    /// Allocates a throw-away Jaro workspace internally; batch callers
+    /// should prefer
+    /// [`similarity_with_workspace`](Self::similarity_with_workspace)
+    /// instead.
+    ///
     /// [`similarity_normalized`]: JaroWinkler::similarity_normalized
     #[inline]
     fn raw_similarity<T: Eq>(&self, a: &[T], b: &[T]) -> f64 {
-        let base = jaro_similarity(a, b);
+        self.apply_boost(a, b, jaro_similarity(a, b))
+    }
+
+    /// Workspace-aware Jaro-Winkler similarity: computes the base Jaro
+    /// score reusing the bitmaps in `ws`, then applies the prefix boost.
+    ///
+    /// The workspace holds the same two `Vec<bool>` buffers the base Jaro
+    /// kernel uses; there is no separate Jaro-Winkler workspace, because
+    /// the boost itself is `O(prefix_limit)` and takes no scratch.
+    #[inline]
+    #[must_use]
+    pub fn similarity_with_workspace<T: Eq>(
+        &self,
+        left: &[T],
+        right: &[T],
+        ws: &mut JaroWorkspace,
+    ) -> Similarity<f64> {
+        let base = jaro_similarity_with_workspace(left, right, ws);
+        Similarity::new(self.apply_boost(left, right, base))
+    }
+
+    /// Workspace-aware Jaro-Winkler similarity in the range-checked
+    /// [`NormalizedSimilarity`] wrapper.
+    #[inline]
+    #[must_use]
+    pub fn similarity_with_workspace_normalized<T: Eq>(
+        &self,
+        left: &[T],
+        right: &[T],
+        ws: &mut JaroWorkspace,
+    ) -> NormalizedSimilarity {
+        let base = jaro_similarity_with_workspace(left, right, ws);
+        NormalizedSimilarity::new_unchecked(self.apply_boost(left, right, base))
+    }
+
+    /// Applies the prefix boost to an already-computed base Jaro score.
+    /// Shared by the allocating and workspace-aware entry points.
+    #[inline]
+    fn apply_boost<T: Eq>(&self, a: &[T], b: &[T], base: f64) -> f64 {
         if base < self.boost_threshold {
             // Below the threshold, no boost is applied. This produces
             // bit-exact equality with the base Jaro score — the threshold

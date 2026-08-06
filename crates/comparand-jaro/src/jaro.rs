@@ -41,20 +41,26 @@
 //! transposition scan. Auxiliary space is `O(|a| + |b|)` for the boolean
 //! matched-position bitmaps.
 //!
-//! A workspace-aware variant that reuses those bitmaps across calls is
-//! listed as future work — the current implementation allocates two
-//! `Vec<bool>` per call, which is acceptable for one-shot use and for the
-//! algorithm's baseline complexity.
+//! # Workspace reuse
+//!
+//! [`Jaro::similarity_with_workspace`] accepts a caller-owned
+//! [`JaroWorkspace`] and reuses its two `Vec<bool>` bitmaps across
+//! successive calls, dropping the per-call allocation cost that the
+//! trait-based [`SimilarityMetric::similarity`] entry point still pays.
+//! Batch workloads that compare a fixed query against a corpus should
+//! prefer the workspace-aware entry point.
 //!
 //! [`FloatExpectation`]: https://docs.rs/comparand-corpus
+//! [`JaroWorkspace`]: crate::workspace::JaroWorkspace
 
-use alloc::vec;
 use core::cmp::{max, min};
 
 use comparand_core::{
     AlgorithmDescriptor, AlgorithmFamily, DefinitionSource, DescriptorVersion, MetricClass,
     MetricProperties, NormalizedSimilarity, Similarity, SimilarityMetric, VariantId,
 };
+
+use crate::workspace::JaroWorkspace;
 
 /// The Jaro similarity.
 ///
@@ -119,6 +125,41 @@ impl Jaro {
     pub fn similarity_normalized<T: Eq>(&self, left: &[T], right: &[T]) -> NormalizedSimilarity {
         NormalizedSimilarity::new_unchecked(jaro_similarity(left, right))
     }
+
+    /// Workspace-aware Jaro similarity: computes the score reusing the
+    /// bitmaps in `ws` instead of allocating fresh `Vec<bool>` buffers per
+    /// call.
+    ///
+    /// The workspace is grown to `left.len() + right.len()` cells on the
+    /// first call and reused thereafter. This is the entry point batch
+    /// workloads should prefer.
+    #[inline]
+    #[must_use]
+    pub fn similarity_with_workspace<T: Eq>(
+        self,
+        left: &[T],
+        right: &[T],
+        ws: &mut JaroWorkspace,
+    ) -> Similarity<f64> {
+        Similarity::new(jaro_similarity_with_workspace(left, right, ws))
+    }
+
+    /// Workspace-aware Jaro similarity in the range-checked
+    /// [`NormalizedSimilarity`] wrapper.
+    ///
+    /// Same numeric result as [`similarity_with_workspace`](Self::similarity_with_workspace);
+    /// the wrapper carries the `[0.0, 1.0]` invariant across module
+    /// boundaries.
+    #[inline]
+    #[must_use]
+    pub fn similarity_with_workspace_normalized<T: Eq>(
+        self,
+        left: &[T],
+        right: &[T],
+        ws: &mut JaroWorkspace,
+    ) -> NormalizedSimilarity {
+        NormalizedSimilarity::new_unchecked(jaro_similarity_with_workspace(left, right, ws))
+    }
 }
 
 impl<T: Eq> SimilarityMetric<[T]> for Jaro {
@@ -157,12 +198,32 @@ impl<T: Eq> SimilarityMetric<[T]> for Jaro {
 /// re-materializing the matching window. Returns a raw `f64` in `[0.0, 1.0]`;
 /// callers that need the range-checked wrapper should go through
 /// [`Jaro::similarity_normalized`] or wrap the value themselves.
+///
+/// Allocating wrapper around [`jaro_similarity_with_workspace`] that spins
+/// up a throw-away workspace per call. Batch callers should reach for the
+/// workspace-aware entry point directly.
+#[must_use]
+pub(crate) fn jaro_similarity<T: Eq>(a: &[T], b: &[T]) -> f64 {
+    let mut ws = JaroWorkspace::new();
+    jaro_similarity_with_workspace(a, b, &mut ws)
+}
+
+/// The core Jaro kernel with an explicit caller-owned workspace.
+///
+/// The workspace's two bitmaps are grown to `a.len()` and `b.len()` cells
+/// respectively (via a shared `Vec<bool>` split at the top of the call) and
+/// left at that capacity on return so repeated calls of the same size
+/// perform no further allocation.
 #[must_use]
 #[allow(
     clippy::many_single_char_names,
     reason = "the names `a`, `b`, `m`, `t`, `k` are the canonical notation Jaro's paper uses for the two inputs, the match count, the transposition count, and the inner-loop cursor; renaming for clippy would obscure the direct correspondence between this kernel and the published definition"
 )]
-pub(crate) fn jaro_similarity<T: Eq>(a: &[T], b: &[T]) -> f64 {
+pub(crate) fn jaro_similarity_with_workspace<T: Eq>(
+    a: &[T],
+    b: &[T],
+    ws: &mut JaroWorkspace,
+) -> f64 {
     let len_a = a.len();
     let len_b = b.len();
 
@@ -188,11 +249,11 @@ pub(crate) fn jaro_similarity<T: Eq>(a: &[T], b: &[T]) -> f64 {
     let max_len = max(len_a, len_b);
     let window = (max_len / 2).saturating_sub(1);
 
-    // Track which positions in each sequence have already been matched. A
-    // caller-owned workspace would let us reuse these across calls; that's
-    // future work (see the module-level comment).
-    let mut a_matched = vec![false; len_a];
-    let mut b_matched = vec![false; len_b];
+    // Track which positions in each sequence have already been matched.
+    // Split-borrow the two bitmaps out of the workspace in one call —
+    // `split_bitmaps_mut` also resets the requested cells to `false`, so
+    // the previous call's match residue is gone.
+    let (a_matched, b_matched) = ws.split_bitmaps_mut(len_a, len_b);
 
     let mut matches: usize = 0;
     for i in 0..len_a {
@@ -337,5 +398,42 @@ mod tests {
             .into_inner();
         let s = alg.similarity(b"kitten", b"sitting").into_inner();
         assert_eq!(n.to_bits(), s.to_bits());
+    }
+
+    #[test]
+    fn similarity_with_workspace_matches_similarity_bit_exact() {
+        let alg = Jaro;
+        let mut ws = JaroWorkspace::new();
+        let with_ws = alg
+            .similarity_with_workspace(b"MARTHA", b"MARHTA", &mut ws)
+            .into_inner();
+        let without_ws = alg.similarity(b"MARTHA", b"MARHTA").into_inner();
+        assert_eq!(with_ws.to_bits(), without_ws.to_bits());
+    }
+
+    #[test]
+    fn similarity_with_workspace_reuse_across_shapes_bit_exact() {
+        let alg = Jaro;
+        let mut hot = JaroWorkspace::new();
+        let pairs: &[(&[u8], &[u8])] = &[
+            (b"", b""),
+            (b"", b"z"),
+            (b"a", b""),
+            (b"MARTHA", b"MARHTA"),
+            (b"kitten", b"sitting"),
+            (b"DIXON", b"DICKSONX"),
+            (b"aaaaaaaa", b"aaaaaaaa"),
+            (b"abcdefghij", b"jihgfedcba"),
+        ];
+        for (a, b) in pairs {
+            let mut cold = JaroWorkspace::new();
+            let per_call = alg.similarity_with_workspace(a, b, &mut cold).into_inner();
+            let reused = alg.similarity_with_workspace(a, b, &mut hot).into_inner();
+            assert_eq!(
+                per_call.to_bits(),
+                reused.to_bits(),
+                "reused workspace disagreed on ({a:?}, {b:?})"
+            );
+        }
     }
 }

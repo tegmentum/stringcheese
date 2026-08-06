@@ -29,6 +29,7 @@ use proptest::prelude::*;
 
 use crate::jaro::Jaro;
 use crate::jaro_winkler::JaroWinkler;
+use crate::workspace::JaroWorkspace;
 use comparand_core::SimilarityMetric;
 
 /// A short `char` slice over a three-symbol alphabet.
@@ -186,6 +187,85 @@ proptest! {
         let alg = JaroWinkler::with_threshold();
         let s = alg.similarity(&x, &y).into_inner();
         prop_assert!((0.0..=1.0).contains(&s), "out of range: {}", s);
+    }
+
+    // -------- Workspace-reuse correctness (Item 2) --------
+
+    /// For random inputs, running a Jaro comparison with a workspace that
+    /// has already been used on a previous call must return the same
+    /// `f64` bits as running with a fresh workspace. Any leaked residue
+    /// in the reused bitmaps (or a partial reset in `split_bitmaps_mut`)
+    /// would surface here as a shrunk counterexample.
+    #[test]
+    fn jaro_workspace_reuse_matches_fresh(
+        a1 in arb_chars(),
+        b1 in arb_chars(),
+        a2 in arb_chars(),
+        b2 in arb_chars(),
+    ) {
+        let alg = Jaro;
+
+        // Per-call fresh workspaces for the baseline.
+        let mut fresh1 = JaroWorkspace::new();
+        let mut fresh2 = JaroWorkspace::new();
+        let fresh_v1 = alg.similarity_with_workspace(&a1, &b1, &mut fresh1).into_inner();
+        let fresh_v2 = alg.similarity_with_workspace(&a2, &b2, &mut fresh2).into_inner();
+
+        // Single hot workspace across both calls.
+        let mut hot = JaroWorkspace::new();
+        let hot_v1 = alg.similarity_with_workspace(&a1, &b1, &mut hot).into_inner();
+        let hot_v2 = alg.similarity_with_workspace(&a2, &b2, &mut hot).into_inner();
+
+        prop_assert_eq!(hot_v1.to_bits(), fresh_v1.to_bits(),
+            "reused workspace disagreed on first call");
+        prop_assert_eq!(hot_v2.to_bits(), fresh_v2.to_bits(),
+            "reused workspace disagreed on second call");
+    }
+
+    /// Jaro-Winkler workspace reuse must be bit-exact against a fresh
+    /// workspace across arbitrary input pairs. The JW boost is deterministic
+    /// on top of a bit-exact base Jaro score, so the equality is bit-for-bit.
+    #[test]
+    fn jw_classic_workspace_reuse_matches_fresh(
+        a1 in arb_chars(),
+        b1 in arb_chars(),
+        a2 in arb_chars(),
+        b2 in arb_chars(),
+    ) {
+        let alg = JaroWinkler::classic();
+
+        let mut fresh1 = JaroWorkspace::new();
+        let mut fresh2 = JaroWorkspace::new();
+        let fresh_v1 = alg.similarity_with_workspace(&a1, &b1, &mut fresh1).into_inner();
+        let fresh_v2 = alg.similarity_with_workspace(&a2, &b2, &mut fresh2).into_inner();
+
+        let mut hot = JaroWorkspace::new();
+        let hot_v1 = alg.similarity_with_workspace(&a1, &b1, &mut hot).into_inner();
+        let hot_v2 = alg.similarity_with_workspace(&a2, &b2, &mut hot).into_inner();
+
+        prop_assert_eq!(hot_v1.to_bits(), fresh_v1.to_bits());
+        prop_assert_eq!(hot_v2.to_bits(), fresh_v2.to_bits());
+    }
+
+    /// The workspace-aware Jaro entry point must be bit-exactly equivalent
+    /// to the allocating [`SimilarityMetric::similarity`] entry point.
+    #[test]
+    fn jaro_workspace_and_trait_agree_bit_exact(x in arb_chars(), y in arb_chars()) {
+        let alg = Jaro;
+        let via_trait = alg.similarity(&x, &y).into_inner();
+        let mut ws = JaroWorkspace::new();
+        let via_ws = alg.similarity_with_workspace(&x, &y, &mut ws).into_inner();
+        prop_assert_eq!(via_trait.to_bits(), via_ws.to_bits());
+    }
+
+    /// Same equivalence for JaroWinkler::classic.
+    #[test]
+    fn jw_classic_workspace_and_trait_agree_bit_exact(x in arb_chars(), y in arb_chars()) {
+        let alg = JaroWinkler::classic();
+        let via_trait = alg.similarity(&x, &y).into_inner();
+        let mut ws = JaroWorkspace::new();
+        let via_ws = alg.similarity_with_workspace(&x, &y, &mut ws).into_inner();
+        prop_assert_eq!(via_trait.to_bits(), via_ws.to_bits());
     }
 }
 
