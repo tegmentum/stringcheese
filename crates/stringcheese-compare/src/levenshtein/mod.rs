@@ -85,6 +85,7 @@ pub mod workspace;
 mod golden;
 
 #[cfg(all(test, feature = "alloc"))]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 #[cfg(feature = "alloc")]

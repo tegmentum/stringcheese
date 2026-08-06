@@ -90,6 +90,7 @@ pub mod preprocessing;
 #[cfg(all(feature = "alloc", test))]
 mod golden;
 #[cfg(all(feature = "alloc", test))]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 // Re-export the public surface at the crate root so consumers can write

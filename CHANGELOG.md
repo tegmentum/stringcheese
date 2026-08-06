@@ -155,6 +155,28 @@ bump; `0.x` versions are pre-stability.
 
 ### Changed
 
+- **`proptest` gated off wasm; wasm-runtime CI matrix expanded to the
+  full workspace.** Every crate that used `proptest` in
+  `[dev-dependencies]` (`stringcheese-compare`, `-align`, `-cdc`,
+  `-index`, `-manip`, `-phonetic`, `-unicode`) now declares it under
+  `[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]`, and
+  every property-test module (`mod property_tests;` or inline
+  `mod properties { ... }`) is gated on the matching
+  `#[cfg(not(target_family = "wasm"))]` predicate. Reason: `proptest`
+  transitively depends on `wait-timeout`, which is `#[cfg(unix)]` /
+  `#[cfg(windows)]` only with no wasm branch; leaving it unconditional
+  broke the wasm-runtime CI job's `cargo test --target wasm32-wasip1`
+  at LINK time. Host `cargo test` runs are unchanged — proptest is
+  still picked up for every non-wasm target and the property tests
+  continue to run.
+
+  With the gate in place, the wasm-runtime CI job now runs
+  `cargo test --workspace --exclude stringcheese-bench
+  --target wasm32-wasip1` — 10 crates, was 3. Locally, 942 tests
+  pass under wasmtime on `wasm32-wasip1` (host `cargo test` remains
+  1,233 including the property tests). `stringcheese-bench` stays
+  excluded because criterion depends on host-only timing/IO.
+
 - **Import paths.** `use stringcheese_<family>::X` becomes
   `use stringcheese_compare::<family>::X` (with `set-similarity`
   spelled `set_similarity` on the Rust side). The umbrella `stringcheese`

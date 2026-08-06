@@ -88,6 +88,7 @@ pub mod kernel;
 mod golden;
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 pub use algorithm::Hamming;

@@ -144,6 +144,7 @@ mod golden;
 // OSA kernels via each module's inline `#[cfg(test)]` sub-modules; only
 // the cross-variant property suite is gated on `std`.
 #[cfg(all(test, feature = "std"))]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 #[cfg(feature = "alloc")]

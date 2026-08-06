@@ -28,6 +28,15 @@ stringcheese-core = { workspace = true }
 # Golden-case schema; test-only. `alloc` is enabled so the golden case
 # fixtures and property tests can share ownership machinery.
 stringcheese-corpus = { workspace = true, features = ["alloc"] }
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
 
 [lints]

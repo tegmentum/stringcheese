@@ -59,6 +59,7 @@ pub mod fingerprint;
 mod golden;
 
 #[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 pub use cdc::{ChunkBoundary, FastCdc, FastCdcConfig, FastCdcIter, FastCdcStream};

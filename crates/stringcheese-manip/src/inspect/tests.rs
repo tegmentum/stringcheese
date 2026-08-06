@@ -158,7 +158,7 @@ mod grapheme_tests {
 // Property tests. Only compiled when `std` is enabled because `proptest`
 // (in its default configuration) needs `std`. Tests run under
 // `cargo test`, which enables the default features.
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
 mod properties {
     use super::*;
     use proptest::prelude::*;

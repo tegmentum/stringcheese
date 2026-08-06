@@ -142,6 +142,7 @@ pub(crate) mod shared;
 mod golden;
 
 #[cfg(all(test, feature = "alloc"))]
+#[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
 #[cfg(all(feature = "std", feature = "alloc"))]

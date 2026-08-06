@@ -224,20 +224,20 @@ jobs:
   # `--target wasm32-wasip1`, cargo invokes wasmtime with the wasm module
   # as arg 1 and passes the test-harness's own flags through.
   #
-  # Scope. Only three crates are exercised today:
+  # Scope. Every crate whose dev-deps compile on wasm32-wasip1 is
+  # exercised. The proptest-gating sweep (see the block below) moved
+  # `proptest` in each affected crate to
+  # `[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]`, and
+  # the property-test modules that use it are gated on the same
+  # `#[cfg(not(target_family = "wasm"))]` predicate; host `cargo test`
+  # continues to run them unchanged. Together those two moves unlocked
+  # every crate below for the wasm-runtime matrix. `stringcheese-bench`
+  # remains excluded — criterion depends on host-only timing / IO
+  # machinery, and the benchmark harness is not a wasm target.
   #
-  #   * `stringcheese`         (facade — no tests, but confirms the pipeline)
-  #   * `stringcheese-core`    (traits + descriptors; 11 unit + 2 doctests)
-  #   * `stringcheese-corpus`  (host-independent test corpus; 26 unit tests)
-  #
-  # Every other workspace crate declares `proptest` as an unconditional
-  # dev-dependency; proptest transitively depends on `wait-timeout`,
-  # which reaches for libc process syscalls (`waitpid`) that do not
-  # exist on `wasm32-wasip1`. The test binaries therefore fail to LINK,
-  # not to run. The fix is per-crate: gate `proptest` behind
-  # `[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]` so it
-  # is not compiled for wasm at all. Doing that opens each crate to this
-  # matrix. Until then, this job restricts itself to what actually works.
+  # If you add a new crate that pulls in `proptest`, apply the same
+  # target-gating (dep + module) or its wasm test binary will fail to
+  # LINK, not to run.
   #
   # `continue-on-error: true` — deliberate. Matches the pattern the
   # wave-5 `wasm` job used to start green: wasmtime install pulls from
@@ -272,18 +272,19 @@ jobs:
         run: wasmtime --version
 
       - name: Test on wasm32-wasip1 under wasmtime
-        # -p list rather than `--workspace --exclude ...`: the excluded
-        # set today is ~14 of ~17 crates, which makes the exclude form
-        # noisier than the include form and easier to get wrong when a
-        # new crate lands. Each entry here is a crate that has been
-        # verified to link and run on `wasm32-wasip1`; add a crate here
-        # only after removing its host-only dev-deps (see the comment
-        # above the job).
+        # `--workspace --exclude stringcheese-bench` — everything else
+        # in the workspace now links on wasm32-wasip1 after the
+        # proptest-gating sweep. Bench is excluded because criterion
+        # depends on host-only timing/IO. If a new crate lands with
+        # `proptest` in unconditional `[dev-dependencies]`, move it to
+        # `[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]`
+        # and gate the property-test module on
+        # `#[cfg(not(target_family = "wasm"))]` — or this job fails to
+        # LINK.
         run: |
           cargo test \
-            -p stringcheese \
-            -p stringcheese-core \
-            -p stringcheese-corpus \
+            --workspace \
+            --exclude stringcheese-bench \
             --all-features \
             --locked \
             --target wasm32-wasip1

@@ -240,7 +240,7 @@ fn ascii_uppercase_ignores_non_ascii() {
 // Property tests
 // -----------------------------------------------------------------
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
 mod properties {
     use super::*;
     use proptest::prelude::*;
