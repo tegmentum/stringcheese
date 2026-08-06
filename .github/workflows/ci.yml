@@ -116,12 +116,12 @@ jobs:
         run: |
           set -euo pipefail
           crates=(
-            comparand-core
-            comparand-corpus
-            comparand-levenshtein
-            comparand-hamming
-            comparand-jaro
-            comparand
+            stringcheese-core
+            stringcheese-corpus
+            stringcheese-levenshtein
+            stringcheese-hamming
+            stringcheese-jaro
+            stringcheese
           )
           for crate in "${crates[@]}"; do
             echo "::group::${crate} --no-default-features"
@@ -136,8 +136,8 @@ jobs:
   # WebAssembly cross-compile.
   #
   # Every workspace crate that ships code (i.e. everything except the
-  # `comparand-bench` benchmark harness and the currently-empty
-  # `comparand-search`, `comparand-cdc`, `comparand-index` placeholder
+  # `stringcheese-bench` benchmark harness and the currently-empty
+  # `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index` placeholder
   # crates) is verified against both wasm targets under three feature
   # configurations:
   #
@@ -154,7 +154,7 @@ jobs:
   # `wasm32-unknown-unknown` has no std beyond core primitives — see
   # docs/wasm-build-recipes.md for the definitive matrix.
   #
-  # `comparand-bench` is excluded because criterion depends on host-only
+  # `stringcheese-bench` is excluded because criterion depends on host-only
   # timing/IO machinery; benchmark-harness code is not a wasm target.
   # ------------------------------------------------------------------
   wasm:
@@ -178,17 +178,17 @@ jobs:
         run: |
           set -euo pipefail
           crates=(
-            comparand
-            comparand-core
-            comparand-corpus
-            comparand-levenshtein
-            comparand-hamming
-            comparand-jaro
-            comparand-damerau
-            comparand-ngram
-            comparand-unicode
-            comparand-phonetic
-            comparand-set-similarity
+            stringcheese
+            stringcheese-core
+            stringcheese-corpus
+            stringcheese-levenshtein
+            stringcheese-hamming
+            stringcheese-jaro
+            stringcheese-damerau
+            stringcheese-ngram
+            stringcheese-unicode
+            stringcheese-phonetic
+            stringcheese-set-similarity
           )
           targets=(wasm32-wasip1 wasm32-unknown-unknown)
           # Feature-set label -> flag string. Kept as parallel arrays so
@@ -233,9 +233,9 @@ jobs:
   #
   # Scope. Only three crates are exercised today:
   #
-  #   * `comparand`         (facade — no tests, but confirms the pipeline)
-  #   * `comparand-core`    (traits + descriptors; 11 unit + 2 doctests)
-  #   * `comparand-corpus`  (host-independent test corpus; 26 unit tests)
+  #   * `stringcheese`         (facade — no tests, but confirms the pipeline)
+  #   * `stringcheese-core`    (traits + descriptors; 11 unit + 2 doctests)
+  #   * `stringcheese-corpus`  (host-independent test corpus; 26 unit tests)
   #
   # Every other workspace crate declares `proptest` as an unconditional
   # dev-dependency; proptest transitively depends on `wait-timeout`,
@@ -288,9 +288,9 @@ jobs:
         # above the job).
         run: |
           cargo test \
-            -p comparand \
-            -p comparand-core \
-            -p comparand-corpus \
+            -p stringcheese \
+            -p stringcheese-core \
+            -p stringcheese-corpus \
             --all-features \
             --locked \
             --target wasm32-wasip1

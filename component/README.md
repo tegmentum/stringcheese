@@ -1,6 +1,6 @@
-# Comparand — WebAssembly Component Model layer
+# StringCheese — WebAssembly Component Model layer
 
-This directory is the Component-Model face of Comparand: a small WIT
+This directory is the Component-Model face of StringCheese: a small WIT
 interface and a Rust host that implements it, together forming a
 WebAssembly component that any Component-Model-capable runtime
 (Wasmtime, jco, WasmCloud, Spin, …) can load and call without linking
@@ -18,7 +18,7 @@ those first if you need the "why" behind any decision below.
 component/
 ├── README.md                            (this file)
 ├── wit/
-│   └── comparand.wit                    interface definition
+│   └── stringcheese.wit                    interface definition
 └── rust-host/                           Rust host implementation
     ├── Cargo.toml                       standalone-workspace sentinel
     └── src/
@@ -26,14 +26,14 @@ component/
 ```
 
 `rust-host/Cargo.toml` opens with an empty `[workspace]` table so the
-crate is not a member of the outer Comparand workspace. That matches
+crate is not a member of the outer StringCheese workspace. That matches
 the pattern used by `fuzz/Cargo.toml` and
 `bench-adapters/rust/Cargo.toml`; a `cargo` invocation from anywhere
 inside `component/` resolves against a fresh, isolated `Cargo.lock`.
 
 ## The interface at a glance
 
-Package: `comparand:core@0.1.0`. Four interfaces, sixteen functions,
+Package: `stringcheese:core@0.1.0`. Four interfaces, sixteen functions,
 one world.
 
 | Interface     | Functions                                                                    | Wire shape                        |
@@ -43,14 +43,14 @@ one world.
 | `search`      | `find-first`, `find-all`                                                     | `list<u8> × list<u8> → option<u32> / list<u32>` |
 | `phonetic`    | `soundex`, `nysiis`, `double-metaphone-primary`                              | `string → string`                               |
 
-See [`wit/comparand.wit`](wit/comparand.wit) for the precise
+See [`wit/stringcheese.wit`](wit/stringcheese.wit) for the precise
 signatures, per-function documentation, and the `bounded-distance`
 variant used by `levenshtein-within`.
 
 ### Sequence representation
 
 The `distance`, `similarity`, and `search` interfaces exchange
-`list<u8>` — raw bytes — because that is what the Comparand kernels
+`list<u8>` — raw bytes — because that is what the StringCheese kernels
 operate on. WIT `string` would force a UTF-8 validation on every call,
 which is wasted work when the caller already has bytes and does not
 help when the caller has arbitrary binary input.
@@ -93,26 +93,26 @@ cargo component build --release
 The output lands at:
 
 ```
-component/rust-host/target/wasm32-wasip1/release/comparand_component_host.wasm
+component/rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm
 ```
 
 Validate and inspect:
 
 ```bash
-wasm-tools validate  target/wasm32-wasip1/release/comparand_component_host.wasm
-wasm-tools component wit target/wasm32-wasip1/release/comparand_component_host.wasm
+wasm-tools validate  target/wasm32-wasip1/release/stringcheese_component_host.wasm
+wasm-tools component wit target/wasm32-wasip1/release/stringcheese_component_host.wasm
 ```
 
 The `wit` subcommand round-trips the interface out of the produced
 component and should show the same four exports as
-[`wit/comparand.wit`](wit/comparand.wit).
+[`wit/stringcheese.wit`](wit/stringcheese.wit).
 
 ### Notes on target choice
 
 `cargo component build` defaults to `wasm32-wasip1`. The resulting
 component imports a small set of WASI `0.2` interfaces (stdio,
 filesystem, clocks) which Rust's `std` links against even when the
-Comparand code never calls into them; a Wasmtime host provides those
+StringCheese code never calls into them; a Wasmtime host provides those
 by default. If you need a truly zero-WASI-import component for a
 browser bundle, override the target in `.cargo/config.toml` inside
 `rust-host/` to `wasm32-unknown-unknown` and switch `std` off across
@@ -131,12 +131,12 @@ npm install --save-dev @bytecodealliance/jco @bytecodealliance/preview2-shim
 
 # Transpile the component to a native JavaScript module + WIT-typed .d.ts
 npx jco transpile \
-    component/rust-host/target/wasm32-wasip1/release/comparand_component_host.wasm \
+    component/rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm \
     --out-dir generated
 ```
 
 ```javascript
-import { distance, similarity, phonetic } from "./generated/comparand_component_host.js";
+import { distance, similarity, phonetic } from "./generated/stringcheese_component_host.js";
 
 console.log(distance.levenshtein(
     new TextEncoder().encode("kitten"),
@@ -175,22 +175,22 @@ use wasmtime::{Engine, Store};
 use wasmtime::component::{Component, Linker, bindgen};
 
 bindgen!({
-    world: "comparand-core",
+    world: "stringcheese-core",
     path: "../component/wit",
 });
 
 let engine = Engine::default();
 let component = Component::from_file(
     &engine,
-    "component/rust-host/target/wasm32-wasip1/release/comparand_component_host.wasm",
+    "component/rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm",
 )?;
 let mut linker = Linker::<()>::new(&engine);
 wasmtime_wasi::add_to_linker_sync(&mut linker)?;    // for the WASI imports
 
 let mut store = Store::new(&engine, ());
-let bindings = ComparandCore::instantiate(&mut store, &component, &linker)?;
+let bindings = StringcheeseCore::instantiate(&mut store, &component, &linker)?;
 let d = bindings
-    .comparand_core_distance()
+    .stringcheese_core_distance()
     .call_levenshtein(&mut store, b"kitten", b"sitting")?;
 assert_eq!(d, 3);
 ```
@@ -200,29 +200,29 @@ assert_eq!(d, 3);
 ### Exposed (10 functions)
 
 Every function here has (a) a natural single-input-single-output shape
-and (b) an obvious counterpart in the Comparand crates. This is the
+and (b) an obvious counterpart in the StringCheese crates. This is the
 "workhorse" surface: the algorithms a caller reaches for first when
 they turn up needing sequence comparison from a non-Rust host.
 
 - **Levenshtein**, **OSA**, and **LCS distance** — the three
-  workhorse edit-distance metrics from `comparand-levenshtein`,
-  `comparand-damerau`, and `comparand-lcs`.
+  workhorse edit-distance metrics from `stringcheese-levenshtein`,
+  `stringcheese-damerau`, and `stringcheese-lcs`.
 - **Bounded Levenshtein** (`levenshtein-within`) — the same, plus a
   cutoff, mapped to the WIT `bounded-distance` variant.
 - **Hamming** — with its length-mismatch error surfaced through
   `result<u32, string>`.
 - **Jaro** and **Jaro–Winkler (classic)** — the two Jaro-family
-  similarities from `comparand-jaro`.
+  similarities from `stringcheese-jaro`.
 - **Dice-over-bigrams** and **Jaccard-over-bigrams** — set
   similarities on character (byte) bigrams, using the n-gram
-  generator from `comparand-ngram` as a small in-host shim
+  generator from `stringcheese-ngram` as a small in-host shim
   (`byte_bigram_sets` in `src/lib.rs`) to build `GramSet<Vec<u8>>` on
-  each side before calling into `comparand-set-similarity`.
+  each side before calling into `stringcheese-set-similarity`.
 - **KMP `find-first` / `find-all`** — substring search from
-  `comparand-search`, defaulting to KMP because it has cheap
+  `stringcheese-search`, defaulting to KMP because it has cheap
   preparation and predictable worst-case search time.
 - **Soundex**, **NYSIIS**, **Double Metaphone (primary key)** — the
-  three code-driven phonetic encoders from `comparand-phonetic`.
+  three code-driven phonetic encoders from `stringcheese-phonetic`.
 
 ### Deliberately not exposed
 
@@ -257,7 +257,7 @@ of them requires more than a `func` declaration.
   `record { primary: string, alternate: option<string> }`.
 - **NARA-only Soundex refinement flags, NYSIIS truncation control.**
   Options behind config records; punt to a follow-up.
-- **Unicode preprocessing (`comparand-unicode`).** Callers who need
+- **Unicode preprocessing (`stringcheese-unicode`).** Callers who need
   normalization or case folding across the WIT boundary want a
   dedicated `interface preprocessing { normalize-nfc, case-fold, … }`.
   Not in the seed layer.
@@ -271,14 +271,14 @@ next section describes how to bring the deferred algorithms in.
 
 ### Adding a plain function
 
-1. Edit [`wit/comparand.wit`](wit/comparand.wit) — add a `func`
+1. Edit [`wit/stringcheese.wit`](wit/stringcheese.wit) — add a `func`
    declaration inside the appropriate interface (or add a new
-   interface and `export` it from the `comparand-core` world).
+   interface and `export` it from the `stringcheese-core` world).
 2. `cd rust-host && cargo build --target wasm32-wasip1` — the
    `wit_bindgen::generate!` macro will re-expand and produce a new
    Guest trait method. The build fails with a "not all trait items
    implemented" error until you add the method.
-3. Add the method body to `impl exports::comparand::core::<interface>::Guest for Component`
+3. Add the method body to `impl exports::stringcheese::core::<interface>::Guest for Component`
    in `src/lib.rs`, calling into the appropriate algorithm crate.
 4. `cargo component build --release` — the produced `.wasm` now
    carries the new export.
@@ -315,8 +315,8 @@ Every PR touching `component/` should pass:
 - `cd rust-host && cargo fmt -- --check`
 - `cd rust-host && cargo clippy --target wasm32-wasip1 --all-targets -- -W clippy::pedantic`
 - `cd rust-host && cargo component build --release`
-- `wasm-tools validate rust-host/target/wasm32-wasip1/release/comparand_component_host.wasm`
-- `wasm-tools component wit rust-host/target/wasm32-wasip1/release/comparand_component_host.wasm | grep "^  export comparand"`
+- `wasm-tools validate rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm`
+- `wasm-tools component wit rust-host/target/wasm32-wasip1/release/stringcheese_component_host.wasm | grep "^  export stringcheese"`
   — should list every interface the world declares.
 
 The last check catches silent export-table drift: if a Guest impl

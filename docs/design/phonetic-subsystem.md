@@ -1,10 +1,10 @@
 # Phonetic Subsystem
 
 Status: Design
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](../DESIGN.md), [type-system.md](./type-system.md), [preprocessing-pipeline.md](./preprocessing-pipeline.md), [ngram-and-fingerprinting.md](./ngram-and-fingerprinting.md), [wasm-and-wit-interface.md](./wasm-and-wit-interface.md)
 
-The design of Comparand's phonetic matching subsystem — encoders, key comparison, language and script metadata, and the roadmap to phoneme-level comparison.
+The design of StringCheese's phonetic matching subsystem — encoders, key comparison, language and script metadata, and the roadmap to phoneme-level comparison.
 
 ## Phonetics is first-class
 
@@ -15,7 +15,7 @@ Phonetic matching is not just another comparison function. It is a distinct subs
 - Its own composition contract (encoder + comparison, not a single black-box function).
 - Its own modularity story (language-specific rule tables shipped as separate crates for feature-driven inclusion).
 
-Treating phonetics as a facet of a generic string-comparison API loses these dimensions. Comparand puts the subsystem alongside distance and similarity as a peer.
+Treating phonetics as a facet of a generic string-comparison API loses these dimensions. StringCheese puts the subsystem alongside distance and similarity as a peer.
 
 ## Encoding vs comparison
 
@@ -84,7 +84,7 @@ Phonetic algorithms come in two shapes.
 - **Code-driven.** Soundex, NYSIIS, and Match Rating are small procedures — a handful of transformation rules expressible as short match-and-replace loops directly in Rust. They live inside their algorithm crate with no external data.
 - **Data-driven.** Daitch–Mokotoff and Beider–Morse are tables of hundreds to thousands of rules with contexts and language variants. Encoding them as inline Rust would be unmaintainable; the tables live as compile-time-embedded static data (or, feature-gated, as runtime-loaded data for very large tables) and the encoder is a small interpreter over the table.
 
-The subsystem accommodates both without a common encoder machinery: `PhoneticEncoder` is a trait, and code-driven and data-driven implementations meet it however they need to. Where data tables are large enough to warrant it, the tables live in their own crate (`comparand-phonetic-beidermorse-data`) and are pulled in via a Cargo feature, so a minimal Wasm build does not carry them.
+The subsystem accommodates both without a common encoder machinery: `PhoneticEncoder` is a trait, and code-driven and data-driven implementations meet it however they need to. Where data tables are large enough to warrant it, the tables live in their own crate (`stringcheese-phonetic-beidermorse-data`) and are pulled in via a Cargo feature, so a minimal Wasm build does not carry them.
 
 ## The algorithm-variant registry for phonetic variants
 
@@ -133,16 +133,16 @@ Golden cases reference the descriptor, so a case for `"english-1918"` cannot sil
 Language support is packaged for feature-driven inclusion.
 
 ```
-comparand-phonetic                  facade + language-agnostic infrastructure
-    comparand-phonetic-germanic     English, German, Dutch, Yiddish
-    comparand-phonetic-romance      French, Spanish, Italian, Portuguese
-    comparand-phonetic-slavic       Russian, Polish, Czech, Ukrainian
-    comparand-phonetic-semitic      Arabic, Hebrew
-    comparand-phonetic-indic        Hindi, Bengali, Tamil, Telugu
-    comparand-phonetic-cjk          Chinese, Japanese, Korean
+stringcheese-phonetic                  facade + language-agnostic infrastructure
+    stringcheese-phonetic-germanic     English, German, Dutch, Yiddish
+    stringcheese-phonetic-romance      French, Spanish, Italian, Portuguese
+    stringcheese-phonetic-slavic       Russian, Polish, Czech, Ukrainian
+    stringcheese-phonetic-semitic      Arabic, Hebrew
+    stringcheese-phonetic-indic        Hindi, Bengali, Tamil, Telugu
+    stringcheese-phonetic-cjk          Chinese, Japanese, Korean
 ```
 
-Each language pack is a separate crate. The facade `comparand-phonetic` re-exports the subset selected by Cargo features. A minimal Wasm build for an English-only entity-resolution workload pulls in `comparand-phonetic-germanic` and nothing else — the Cyrillic transliteration tables never appear in the linked binary.
+Each language pack is a separate crate. The facade `stringcheese-phonetic` re-exports the subset selected by Cargo features. A minimal Wasm build for an English-only entity-resolution workload pulls in `stringcheese-phonetic-germanic` and nothing else — the Cyrillic transliteration tables never appear in the linked binary.
 
 Language packs contain the encoder implementations, their `Applicability` metadata, their variant descriptors, and any embedded data tables. Cross-language comparison (Beider–Morse against a corpus of mixed-language names) pulls in every relevant pack.
 
@@ -170,7 +170,7 @@ Phoneme-level comparison is on the roadmap for version 0.2 (see [DESIGN.md § Fu
 ```rust
 // Proposed — not yet implemented.
 
-use comparand_core::{AlgorithmDescriptor, SimilarityMetric, NormalizedSimilarity};
+use stringcheese_core::{AlgorithmDescriptor, SimilarityMetric, NormalizedSimilarity};
 
 /// A phonetic key: a short symbolic representation of an input's
 /// pronunciation, opaque to callers.

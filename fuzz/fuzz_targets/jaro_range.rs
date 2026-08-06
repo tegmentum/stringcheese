@@ -21,8 +21,8 @@
 
 #![no_main]
 
-use comparand_core::SimilarityMetric;
-use comparand_jaro::Jaro;
+use stringcheese_core::SimilarityMetric;
+use stringcheese_jaro::Jaro;
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]

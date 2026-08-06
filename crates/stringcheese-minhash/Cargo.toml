@@ -1,0 +1,33 @@
+[package]
+name = "stringcheese-minhash"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "MinHash sketches and LSH banding for approximate Jaccard-similarity search at scale."
+categories = ["algorithms", "data-structures"]
+keywords = ["minhash", "lsh", "jaccard", "sketch", "probabilistic"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "stringcheese-core/std"]
+# When enabled, the crate exposes its heap-allocating public surface — every
+# sketch, index, and estimator in the crate needs `Vec`, so **the entire
+# public surface is behind this feature**. Without it the crate compiles to
+# an empty module for embedded builds that only link against the substrate.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[dev-dependencies]
+stringcheese-corpus = { workspace = true, features = ["alloc"] }
+stringcheese-set-similarity = { workspace = true, features = ["alloc"] }
+stringcheese-ngram = { workspace = true, features = ["alloc"] }
+proptest = "1"
+
+[lints]
+workspace = true

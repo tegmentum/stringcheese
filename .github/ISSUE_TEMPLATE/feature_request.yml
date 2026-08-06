@@ -1,12 +1,12 @@
 name: Feature request
-description: Propose a new algorithm, API, or capability for Comparand.
+description: Propose a new algorithm, API, or capability for StringCheese.
 title: "[feat] "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Comparand aims for a coherent surface. Proposals that identify
+        StringCheese aims for a coherent surface. Proposals that identify
         the subsystem, the motivation, and a concrete sketch are much
         easier to evaluate than open-ended requests.
 
@@ -16,18 +16,18 @@ body:
       label: Subsystem
       description: Which part of the workspace does this touch?
       options:
-        - comparand-core (traits, descriptors, result types)
-        - comparand-corpus (golden schema, oracle framework)
-        - comparand-unicode
-        - comparand-phonetic
-        - comparand-search
-        - comparand-cdc
-        - comparand-index
-        - comparand-levenshtein
-        - comparand-hamming
-        - comparand-jaro
-        - comparand (facade)
-        - comparand-bench
+        - stringcheese-core (traits, descriptors, result types)
+        - stringcheese-corpus (golden schema, oracle framework)
+        - stringcheese-unicode
+        - stringcheese-phonetic
+        - stringcheese-search
+        - stringcheese-cdc
+        - stringcheese-index
+        - stringcheese-levenshtein
+        - stringcheese-hamming
+        - stringcheese-jaro
+        - stringcheese (facade)
+        - stringcheese-bench
         - new crate
         - build, CI, or tooling
         - documentation

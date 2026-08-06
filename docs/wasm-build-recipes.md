@@ -1,11 +1,11 @@
 # WebAssembly Build Recipes
 
 Status: Reference
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](./DESIGN.md), [design/wasm-and-wit-interface.md](./design/wasm-and-wit-interface.md)
 
 This document records the exact `(crate × target × feature-set)` matrix that
-Comparand verifies in CI on every push. It is the executable, machine-checked
+StringCheese verifies in CI on every push. It is the executable, machine-checked
 projection of the "WebAssembly is a primary deployment target" commitment
 made in [design/wasm-and-wit-interface.md](./design/wasm-and-wit-interface.md).
 
@@ -39,31 +39,31 @@ Every crate is checked under three feature configurations:
 |--------------------------------|-----------------------------------------|----------------------------------------------------------------------------------------------------------------------|
 | `all-features`                 | `--all-features`                        | Every feature the crate declares is on. The heaviest possible dependency graph — catches transitive std leaks.       |
 | `no-default+alloc`             | `--no-default-features --features alloc`| The canonical browser/embedded configuration: `no_std` with a heap. Every alloc-capable crate must succeed here.     |
-| `no-default`                   | `--no-default-features`                 | Pure `no_std`, no heap. Substrate-only surface for embedded consumers that link Comparand without an allocator.      |
+| `no-default`                   | `--no-default-features`                 | Pure `no_std`, no heap. Substrate-only surface for embedded consumers that link StringCheese without an allocator.      |
 
 ## Crate coverage
 
 The matrix runs against the eleven workspace crates that ship code:
 
-- `comparand` (facade)
-- `comparand-core`
-- `comparand-corpus`
-- `comparand-levenshtein`
-- `comparand-hamming`
-- `comparand-jaro`
-- `comparand-damerau`
-- `comparand-ngram`
-- `comparand-unicode`
-- `comparand-phonetic`
-- `comparand-set-similarity`
+- `stringcheese` (facade)
+- `stringcheese-core`
+- `stringcheese-corpus`
+- `stringcheese-levenshtein`
+- `stringcheese-hamming`
+- `stringcheese-jaro`
+- `stringcheese-damerau`
+- `stringcheese-ngram`
+- `stringcheese-unicode`
+- `stringcheese-phonetic`
+- `stringcheese-set-similarity`
 
 Excluded:
 
-- `comparand-bench` — the benchmark harness. Depends on host-only
+- `stringcheese-bench` — the benchmark harness. Depends on host-only
   timing/IO machinery (criterion); benchmark code is not a wasm target.
   Excluded at the CI level via per-crate iteration rather than a
   workspace-wide `--exclude`.
-- `comparand-search`, `comparand-cdc`, `comparand-index` — currently
+- `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index` — currently
   empty placeholder crates. Will be added to the matrix as their
   implementations land.
 
@@ -75,19 +75,19 @@ under the workspace's current source; a regression in any cell fails the
 
 | Crate                        | wasip1 all | wasip1 alloc | wasip1 core | unknown all | unknown alloc | unknown core |
 |------------------------------|:----------:|:------------:|:-----------:|:-----------:|:-------------:|:------------:|
-| `comparand`                  | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-core`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-corpus`           | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-levenshtein`      | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-hamming`          | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-jaro`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-damerau`          | PASS       | PASS         | PASS        | PASS [^2]   | PASS          | PASS         |
-| `comparand-ngram`            | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-unicode`          | PASS       | PASS         | PASS        | PASS [^3]   | PASS          | PASS         |
-| `comparand-phonetic`         | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
-| `comparand-set-similarity`   | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese`                  | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-core`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-corpus`           | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-levenshtein`      | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-hamming`          | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-jaro`             | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-damerau`          | PASS       | PASS         | PASS        | PASS [^2]   | PASS          | PASS         |
+| `stringcheese-ngram`            | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-unicode`          | PASS       | PASS         | PASS        | PASS [^3]   | PASS          | PASS         |
+| `stringcheese-phonetic`         | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
+| `stringcheese-set-similarity`   | PASS       | PASS         | PASS        | PASS        | PASS          | PASS         |
 
-[^2]: `comparand-damerau`'s full-Damerau kernel uses `std::collections::HashMap`
+[^2]: `stringcheese-damerau`'s full-Damerau kernel uses `std::collections::HashMap`
       and is gated behind the `std` feature. `HashMap`'s type is available in
       the standard library on `wasm32-unknown-unknown`, so `cargo check`
       succeeds. Constructing a `HashMap` at runtime lazily initializes
@@ -97,7 +97,7 @@ under the workspace's current source; a regression in any cell fails the
       A crate that runs full-Damerau in a browser must add a top-level
       dependency on `getrandom` with the `js` feature — this crate does not
       make that choice for its callers.
-[^3]: `comparand-unicode --all-features` pulls in `unicode-normalization`,
+[^3]: `stringcheese-unicode --all-features` pulls in `unicode-normalization`,
       `unicode-segmentation`, and `icu_casemap` (all `no_std + alloc` when
       built with `compiled_data`). All three compile cleanly on both wasm
       targets.
@@ -110,10 +110,10 @@ The matrix is one shell loop. Reproduce it with:
 rustup target add wasm32-unknown-unknown wasm32-wasip1
 
 crates=(
-  comparand comparand-core comparand-corpus
-  comparand-levenshtein comparand-hamming comparand-jaro
-  comparand-damerau comparand-ngram comparand-unicode
-  comparand-phonetic comparand-set-similarity
+  stringcheese stringcheese-core stringcheese-corpus
+  stringcheese-levenshtein stringcheese-hamming stringcheese-jaro
+  stringcheese-damerau stringcheese-ngram stringcheese-unicode
+  stringcheese-phonetic stringcheese-set-similarity
 )
 targets=(wasm32-wasip1 wasm32-unknown-unknown)
 flag_sets=(
@@ -153,7 +153,7 @@ compile-time projection is the current, not the eventual, checkpoint.
 
 ## Adding a new crate to the matrix
 
-1. Land the crate under `crates/comparand-<name>/` with proper `std` /
+1. Land the crate under `crates/stringcheese-<name>/` with proper `std` /
    `alloc` feature declarations (see the design document for the
    discipline every crate follows).
 2. Confirm the 6 combinations locally with the loop above.

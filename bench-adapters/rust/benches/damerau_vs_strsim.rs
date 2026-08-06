@@ -1,4 +1,4 @@
-//! Head-to-head: Comparand's OSA + full Damerau vs. `strsim` 0.11's
+//! Head-to-head: StringCheese's OSA + full Damerau vs. `strsim` 0.11's
 //! `osa_distance` + `damerau_levenshtein`.
 //!
 //! # Variant identity is load-bearing
@@ -9,15 +9,15 @@
 //! * **Optimal String Alignment (OSA / "restricted Damerau")** — each
 //!   substring can be edited at most once, does not satisfy the
 //!   triangle inequality.
-//!   * Comparand: `comparand_damerau::Osa`.
+//!   * StringCheese: `stringcheese_damerau::Osa`.
 //!   * strsim:    `strsim::osa_distance`.
 //! * **Full (unrestricted) Damerau-Levenshtein** — substrings can be
 //!   edited unlimited times, is a true metric.
-//!   * Comparand: `comparand_damerau::Damerau`.
+//!   * StringCheese: `stringcheese_damerau::Damerau`.
 //!   * strsim:    `strsim::damerau_levenshtein`.
 //!
-//! Pairing them the other way — Comparand's `Damerau` against
-//! `strsim::osa_distance`, or Comparand's `Osa` against
+//! Pairing them the other way — StringCheese's `Damerau` against
+//! `strsim::osa_distance`, or StringCheese's `Osa` against
 //! `strsim::damerau_levenshtein` — would put two different algorithms
 //! on the same axis and produce numbers that look meaningful but are
 //! not. That is exactly the failure mode `docs/DESIGN.md` warns about
@@ -27,7 +27,7 @@
 //!
 //! # Representation caveat
 //!
-//! Same as the other `_vs_strsim.rs` files: Comparand consumes
+//! Same as the other `_vs_strsim.rs` files: StringCheese consumes
 //! `&[u8]`, strsim consumes `&str` and iterates chars. On ASCII this
 //! is bit-for-bit equivalent semantics; strsim pays for UTF-8
 //! iteration. If a strsim-generic-slice variant of these functions
@@ -37,8 +37,8 @@
 //!
 //! # Length cap for the full-Damerau group
 //!
-//! Comparand's full-Damerau *oracle* is O(m² · n) and
-//! `comparand-bench` caps it at length 512 for that reason. The
+//! StringCheese's full-Damerau *oracle* is O(m² · n) and
+//! `stringcheese-bench` caps it at length 512 for that reason. The
 //! *production* kernel — the one benchmarked here — is O(m · n) and
 //! stays with the full sweep. `strsim::damerau_levenshtein` is
 //! documented as O(m · n) too, so we sweep both at the full
@@ -46,9 +46,9 @@
 
 use std::hint::black_box;
 
-use comparand_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
-use comparand_core::DistanceMetric;
-use comparand_damerau::{Damerau, Osa};
+use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
+use stringcheese_core::DistanceMetric;
+use stringcheese_damerau::{Damerau, Osa};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SALTS: (u64, u64, u64) = (0xE1, 0xE2, 0xE3);
@@ -61,7 +61,7 @@ fn bench_osa(c: &mut Criterion) {
         for &kind in REGIMES {
             let pair = build_pair(len, kind, SALTS);
             group.bench_with_input(
-                BenchmarkId::new(format!("comparand/{kind}"), len),
+                BenchmarkId::new(format!("stringcheese/{kind}"), len),
                 &pair,
                 |bencher, pair: &Pair| {
                     bencher.iter(|| {
@@ -97,7 +97,7 @@ fn bench_damerau_full(c: &mut Criterion) {
         for &kind in REGIMES {
             let pair = build_pair(len, kind, SALTS);
             group.bench_with_input(
-                BenchmarkId::new(format!("comparand/{kind}"), len),
+                BenchmarkId::new(format!("stringcheese/{kind}"), len),
                 &pair,
                 |bencher, pair: &Pair| {
                     bencher.iter(|| {

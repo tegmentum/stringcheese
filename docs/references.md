@@ -1,11 +1,11 @@
-# Comparand — Bibliography
+# StringCheese — Bibliography
 
-Every algorithm in the Comparand toolkit is derived from published work.
+Every algorithm in the StringCheese toolkit is derived from published work.
 This file catalogs every paper, standard, and book the workspace cites,
 in a single place, for auditing and further reading.
 
 Entries are listed alphabetically by first author's surname, then by year,
-within each section. Each entry links back to the Comparand crate(s) that
+within each section. Each entry links back to the StringCheese crate(s) that
 cite it.
 
 Citation format:
@@ -44,8 +44,8 @@ Symposium on String Processing and Information Retrieval (SPIRE 2000)*,
 pp. 39–48. IEEE.
 DOI: https://doi.org/10.1109/SPIRE.2000.878178
 
-Cited by: `comparand-lcs` (algorithm survey for LCS variants),
-`comparand-levenshtein` (LCS relationship to unit-cost edit distance).
+Cited by: `stringcheese-lcs` (algorithm survey for LCS variants),
+`stringcheese-levenshtein` (LCS relationship to unit-cost edit distance).
 
 ### Damerau (1964)
 
@@ -53,7 +53,7 @@ Damerau, F. J. (1964). "A technique for computer detection and correction
 of spelling errors." *Communications of the ACM*, 7(3), 171–176.
 DOI: https://doi.org/10.1145/363958.363994
 
-Cited by: `comparand-damerau` (family DamerauLevenshtein; originates the
+Cited by: `stringcheese-damerau` (family DamerauLevenshtein; originates the
 transposition-as-single-edit model).
 
 ### Gotoh (1982)
@@ -62,7 +62,7 @@ Gotoh, O. (1982). "An improved algorithm for matching biological
 sequences." *Journal of Molecular Biology*, 162(3), 705–708.
 DOI: https://doi.org/10.1016/0022-2836(82)90398-9
 
-Cited by: `comparand-align` (affine gap penalties in Needleman-Wunsch and
+Cited by: `stringcheese-align` (affine gap penalties in Needleman-Wunsch and
 Smith-Waterman).
 
 ### Hamming (1950)
@@ -71,7 +71,7 @@ Hamming, R. W. (1950). "Error detecting and error correcting codes." *Bell
 System Technical Journal*, 29(2), 147–160.
 DOI: https://doi.org/10.1002/j.1538-7305.1950.tb00463.x
 
-Cited by: `comparand-hamming` (family Hamming; equal-length distance
+Cited by: `stringcheese-hamming` (family Hamming; equal-length distance
 counting mismatched positions).
 
 ### Henikoff & Henikoff (1992)
@@ -81,7 +81,7 @@ from protein blocks." *Proceedings of the National Academy of Sciences*,
 89(22), 10915–10919.
 DOI: https://doi.org/10.1073/pnas.89.22.10915
 
-Cited by: `comparand-align` (BLOSUM substitution matrices as a canonical
+Cited by: `stringcheese-align` (BLOSUM substitution matrices as a canonical
 scoring option for biological alignment).
 
 ### Hirschberg (1975)
@@ -90,8 +90,8 @@ Hirschberg, D. S. (1975). "A linear space algorithm for computing maximal
 common subsequences." *Communications of the ACM*, 18(6), 341–343.
 DOI: https://doi.org/10.1145/360825.360861
 
-Cited by: `comparand-lcs` (O(n) space LCS reconstruction),
-`comparand-align` (linear-space divide-and-conquer alignment recovery).
+Cited by: `stringcheese-lcs` (O(n) space LCS reconstruction),
+`stringcheese-align` (linear-space divide-and-conquer alignment recovery).
 
 ### Levenshtein (1966)
 
@@ -100,7 +100,7 @@ insertions, and reversals." *Soviet Physics Doklady*, 10(8), 707–710.
 (English translation of *Doklady Akademii Nauk SSSR*, 163(4), 845–848,
 1965.)
 
-Cited by: `comparand-levenshtein` (family Levenshtein; originates the
+Cited by: `stringcheese-levenshtein` (family Levenshtein; originates the
 insert/delete/substitute edit distance).
 
 ### Lowrance & Wagner (1975)
@@ -109,7 +109,7 @@ Lowrance, R., & Wagner, R. A. (1975). "An extension of the string-to-string
 correction problem." *Journal of the ACM*, 22(2), 177–183.
 DOI: https://doi.org/10.1145/321879.321880
 
-Cited by: `comparand-damerau` (formal definition of unrestricted
+Cited by: `stringcheese-damerau` (formal definition of unrestricted
 Damerau-Levenshtein distance with adjacent transpositions).
 
 ### Needleman & Wunsch (1970)
@@ -119,7 +119,7 @@ the search for similarities in the amino acid sequence of two proteins."
 *Journal of Molecular Biology*, 48(3), 443–453.
 DOI: https://doi.org/10.1016/0022-2836(70)90057-4
 
-Cited by: `comparand-align` (global alignment; foundational
+Cited by: `stringcheese-align` (global alignment; foundational
 dynamic-programming formulation).
 
 ### Smith & Waterman (1981)
@@ -128,7 +128,7 @@ Smith, T. F., & Waterman, M. S. (1981). "Identification of common molecular
 subsequences." *Journal of Molecular Biology*, 147(1), 195–197.
 DOI: https://doi.org/10.1016/0022-2836(81)90087-5
 
-Cited by: `comparand-align` (local alignment; scoring-based subsequence
+Cited by: `stringcheese-align` (local alignment; scoring-based subsequence
 identification).
 
 ### Ukkonen (1985)
@@ -137,7 +137,7 @@ Ukkonen, E. (1985). "Algorithms for approximate string matching."
 *Information and Control*, 64(1–3), 100–118.
 DOI: https://doi.org/10.1016/S0019-9958(85)80046-2
 
-Cited by: `comparand-levenshtein` (banded / cutoff-aware edit-distance
+Cited by: `stringcheese-levenshtein` (banded / cutoff-aware edit-distance
 computation and the diagonal-transition technique).
 
 ### Wagner & Fischer (1974)
@@ -146,8 +146,8 @@ Wagner, R. A., & Fischer, M. J. (1974). "The string-to-string correction
 problem." *Journal of the ACM*, 21(1), 168–173.
 DOI: https://doi.org/10.1145/321796.321811
 
-Cited by: `comparand-levenshtein` (canonical dynamic-programming
-formulation of edit distance), `comparand-lcs` (dual formulation for
+Cited by: `stringcheese-levenshtein` (canonical dynamic-programming
+formulation of edit distance), `stringcheese-lcs` (dual formulation for
 longest common subsequence).
 
 ---
@@ -161,7 +161,7 @@ matching the 1985 census of Tampa, Florida." *Journal of the American
 Statistical Association*, 84(406), 414–420.
 DOI: https://doi.org/10.1080/01621459.1989.10478785
 
-Cited by: `comparand-jaro` (family Jaro; matching-window definition and
+Cited by: `stringcheese-jaro` (family Jaro; matching-window definition and
 transposition count).
 
 ### Winkler (1990)
@@ -172,7 +172,7 @@ the Section on Survey Research Methods*, American Statistical Association,
 pp. 354–359. (Also published as U.S. Bureau of the Census research
 report.)
 
-Cited by: `comparand-jaro` (family JaroWinkler; prefix boost and
+Cited by: `stringcheese-jaro` (family JaroWinkler; prefix boost and
 adjustable prefix scale).
 
 ### Winkler (1999)
@@ -182,7 +182,7 @@ problems." *Statistical Research Division, U.S. Bureau of the Census*,
 research report RR99/04.
 URL: https://www.census.gov/library/working-papers/1999/adrm/rr99-04.html
 
-Cited by: `comparand-jaro` (family JaroWinkler; the threshold-gated
+Cited by: `stringcheese-jaro` (family JaroWinkler; the threshold-gated
 variant `philips-1999-full` derives from Winkler's threshold refinement
 introduced in this report). Also the source cited by
 `JaroWinkler::WITH_THRESHOLD_DESCRIPTOR`.
@@ -198,9 +198,9 @@ In *Proceedings of the Compression and Complexity of Sequences 1997*,
 pp. 21–29. IEEE.
 DOI: https://doi.org/10.1109/SEQUEN.1997.666900
 
-Cited by: `comparand-set-similarity` (resemblance defined as Jaccard on
+Cited by: `stringcheese-set-similarity` (resemblance defined as Jaccard on
 shingle sets, containment as an asymmetric variant),
-`comparand-minhash` (MinHash sketch as an unbiased Jaccard estimator).
+`stringcheese-minhash` (MinHash sketch as an unbiased Jaccard estimator).
 
 ### Dice (1945)
 
@@ -208,7 +208,7 @@ Dice, L. R. (1945). "Measures of the amount of ecologic association
 between species." *Ecology*, 26(3), 297–302.
 DOI: https://doi.org/10.2307/1932409
 
-Cited by: `comparand-set-similarity` (Dice / Sørensen–Dice coefficient).
+Cited by: `stringcheese-set-similarity` (Dice / Sørensen–Dice coefficient).
 
 ### Jaccard (1912)
 
@@ -216,7 +216,7 @@ Jaccard, P. (1912). "The distribution of the flora in the alpine zone."
 *New Phytologist*, 11(2), 37–50.
 DOI: https://doi.org/10.1111/j.1469-8137.1912.tb05611.x
 
-Cited by: `comparand-set-similarity` (Jaccard index over sets and
+Cited by: `stringcheese-set-similarity` (Jaccard index over sets and
 multisets).
 
 ### Manning, Raghavan, & Schütze (2008)
@@ -224,8 +224,8 @@ multisets).
 Manning, C. D., Raghavan, P., & Schütze, H. (2008). *Introduction to
 Information Retrieval*. Cambridge University Press. ISBN 978-0-521-86571-5.
 
-Cited by: `comparand-ngram` (n-gram indexing, cosine and Jaccard over
-sparse term-frequency vectors), `comparand-set-similarity` (vector-space
+Cited by: `stringcheese-ngram` (n-gram indexing, cosine and Jaccard over
+sparse term-frequency vectors), `stringcheese-set-similarity` (vector-space
 similarity measures on shingle sets).
 
 ### Salton & McGill (1983)
@@ -233,8 +233,8 @@ similarity measures on shingle sets).
 Salton, G., & McGill, M. J. (1983). *Introduction to Modern Information
 Retrieval*. McGraw-Hill. ISBN 978-0-07-054484-0.
 
-Cited by: `comparand-set-similarity` (cosine similarity on tf–idf
-weighted vectors), `comparand-ngram` (bag-of-n-grams representation and
+Cited by: `stringcheese-set-similarity` (cosine similarity on tf–idf
+weighted vectors), `stringcheese-ngram` (bag-of-n-grams representation and
 weighting schemes).
 
 ### Simpson (1943)
@@ -243,7 +243,7 @@ Simpson, G. G. (1943). "Mammals and the nature of continents." *American
 Journal of Science*, 241(1), 1–31.
 DOI: https://doi.org/10.2475/ajs.241.1.1
 
-Cited by: `comparand-set-similarity` (overlap / Simpson coefficient,
+Cited by: `stringcheese-set-similarity` (overlap / Simpson coefficient,
 defined as intersection size divided by the smaller set size).
 
 ### Sørensen (1948)
@@ -253,7 +253,7 @@ in plant sociology based on similarity of species content and its
 application to analyses of the vegetation on Danish commons." *Kongelige
 Danske Videnskabernes Selskab, Biologiske Skrifter*, 5(4), 1–34.
 
-Cited by: `comparand-set-similarity` (Sørensen–Dice coefficient; the
+Cited by: `stringcheese-set-similarity` (Sørensen–Dice coefficient; the
 biological-ecology origin of the same formula independently proposed by
 Dice).
 
@@ -262,7 +262,7 @@ Dice).
 Szymkiewicz, D. (1934). "Une contribution statistique à la géographie
 floristique." *Acta Societatis Botanicorum Poloniae*, 11(3), 249–265.
 
-Cited by: `comparand-set-similarity` (early formulation of the overlap
+Cited by: `stringcheese-set-similarity` (early formulation of the overlap
 coefficient; often co-cited with Simpson (1943)).
 
 ### Ukkonen (1992)
@@ -271,8 +271,8 @@ Ukkonen, E. (1992). "Approximate string-matching with q-grams and maximal
 matches." *Theoretical Computer Science*, 92(1), 191–211.
 DOI: https://doi.org/10.1016/0304-3975(92)90143-4
 
-Cited by: `comparand-ngram` (q-gram profile distance and the q-gram
-lower bound on edit distance), `comparand-index` (q-gram count filter
+Cited by: `stringcheese-ngram` (q-gram profile distance and the q-gram
+lower bound on edit distance), `stringcheese-index` (q-gram count filter
 used to prune candidate pairs in edit-distance joins).
 
 ---
@@ -285,7 +285,7 @@ U.S. National Archives and Records Administration. "The Soundex Indexing
 System." Reference specification, National Archives.
 URL: https://www.archives.gov/research/census/soundex
 
-Cited by: `comparand-phonetic` (the widely-implemented NARA-normative
+Cited by: `stringcheese-phonetic` (the widely-implemented NARA-normative
 Soundex rules; used as the reference specification against which the
 `Soundex` variant is validated).
 
@@ -295,7 +295,7 @@ Odell, M. K., & Russell, R. C. (1918). "Soundex system." U.S. Patent
 No. 1,261,167. Filed October 25, 1917; issued April 2, 1918.
 URL: https://patents.google.com/patent/US1261167
 
-Cited by: `comparand-phonetic` (original Soundex patent; historical
+Cited by: `stringcheese-phonetic` (original Soundex patent; historical
 source of the family SoundexOdellRussell variant).
 
 ### Philips (1990)
@@ -303,7 +303,7 @@ source of the family SoundexOdellRussell variant).
 Philips, L. (1990). "Hanging on the Metaphone." *Computer Language
 Magazine*, 7(12), 39–43.
 
-Cited by: `comparand-phonetic` (family Metaphone; original 16-code
+Cited by: `stringcheese-phonetic` (family Metaphone; original 16-code
 English phonetic algorithm).
 
 ### Philips (2000)
@@ -311,7 +311,7 @@ English phonetic algorithm).
 Philips, L. (2000). "The Double Metaphone search algorithm." *C/C++
 Users Journal*, 18(6), 38–43.
 
-Cited by: `comparand-phonetic` (family DoubleMetaphone; primary and
+Cited by: `stringcheese-phonetic` (family DoubleMetaphone; primary and
 alternate keys for names of non-English origin).
 
 ### Taft (1970)
@@ -320,7 +320,7 @@ Taft, R. L. (1970). "Name search techniques." *Special Report No. 1*, New
 York State Identification and Intelligence System (NYSIIS), Bureau of
 Systems Development, Albany, NY.
 
-Cited by: `comparand-phonetic` (family NYSIIS; rule set for the New
+Cited by: `stringcheese-phonetic` (family NYSIIS; rule set for the New
 York State Identification and Intelligence System phonetic key).
 
 ---
@@ -333,7 +333,7 @@ Aho, A. V., & Corasick, M. J. (1975). "Efficient string matching: an aid
 to bibliographic search." *Communications of the ACM*, 18(6), 333–340.
 DOI: https://doi.org/10.1145/360825.360855
 
-Cited by: `comparand-search` (multi-pattern Aho-Corasick automaton with
+Cited by: `stringcheese-search` (multi-pattern Aho-Corasick automaton with
 failure links).
 
 ### Boyer & Moore (1977)
@@ -342,7 +342,7 @@ Boyer, R. S., & Moore, J S. (1977). "A fast string searching algorithm."
 *Communications of the ACM*, 20(10), 762–772.
 DOI: https://doi.org/10.1145/359842.359859
 
-Cited by: `comparand-search` (Boyer-Moore search with bad-character and
+Cited by: `stringcheese-search` (Boyer-Moore search with bad-character and
 good-suffix rules).
 
 ### Charras & Lecroq (2004)
@@ -351,7 +351,7 @@ Charras, C., & Lecroq, T. (2004). *Handbook of Exact String Matching
 Algorithms*. King's College Publications. ISBN 978-0-9543006-4-9.
 Companion site: http://www-igm.univ-mlv.fr/~lecroq/string/
 
-Cited by: `comparand-search` (reference survey used to cross-check
+Cited by: `stringcheese-search` (reference survey used to cross-check
 pseudocode, edge cases, and shift-table constructions for every
 single-pattern algorithm in the crate).
 
@@ -361,7 +361,7 @@ Crochemore, M., & Perrin, D. (1991). "Two-way string-matching." *Journal
 of the ACM*, 38(3), 650–674.
 DOI: https://doi.org/10.1145/116825.116845
 
-Cited by: `comparand-search` (two-way string matching; the algorithm
+Cited by: `stringcheese-search` (two-way string matching; the algorithm
 underlying Rust's `str::find` and many modern libc `memmem`
 implementations).
 
@@ -370,7 +370,7 @@ implementations).
 Crochemore, M., Hancart, C., & Lecroq, T. (2007). *Algorithms on
 Strings*. Cambridge University Press. ISBN 978-0-521-84899-2.
 
-Cited by: `comparand-search` (comprehensive treatment of two-way string
+Cited by: `stringcheese-search` (comprehensive treatment of two-way string
 matching and its complexity analysis; used to cross-check the critical-
 factorization derivation).
 
@@ -381,7 +381,7 @@ Boyer-Moore string matching algorithm." *Communications of the ACM*,
 22(9), 505–508.
 DOI: https://doi.org/10.1145/359146.359148
 
-Cited by: `comparand-search` (Galil's rule; supplies the linear-time
+Cited by: `stringcheese-search` (Galil's rule; supplies the linear-time
 worst-case bound for Boyer-Moore).
 
 ### Horspool (1980)
@@ -390,7 +390,7 @@ Horspool, R. N. (1980). "Practical fast searching in strings."
 *Software: Practice and Experience*, 10(6), 501–506.
 DOI: https://doi.org/10.1002/spe.4380100608
 
-Cited by: `comparand-search` (Boyer-Moore-Horspool; simplified
+Cited by: `stringcheese-search` (Boyer-Moore-Horspool; simplified
 bad-character-only variant).
 
 ### Karp & Rabin (1987)
@@ -399,8 +399,8 @@ Karp, R. M., & Rabin, M. O. (1987). "Efficient randomized pattern-matching
 algorithms." *IBM Journal of Research and Development*, 31(2), 249–260.
 DOI: https://doi.org/10.1147/rd.312.0249
 
-Cited by: `comparand-search` (Rabin-Karp rolling-hash pattern search),
-`comparand-cdc` (polynomial rolling-hash construction reused by content
+Cited by: `stringcheese-search` (Rabin-Karp rolling-hash pattern search),
+`stringcheese-cdc` (polynomial rolling-hash construction reused by content
 chunkers).
 
 ### Knuth, Morris, & Pratt (1977)
@@ -409,7 +409,7 @@ Knuth, D. E., Morris, J. H., & Pratt, V. R. (1977). "Fast pattern matching
 in strings." *SIAM Journal on Computing*, 6(2), 323–350.
 DOI: https://doi.org/10.1137/0206024
 
-Cited by: `comparand-search` (KMP failure function and linear-time
+Cited by: `stringcheese-search` (KMP failure function and linear-time
 single-pattern search).
 
 ---
@@ -424,7 +424,7 @@ Methods in Communication, Security, and Computer Science*, pp. 143–152.
 Springer-Verlag.
 DOI: https://doi.org/10.1007/978-1-4613-9323-8_11
 
-Cited by: `comparand-cdc` (rolling / sliding-window Rabin fingerprints
+Cited by: `stringcheese-cdc` (rolling / sliding-window Rabin fingerprints
 as the classical basis for content-defined chunking).
 
 ### Muthitacharoen, Chen, & Mazières (2001)
@@ -434,7 +434,7 @@ network file system." In *Proceedings of the Eighteenth ACM Symposium on
 Operating Systems Principles (SOSP '01)*, pp. 174–187.
 DOI: https://doi.org/10.1145/502034.502052
 
-Cited by: `comparand-cdc` (LBFS; introduced Rabin-fingerprint
+Cited by: `stringcheese-cdc` (LBFS; introduced Rabin-fingerprint
 content-defined chunking with min/max chunk-size constraints for
 deduplication).
 
@@ -444,7 +444,7 @@ Rabin, M. O. (1981). "Fingerprinting by random polynomials." *Technical
 Report TR-15-81*, Center for Research in Computing Technology, Harvard
 University.
 
-Cited by: `comparand-cdc` (Rabin polynomial fingerprint; the foundation
+Cited by: `stringcheese-cdc` (Rabin polynomial fingerprint; the foundation
 for rolling-hash CDC schemes).
 
 ### Xia, Jiang, Feng, Hua, Hu, Liu, & Zhang (2016)
@@ -455,7 +455,7 @@ for data deduplication." In *2016 USENIX Annual Technical Conference
 (USENIX ATC '16)*, pp. 101–114.
 URL: https://www.usenix.org/conference/atc16/technical-sessions/presentation/xia
 
-Cited by: `comparand-cdc` (FastCDC; Gear hash, normalized chunking,
+Cited by: `stringcheese-cdc` (FastCDC; Gear hash, normalized chunking,
 sub-minimum cut-point skipping).
 
 ---
@@ -468,7 +468,7 @@ Baeza-Yates, R., & Ribeiro-Neto, B. (2011). *Modern Information
 Retrieval: The Concepts and Technology Behind Search* (2nd ed.).
 Addison-Wesley Professional. ISBN 978-0-321-41691-9.
 
-Cited by: `comparand-index` (modern reference for metric-space
+Cited by: `stringcheese-index` (modern reference for metric-space
 indexing, cited in the BK-tree module as background for tree-based
 best-match search).
 
@@ -478,7 +478,7 @@ Burkhard, W. A., & Keller, R. M. (1973). "Some approaches to best-match
 file searching." *Communications of the ACM*, 16(4), 230–236.
 DOI: https://doi.org/10.1145/362003.362025
 
-Cited by: `comparand-index` (BK-tree; metric tree keyed on discrete
+Cited by: `stringcheese-index` (BK-tree; metric tree keyed on discrete
 integer distances, requires a true metric).
 
 ### Christen (2012)
@@ -488,7 +488,7 @@ Linkage, Entity Resolution, and Duplicate Detection*. Data-Centric Systems
 and Applications. Springer. ISBN 978-3-642-31163-5.
 DOI: https://doi.org/10.1007/978-3-642-31164-2
 
-Cited by: `comparand-set-similarity` (overview of similarity measures
+Cited by: `stringcheese-set-similarity` (overview of similarity measures
 in the entity-resolution context).
 
 ### Sarawagi & Kirpal (2004)
@@ -498,7 +498,7 @@ predicates." In *Proceedings of the 2004 ACM SIGMOD International
 Conference on Management of Data*, pp. 743–754.
 DOI: https://doi.org/10.1145/1007568.1007652
 
-Cited by: `comparand-index` (set-join length filter and prefix-filter
+Cited by: `stringcheese-index` (set-join length filter and prefix-filter
 techniques for pruning candidate pairs under Jaccard / cosine thresholds).
 
 ### Yianilos (1993)
@@ -507,7 +507,7 @@ Yianilos, P. N. (1993). "Data structures and algorithms for nearest
 neighbor search in general metric spaces." In *Proceedings of the Fourth
 Annual ACM-SIAM Symposium on Discrete Algorithms (SODA '93)*, pp. 311–321.
 
-Cited by: `comparand-index` (VP-tree; vantage-point partitioning for
+Cited by: `stringcheese-index` (VP-tree; vantage-point partitioning for
 nearest-neighbor search in a general metric space).
 
 ---
@@ -518,7 +518,7 @@ nearest-neighbor search in a general metric space).
 
 See [Broder (1997)](#broder-1997) under Set similarity and n-grams.
 
-Also cited by: `comparand-minhash` (originates the MinHash sketch as
+Also cited by: `stringcheese-minhash` (originates the MinHash sketch as
 an unbiased estimator of Jaccard resemblance, via min-wise independent
 permutations).
 
@@ -528,7 +528,7 @@ Fowler, G., Noll, L. C., & Vo, K.-P. "FNV Non-Cryptographic Hash
 Algorithm." Reference specification.
 URL: http://www.isthe.com/chongo/tech/comp/fnv/
 
-Cited by: `comparand-minhash` (FNV-1a as a fast, well-distributed
+Cited by: `stringcheese-minhash` (FNV-1a as a fast, well-distributed
 non-cryptographic hash used to seed sketch families and mix shingles).
 
 ### Gionis, Indyk, & Motwani (1999)
@@ -538,7 +538,7 @@ dimensions via hashing." In *Proceedings of the 25th International
 Conference on Very Large Data Bases (VLDB '99)*, pp. 518–529. Morgan
 Kaufmann.
 
-Cited by: `comparand-minhash` (canonical formulation of
+Cited by: `stringcheese-minhash` (canonical formulation of
 locality-sensitive hashing: banded LSH over MinHash signatures for
 approximate near-neighbor search).
 
@@ -549,7 +549,7 @@ sketching." In *Proceedings of the 2010 IEEE International Conference on
 Data Mining (ICDM '10)*, pp. 246–255. IEEE.
 DOI: https://doi.org/10.1109/ICDM.2010.80
 
-Cited by: `comparand-minhash` (consistent weighted sampling; weighted
+Cited by: `stringcheese-minhash` (consistent weighted sampling; weighted
 MinHash for real-valued Jaccard and L1 similarity).
 
 ### Leskovec, Rajaraman, & Ullman (2020)
@@ -558,7 +558,7 @@ Leskovec, J., Rajaraman, A., & Ullman, J. D. (2020). *Mining of Massive
 Datasets* (3rd ed.). Cambridge University Press. ISBN 978-1-108-47634-8.
 Companion site: http://www.mmds.org/
 
-Cited by: `comparand-minhash` (Chapter 3 as a self-contained treatment
+Cited by: `stringcheese-minhash` (Chapter 3 as a self-contained treatment
 of shingling, MinHash, LSH banding, and threshold-to-band-count tuning).
 
 ### Shrivastava (2014)
@@ -567,7 +567,7 @@ Shrivastava, A. (2014). "Optimal densification for fast and accurate
 minwise hashing." arXiv:1406.4784.
 URL: https://arxiv.org/abs/1406.4784
 
-Cited by: `comparand-minhash` (referenced in prose in the sketch module
+Cited by: `stringcheese-minhash` (referenced in prose in the sketch module
 as the standard densification technique for the one-permutation MinHash
 alternative to this crate's k-permutation implementation; the crate
 carries the k-permutation approach because its unbiasedness proof does
@@ -581,7 +581,7 @@ International Conference on Object-Oriented Programming Systems Languages
 & Applications (OOPSLA '14)*, pp. 453–472.
 DOI: https://doi.org/10.1145/2660193.2660195
 
-Cited by: `comparand-minhash` (SplitMix64 finalizer used as a fast,
+Cited by: `stringcheese-minhash` (SplitMix64 finalizer used as a fast,
 high-avalanche mixing function inside MinHash permutation families).
 
 ---
@@ -594,9 +594,9 @@ The Unicode Consortium. (2022). *The Unicode Standard, Version 15.0.0*.
 Mountain View, CA: The Unicode Consortium. ISBN 978-1-936213-32-0.
 URL: https://www.unicode.org/versions/Unicode15.0.0/
 
-Cited by: `comparand-unicode` (base version of the Unicode Character
+Cited by: `stringcheese-unicode` (base version of the Unicode Character
 Database consumed by normalization, case folding, and grapheme
-segmentation tables), `comparand-core` (Unicode-scalar-value and
+segmentation tables), `stringcheese-core` (Unicode-scalar-value and
 grapheme-cluster sequence models).
 
 ### Unicode Standard Annex #15 — Normalization Forms
@@ -605,7 +605,7 @@ Davis, M., & Whistler, K. (Eds.). *Unicode Standard Annex #15: Unicode
 Normalization Forms*. The Unicode Consortium.
 URL: https://www.unicode.org/reports/tr15/
 
-Cited by: `comparand-unicode` (NFC, NFD, NFKC, NFKD normalization
+Cited by: `stringcheese-unicode` (NFC, NFD, NFKC, NFKD normalization
 pipelines).
 
 ### Unicode Standard Annex #21 — Case Mappings
@@ -613,7 +613,7 @@ pipelines).
 *Unicode Standard Annex #21: Case Mappings*. The Unicode Consortium.
 URL: https://www.unicode.org/reports/tr21/
 
-Cited by: `comparand-unicode` (locale-sensitive and locale-independent
+Cited by: `stringcheese-unicode` (locale-sensitive and locale-independent
 case-folding rules; interaction with normalization).
 
 ### Unicode Standard Annex #29 — Text Segmentation
@@ -622,8 +622,8 @@ Davis, M. (Ed.). *Unicode Standard Annex #29: Unicode Text Segmentation*.
 The Unicode Consortium.
 URL: https://www.unicode.org/reports/tr29/
 
-Cited by: `comparand-unicode` (grapheme cluster, word, and sentence
-segmentation boundaries), `comparand-core` (grapheme-boundary iteration
+Cited by: `stringcheese-unicode` (grapheme cluster, word, and sentence
+segmentation boundaries), `stringcheese-core` (grapheme-boundary iteration
 underlying the grapheme sequence representation).
 
 ### CaseFolding.txt — Unicode Character Database
@@ -632,7 +632,7 @@ The Unicode Consortium. *CaseFolding.txt* (Unicode Character Database
 data file).
 URL: https://www.unicode.org/Public/UCD/latest/ucd/CaseFolding.txt
 
-Cited by: `comparand-unicode` (canonical full case-folding table used
+Cited by: `stringcheese-unicode` (canonical full case-folding table used
 by the case-insensitive preprocessing stage; C (common) + F (full)
 mappings).
 
@@ -645,10 +645,10 @@ mappings).
 Cormen, T. H., Leiserson, C. E., Rivest, R. L., & Stein, C. (2009).
 *Introduction to Algorithms* (3rd ed.). MIT Press. ISBN 978-0-262-03384-8.
 
-Cited by: `comparand-lcs` (Chapter 15, *Dynamic Programming*, longest
-common subsequence as the running example), `comparand-search`
+Cited by: `stringcheese-lcs` (Chapter 15, *Dynamic Programming*, longest
+common subsequence as the running example), `stringcheese-search`
 (Chapter 32, *String Matching*, textbook exposition of naive, KMP, and
-Rabin-Karp), `comparand-core` (general algorithm-analysis conventions
+Rabin-Karp), `stringcheese-core` (general algorithm-analysis conventions
 for cost documentation).
 
 ---

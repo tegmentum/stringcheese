@@ -1,6 +1,6 @@
-//! Rust-ecosystem bench adapters for Comparand.
+//! Rust-ecosystem bench adapters for StringCheese.
 //!
-//! This crate is the Rust language slice of Comparand's
+//! This crate is the Rust language slice of StringCheese's
 //! `bench-adapters/` subsystem — a language-agnostic head-to-head
 //! benchmark harness. See `bench-adapters/README.md` for the umbrella
 //! design and `bench-adapters/rust/README.md` for the caveats specific
@@ -8,9 +8,9 @@
 //!
 //! # Why this crate is standalone
 //!
-//! `comparand-bench` — the toolkit's own criterion suite — cannot depend
+//! `stringcheese-bench` — the toolkit's own criterion suite — cannot depend
 //! on `strsim` or `rapidfuzz` without leaking those crates into every
-//! Comparand consumer's dependency graph, so the head-to-head benches
+//! StringCheese consumer's dependency graph, so the head-to-head benches
 //! live in a separate, workspace-isolated crate under `bench-adapters/`.
 //! The isolation is enforced by the empty `[workspace]` sentinel at the
 //! top of this crate's `Cargo.toml`.
@@ -20,17 +20,17 @@
 //! Only the shared harness: a deterministic `SplitMix64` RNG and the
 //! three canonical pair-construction helpers (random / similar /
 //! identical). The per-algorithm head-to-head matrices live in
-//! `benches/*.rs`, one per (Comparand algorithm × external library)
+//! `benches/*.rs`, one per (StringCheese algorithm × external library)
 //! pair.
 //!
 //! # Determinism
 //!
 //! Every helper is seeded from a `u64` and threads that seed through
 //! `SplitMix64`. That is the same PRNG family
-//! `comparand-bench::inputs` uses, so a bench at length `N` and seed
+//! `stringcheese-bench::inputs` uses, so a bench at length `N` and seed
 //! `S` in the adapter walks the same class of input as a bench at the
 //! same `(N, S)` in the toolkit's own suite. The generator is
-//! duplicated rather than depended on because `comparand-bench` is not
+//! duplicated rather than depended on because `stringcheese-bench` is not
 //! (and should not become) a dependency of this crate — its own
 //! `[dev-dependencies]` on criterion would pull in an extra copy of
 //! criterion, and we want a single, adapter-owned criterion instance
@@ -41,7 +41,7 @@
 
 /// A minimal `SplitMix64` PRNG.
 ///
-/// Duplicated from `comparand-bench::inputs` verbatim (`SplitMix64` as
+/// Duplicated from `stringcheese-bench::inputs` verbatim (`SplitMix64` as
 /// published by Sebastiano Vigna). Not cryptographic; the sole purpose
 /// is deterministic, seedable, cheap random ASCII for benchmark
 /// corpora. Kept private-ish (`pub` on the module surface only because
@@ -187,10 +187,10 @@ pub fn similar_pair_equal_len(len: usize, edit_rate: f64, seed: u64) -> (Vec<u8>
 /// representation-materialisation cost that the algorithm's own
 /// caller would.
 ///
-/// The `Vec<char>` variant is present because a Comparand kernel called
+/// The `Vec<char>` variant is present because a StringCheese kernel called
 /// with `&[char]` is doing the same character-level work `strsim`'s
 /// `levenshtein(&str, &str)` does internally; the byte-slice variant
-/// is present because that is Comparand's fast path.
+/// is present because that is StringCheese's fast path.
 #[derive(Clone)]
 pub struct Pair {
     pub a_bytes: Vec<u8>,
@@ -237,7 +237,7 @@ impl Pair {
 
 /// The three canonical similarity regimes, keyed by string tag so the
 /// bench-name axis reads the same across every head-to-head file and
-/// against `comparand-bench`'s own suite.
+/// against `stringcheese-bench`'s own suite.
 #[must_use]
 pub fn build_pair(len: usize, kind: &str, salts: (u64, u64, u64)) -> Pair {
     let (r_a, r_b, sim_or_ident) = salts;
@@ -272,7 +272,7 @@ pub fn build_pair_equal_len(len: usize, kind: &str, salts: (u64, u64, u64)) -> P
 /// Deterministic per-length seed derived from length × golden-ratio
 /// constant, xor-ed with a per-bench salt.
 ///
-/// Matches the `seed_for` helper each bench in `comparand-bench` uses,
+/// Matches the `seed_for` helper each bench in `stringcheese-bench` uses,
 /// so at any fixed `(len, salt)` this adapter and the toolkit's own
 /// suite see the same corpus family.
 #[inline]
@@ -281,7 +281,7 @@ pub const fn seed_for(len: usize, salt: u64) -> u64 {
     (len as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ salt
 }
 
-/// The canonical input-length sweep, mirroring `comparand-bench` so
+/// The canonical input-length sweep, mirroring `stringcheese-bench` so
 /// per-length data points line up on a chart.
 pub const LENGTHS: &[usize] = &[8, 32, 128, 512, 2048];
 

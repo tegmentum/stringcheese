@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Comparand are documented in this file.
+All notable changes to StringCheese are documented in this file.
 
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
@@ -12,6 +12,19 @@ bump; `0.x` versions are pre-stability.
 ### Added
 
 ### Changed
+
+- **Project renamed from Comparand to StringCheese.** Every crate is renamed
+  from `comparand-*` to `stringcheese-*`; the umbrella facade is `stringcheese`
+  (was `comparand`); the WIT package is `stringcheese:core` (was `comparand:core`)
+  and the interface file is `component/wit/stringcheese.wit`; the produced
+  component binary is `stringcheese_component_host.wasm`. The `Comparand` name
+  is retired — a comparison sub-project stays under the StringCheese umbrella
+  as `stringcheese-compare` in a follow-up wave. Repository is
+  `https://github.com/tegmentum/stringcheese`. Maintainer email is
+  `zachary.whitley@tegmentum.ai`.
+- The `DifferenceClassification::ComparandDefect` variant is now
+  `DifferenceClassification::StringCheeseDefect`. Callers that named the
+  variant by path in match arms must update.
 
 ### Deprecated
 
@@ -34,62 +47,62 @@ rather than by commit; consult `git log` for the per-commit narrative.
 - Initial workspace and type-system substrate: result types, metric
   traits, mathematical-property descriptors, algorithm-variant registry,
   workspace and sequence traits, and the golden-case validation schema
-  (`comparand-core`, `comparand-corpus`, `comparand`, and the
-  placeholder crates `comparand-unicode`, `comparand-phonetic`,
-  `comparand-search`, `comparand-cdc`, `comparand-index`,
-  `comparand-bench`).
-- `comparand-corpus` oracle framework, exhaustive generators, and
+  (`stringcheese-core`, `stringcheese-corpus`, `stringcheese`, and the
+  placeholder crates `stringcheese-unicode`, `stringcheese-phonetic`,
+  `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index`,
+  `stringcheese-bench`).
+- `stringcheese-corpus` oracle framework, exhaustive generators, and
   differential vocabulary.
 
 #### Algorithm crates
 
-- **Edit distance and similarity.** `comparand-levenshtein` (full-matrix
+- **Edit distance and similarity.** `stringcheese-levenshtein` (full-matrix
   oracle, rolling-rows production kernel, Ukkonen-style banded cutoff),
-  `comparand-hamming` (metric distance for equal-length sequences),
-  `comparand-jaro` (Jaro and Jaro-Winkler similarity family),
-  `comparand-damerau` (Optimal String Alignment and full
-  Damerau-Levenshtein), and `comparand-lcs` (Longest Common Subsequence
+  `stringcheese-hamming` (metric distance for equal-length sequences),
+  `stringcheese-jaro` (Jaro and Jaro-Winkler similarity family),
+  `stringcheese-damerau` (Optimal String Alignment and full
+  Damerau-Levenshtein), and `stringcheese-lcs` (Longest Common Subsequence
   and LCS distance).
-- **N-gram and set similarity.** `comparand-ngram` (character, byte,
-  and token n-gram representations) and `comparand-set-similarity`
+- **N-gram and set similarity.** `stringcheese-ngram` (character, byte,
+  and token n-gram representations) and `stringcheese-set-similarity`
   (Dice, Jaccard, Overlap, Cosine over n-gram representations).
-- **Alignment.** `comparand-align`: Needleman-Wunsch global alignment
+- **Alignment.** `stringcheese-align`: Needleman-Wunsch global alignment
   and Smith-Waterman local alignment with linear and affine gap
   penalties.
-- **Phonetic.** `comparand-phonetic`: Soundex, NYSIIS, and the
+- **Phonetic.** `stringcheese-phonetic`: Soundex, NYSIIS, and the
   single-key Double Metaphone encoder, followed by the full two-key
   Double Metaphone variant.
-- **Unicode preprocessing.** `comparand-unicode`: NFC/NFD/NFKC/NFKD
+- **Unicode preprocessing.** `stringcheese-unicode`: NFC/NFD/NFKC/NFKD
   normalization, Unicode case folding (via `icu_casemap`, including
   multi-character expansions), grapheme-cluster segmentation, and
   diacritic stripping.
-- **Substring search.** `comparand-search`: Rabin-Karp, KMP, Boyer-Moore
+- **Substring search.** `stringcheese-search`: Rabin-Karp, KMP, Boyer-Moore
   (bad-character), Aho-Corasick, followed by Horspool, Two-way, the
   full Boyer-Moore with good-suffix rule, and streaming wrappers over
   the single-pattern algorithms.
-- **Content-defined chunking.** `comparand-cdc`: rolling-hash
+- **Content-defined chunking.** `stringcheese-cdc`: rolling-hash
   fingerprints (Rabin, polynomial, Gear) and FastCDC chunking.
-- **Indexes.** `comparand-index`: BK-tree, VP-tree (with bulk build and
+- **Indexes.** `stringcheese-index`: BK-tree, VP-tree (with bulk build and
   sorted-neighborhood blocking added in a follow-up), and a q-gram
   inverted index for large-scale nearest-neighbor and blocking queries.
-- **MinHash / LSH.** `comparand-minhash`: MinHash sketches and LSH
+- **MinHash / LSH.** `stringcheese-minhash`: MinHash sketches and LSH
   banding for approximate Jaccard-similarity search at scale.
 
 #### WebAssembly Component Model
 
 - `component/`: WIT interface definition and a Rust host demonstrating
-  Comparand consumed as a Component-Model component, plus a reference
+  StringCheese consumed as a Component-Model component, plus a reference
   guest and matching integration tests.
 
 #### Benchmarks, fuzzing, and cross-comparison
 
-- `comparand-bench`: criterion benchmark suite over the algorithm
+- `stringcheese-bench`: criterion benchmark suite over the algorithm
   surface (Levenshtein, Hamming, Jaro, Damerau, n-gram, batch).
-- Allocation-counting harness in `comparand-bench` backed by `dhat-rs`,
+- Allocation-counting harness in `stringcheese-bench` backed by `dhat-rs`,
   gated behind the opt-in `alloc-tracking` feature so a default
   `cargo bench` never inherits the profiler's global allocator.
 - `bench-adapters/`: Rust head-to-head adapters against `strsim` and
-  `rapidfuzz` so criterion runs report Comparand alongside the
+  `rapidfuzz` so criterion runs report StringCheese alongside the
   established crates.
 - `fuzz/`: `cargo-fuzz` targets covering both differential comparisons
   against known-good implementations and metric-axiom checks
@@ -105,7 +118,7 @@ rather than by commit; consult `git log` for the per-commit narrative.
   detailed design of the substrate and first-wave algorithms.
 - `docs/wasm-build-recipes.md`: definitive per-crate matrix of the
   `wasm32-unknown-unknown` and `wasm32-wasip1` feature combinations
-  Comparand supports.
+  StringCheese supports.
 - `docs/references.md`: consolidated bibliography citing the primary
   papers behind every algorithm shipped in the workspace.
 - Per-crate paper references added to the edit-distance / similarity,
@@ -122,16 +135,16 @@ rather than by commit; consult `git log` for the per-commit narrative.
 
 - The record-linkage scope (Fellegi-Sunter probabilistic record
   linkage), briefly landed in-tree, has been extracted into a separate
-  sibling library. Comparand stays focused on sequence comparison; the
-  record-linkage crate depends on Comparand rather than the other way
+  sibling library. StringCheese stays focused on sequence comparison; the
+  record-linkage crate depends on StringCheese rather than the other way
   around. See the sibling repository for the extracted code and its
   own history.
 
 ### Fixed
 
-- `comparand-damerau`: dropped intra-doc links that pointed at the
+- `stringcheese-damerau`: dropped intra-doc links that pointed at the
   test-only `property_tests` module, which produced rustdoc warnings on
   a non-test build.
 
-[Unreleased]: https://github.com/tegmentum/comparand/compare/HEAD...HEAD
-[0.1.0-alpha]: https://github.com/tegmentum/comparand/commits/main
+[Unreleased]: https://github.com/tegmentum/stringcheese/compare/HEAD...HEAD
+[0.1.0-alpha]: https://github.com/tegmentum/stringcheese/commits/main

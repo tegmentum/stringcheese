@@ -10,9 +10,9 @@
 
 #![no_main]
 
-use comparand_core::BoundedDistance;
-use comparand_damerau::OsaWorkspace;
-use comparand_damerau::osa::{
+use stringcheese_core::BoundedDistance;
+use stringcheese_damerau::OsaWorkspace;
+use stringcheese_damerau::osa::{
     distance_banded_with_workspace, distance_full_matrix, distance_rolling_rows_with_workspace,
 };
 use libfuzzer_sys::fuzz_target;

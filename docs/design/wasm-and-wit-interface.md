@@ -1,10 +1,10 @@
 # WebAssembly and WIT Interface
 
 Status: Design
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](../DESIGN.md), [type-system.md](./type-system.md), [preprocessing-pipeline.md](./preprocessing-pipeline.md), [phonetic-subsystem.md](./phonetic-subsystem.md), [ngram-and-fingerprinting.md](./ngram-and-fingerprinting.md)
 
-The design of Comparand's WebAssembly story — no_std discipline, feature-gate strategy, deterministic memory, binary-size targets, Wasm SIMD, Component Model interface, streaming across component boundaries, and cross-target validation.
+The design of StringCheese's WebAssembly story — no_std discipline, feature-gate strategy, deterministic memory, binary-size targets, Wasm SIMD, Component Model interface, streaming across component boundaries, and cross-target validation.
 
 ## WebAssembly is a primary deployment target
 
@@ -12,7 +12,7 @@ WebAssembly support is not something the library retrofits onto an otherwise-nat
 
 The consequences run through the whole codebase:
 
-- `comparand-core` is `#![cfg_attr(not(feature = "std"), no_std)]` and `#![forbid(unsafe_code)]`. Its default `std` feature is a convenience; disabling it produces a `no_std` build. Disabling both `std` and `alloc` leaves a pure no-alloc build with only the type-and-trait substrate.
+- `stringcheese-core` is `#![cfg_attr(not(feature = "std"), no_std)]` and `#![forbid(unsafe_code)]`. Its default `std` feature is a convenience; disabling it produces a `no_std` build. Disabling both `std` and `alloc` leaves a pure no-alloc build with only the type-and-trait substrate.
 - Algorithm crates that require dynamic buffers still work under `alloc`-only; they never assume `std`.
 - Unicode tables and phonetic language packs are behind Cargo features so a browser-tab build can carry only what it uses.
 - The public API returns concrete types (see [type-system.md](./type-system.md)) rather than `Box<dyn Error>` or `Arc<dyn Trait>`, which would inflate binary size and complicate no_std builds.
@@ -24,7 +24,7 @@ The rule for judgment calls: if a design choice hurts the Wasm build, it needs a
 
 Layer by layer.
 
-### `comparand-core`
+### `stringcheese-core`
 
 - `#![no_std]` in the default configuration when built without the `std` feature.
 - `#![forbid(unsafe_code)]` unconditionally.
@@ -41,16 +41,16 @@ Layer by layer.
 
 - Small code-driven packs (Soundex, NYSIIS) are `no_std` + `alloc`.
 - Large data-driven packs (Beider–Morse, Daitch–Mokotoff) may embed their rule tables as `include_bytes!` at compile time; still `no_std` + `alloc`, though the compiled tables take real space.
-- A pack that requires runtime rule loading (from a file or network) is `std` — but no shipped pack should need this at the level Comparand targets.
+- A pack that requires runtime rule loading (from a file or network) is `std` — but no shipped pack should need this at the level StringCheese targets.
 
-### `comparand-unicode`
+### `stringcheese-unicode`
 
 - Basic normalization (NFC, NFD, simple case folding, whitespace collapse) is `no_std` + `alloc` and behind the `unicode` feature.
 - Full grapheme segmentation, full-locale case folding, and diacritic classification require the large Unicode tables and gate behind `unicode-full`. Loading the tables may need `std::io` in some build configurations; `unicode-full` implies `std`.
 
 ## Feature-gate strategy
 
-Cargo features carve Comparand into layers so that a target with tight budgets — a browser tab, a Wasm component in a hot execution path, an embedded controller — carries only what it uses.
+Cargo features carve StringCheese into layers so that a target with tight budgets — a browser tab, a Wasm component in a hot execution path, an embedded controller — carries only what it uses.
 
 ### The default set
 
@@ -102,11 +102,11 @@ The library's memory behavior must be predictable, especially in Wasm where line
 
 ## Binary size targets
 
-Comparand tracks Wasm binary size as a first-class metric alongside runtime and memory.
+StringCheese tracks Wasm binary size as a first-class metric alongside runtime and memory.
 
 ### Targets
 
-- A minimal Wasm build of `comparand-core` + Levenshtein (unit-cost, bytes), with no `unicode`, no `alignment`, no `phonetic`, no SIMD, compiled with `wasm-opt -Oz`, should weigh **under 40 KB** compressed and **under 100 KB** uncompressed. These numbers are aspirational for the initial 0.1 release; they become gated in CI once measured.
+- A minimal Wasm build of `stringcheese-core` + Levenshtein (unit-cost, bytes), with no `unicode`, no `alignment`, no `phonetic`, no SIMD, compiled with `wasm-opt -Oz`, should weigh **under 40 KB** compressed and **under 100 KB** uncompressed. These numbers are aspirational for the initial 0.1 release; they become gated in CI once measured.
 - Adding `unicode` (basic normalization + simple case folding) should add **under 30 KB** compressed.
 - Adding `unicode-full` (graphemes) is expected to add **50–200 KB** compressed depending on the tables included.
 - Each phonetic language pack adds separately; the goal is under 20 KB compressed for a code-driven pack.
@@ -119,27 +119,27 @@ Comparand tracks Wasm binary size as a first-class metric alongside runtime and 
 
 ### Why it matters
 
-- A browser bundle including Comparand adds to page load time. The library needs to be a small fraction of the JavaScript budget most sites already carry.
+- A browser bundle including StringCheese adds to page load time. The library needs to be a small fraction of the JavaScript budget most sites already carry.
 - Wasm Component Model deployments (edge compute, serverless) charge per-artifact size on cold start. A 5 MB comparison component is disproportionate for any workload.
 - Embedded Wasm runtimes have fixed linear-memory ceilings. A library that overspends the code segment leaves less room for input data.
 
 ## Wasm SIMD
 
 - Wasm SIMD is an opt-in feature (`wasm-simd`) that must never change observable results.
-- The [golden corpus](../../crates/comparand-corpus/src/lib.rs) runs on both the scalar and SIMD backends, and every case must agree bit-for-bit for integer results and within the case's declared [`FloatExpectation`](../../crates/comparand-corpus/src/lib.rs) tolerance for floating-point results. Disagreement is a release-blocking defect.
+- The [golden corpus](../../crates/stringcheese-corpus/src/lib.rs) runs on both the scalar and SIMD backends, and every case must agree bit-for-bit for integer results and within the case's declared [`FloatExpectation`](../../crates/stringcheese-corpus/src/lib.rs) tolerance for floating-point results. Disagreement is a release-blocking defect.
 - The SIMD path is guarded by feature gates, not runtime dispatch. Wasm has no equivalent of native's `cpuid`; the target either has SIMD or it does not.
 - SIMD implementations are optional; algorithms without an obvious SIMD win (small-alphabet automata, table-driven phonetic encoders) skip the SIMD path entirely rather than ship an obfuscated version for no gain.
 - Cross-backend agreement is enforced by the differential test infrastructure described in [DESIGN.md § Metamorphic Testing](../DESIGN.md).
 
 ## Component Model / WIT
 
-A WIT interface for Comparand is planned for version 0.3 (see [DESIGN.md § Future Roadmap](../DESIGN.md)). This section sketches the intended shape.
+A WIT interface for StringCheese is planned for version 0.3 (see [DESIGN.md § Future Roadmap](../DESIGN.md)). This section sketches the intended shape.
 
 ### Interface sketch
 
 ```wit
 // Proposed — not yet implemented.
-package comparand:core@0.1.0;
+package stringcheese:core@0.1.0;
 
 interface descriptors {
     record algorithm-descriptor {
@@ -201,7 +201,7 @@ interface comparison {
     ) -> bounded-distance;
 }
 
-world comparand {
+world stringcheese {
     export descriptors;
     export result-types;
     export comparison;
@@ -222,7 +222,7 @@ Every function in the interface is monomorphic. Generic parameters that exist in
 ### Prepared resources
 
 - WIT `resource` types are the natural fit for [prepared values](./preprocessing-pipeline.md#what-prepared-means). A `prepared-bytes` is constructed once with the preprocessed input, retained across many `distance-prepared-bytes` calls, and finalized when dropped.
-- Resources are held on the guest side (inside the Comparand component). The host holds a handle. This keeps preprocessed representations from crossing the boundary repeatedly.
+- Resources are held on the guest side (inside the StringCheese component). The host holds a handle. This keeps preprocessed representations from crossing the boundary repeatedly.
 
 ### Workspaces
 
@@ -262,7 +262,7 @@ interface streaming-cdc {
 
 ## Cross-target validation
 
-Every release runs the [golden corpus](../../crates/comparand-corpus/src/lib.rs) on the full target matrix:
+Every release runs the [golden corpus](../../crates/stringcheese-corpus/src/lib.rs) on the full target matrix:
 
 - `x86_64-unknown-linux-gnu` scalar
 - `x86_64-unknown-linux-gnu` with native SIMD
@@ -275,7 +275,7 @@ Every release runs the [golden corpus](../../crates/comparand-corpus/src/lib.rs)
 - Debug and release builds of each of the above where practical
 - 32-bit targets where practical
 
-Integer results must agree exactly across every target. Floating-point results must agree within the [`FloatExpectation`](../../crates/comparand-corpus/src/lib.rs) tolerance declared in each case. Disagreement across targets is a release-blocking defect, not a "known difference".
+Integer results must agree exactly across every target. Floating-point results must agree within the [`FloatExpectation`](../../crates/stringcheese-corpus/src/lib.rs) tolerance declared in each case. Disagreement across targets is a release-blocking defect, not a "known difference".
 
 The scalar/SIMD equivalence tests double as portability tests: because the differential harness runs the same case on both, a Wasm SIMD implementation that drifts from the scalar reference is caught before it reaches a release.
 
@@ -283,15 +283,15 @@ The scalar/SIMD equivalence tests double as portability tests: because the diffe
 
 The right packaging granularity is not obvious.
 
-- **Monolithic component.** One `comparand` component with every algorithm compiled in. Simplest to consume; worst binary-size story.
+- **Monolithic component.** One `stringcheese` component with every algorithm compiled in. Simplest to consume; worst binary-size story.
 - **Per-family component.** One component per `AlgorithmFamily` (or per closely-related group). Composable — a host embeds only the families it needs — but requires the host to wire multiple components together.
 - **Per-representation component.** One component for byte algorithms, one for scalar algorithms, one for graphemes, etc. Optimizes for hosts that commit to a single representation.
 
 The plan for the initial 0.1 Component Model release:
 
-- Ship a monolithic `comparand` component behind a Cargo feature set that matches the default library features. The size is bounded by the same feature gates as the Rust library.
-- Ship separate `comparand-phonetic-<region>` components per language pack. Hosts that need multi-language phonetic matching compose them; hosts that need only English pull in only `comparand-phonetic-germanic`.
-- Ship a `comparand-unicode-full` component that hosts pull in only when they need grapheme-level operations, so a bytes-and-scalars deployment does not carry the tables.
+- Ship a monolithic `stringcheese` component behind a Cargo feature set that matches the default library features. The size is bounded by the same feature gates as the Rust library.
+- Ship separate `stringcheese-phonetic-<region>` components per language pack. Hosts that need multi-language phonetic matching compose them; hosts that need only English pull in only `stringcheese-phonetic-germanic`.
+- Ship a `stringcheese-unicode-full` component that hosts pull in only when they need grapheme-level operations, so a bytes-and-scalars deployment does not carry the tables.
 
 Per-family and per-representation packaging are options for later releases if size analysis shows the monolithic component is a substantial fraction of a target host's Wasm budget.
 

@@ -1,5 +1,5 @@
 name: Bug report
-description: A defect in a shipped Comparand crate.
+description: A defect in a shipped StringCheese crate.
 title: "[bug] "
 labels: ["bug"]
 body:
@@ -16,18 +16,18 @@ body:
       label: Crate
       description: Which crate exhibits the defect?
       options:
-        - comparand
-        - comparand-core
-        - comparand-corpus
-        - comparand-unicode
-        - comparand-phonetic
-        - comparand-search
-        - comparand-cdc
-        - comparand-index
-        - comparand-bench
-        - comparand-levenshtein
-        - comparand-hamming
-        - comparand-jaro
+        - stringcheese
+        - stringcheese-core
+        - stringcheese-corpus
+        - stringcheese-unicode
+        - stringcheese-phonetic
+        - stringcheese-search
+        - stringcheese-cdc
+        - stringcheese-index
+        - stringcheese-bench
+        - stringcheese-levenshtein
+        - stringcheese-hamming
+        - stringcheese-jaro
         - other / not sure
     validations:
       required: true
@@ -77,7 +77,7 @@ body:
       description: A self-contained snippet that reproduces the defect.
       render: rust
       placeholder: |
-        use comparand_levenshtein::…;
+        use stringcheese_levenshtein::…;
 
         fn main() {
             …

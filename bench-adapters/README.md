@@ -1,9 +1,9 @@
-# Comparand Bench Adapters
+# StringCheese Bench Adapters
 
-This directory holds Comparand's **comparative-benchmark harness** — the
+This directory holds StringCheese's **comparative-benchmark harness** — the
 head-to-head performance-measurement subsystem `docs/DESIGN.md` commits
 to in its "Comparative Library Benchmarking" section. Each language
-adapter lets Comparand's own criterion suite be compared apples-to-apples
+adapter lets StringCheese's own criterion suite be compared apples-to-apples
 against widely-used sequence-comparison libraries in that language's
 ecosystem.
 
@@ -11,9 +11,9 @@ ecosystem.
 
 The main workspace at `/Cargo.toml` deliberately does not depend on any
 external comparison library. Adding `strsim` or `rapidfuzz` as a
-Comparand-crate `dev-dependency` would pull those crates into every
+StringCheese-crate `dev-dependency` would pull those crates into every
 downstream consumer's dependency graph the moment a workspace-wide
-`cargo test --all-targets` ran; publishing users of Comparand would see
+`cargo test --all-targets` ran; publishing users of StringCheese would see
 new transitive dependencies on library releases they never asked for.
 
 Putting the adapters under a sibling directory that is **not** a
@@ -31,10 +31,10 @@ Every adapter in this subtree — whatever language it targets — MUST:
    criterion (or its language-equivalent) handles by default; the
    adapter must not add its own first-call overhead into the
    steady-state sample.
-3. **Use the same input matrix** as `comparand-bench` — the same
+3. **Use the same input matrix** as `stringcheese-bench` — the same
    input lengths, the same similarity regimes (random / similar /
    identical), the same seeds where practical. A number that says
-   "Comparand at length 32 on similar input" must correspond to the
+   "StringCheese at length 32 on similar input" must correspond to the
    same corpus in both places.
 4. **Never compare differently defined algorithms under the same
    label.** OSA and full Damerau are different algorithms; several
@@ -73,7 +73,7 @@ representation caveats, and interpretation notes.
 ## Non-goals
 
 * **This is not a correctness suite.** Correctness is the job of
-  `crates/comparand-corpus/` and the golden-dataset infrastructure.
+  `crates/stringcheese-corpus/` and the golden-dataset infrastructure.
   Adapter benches assume the algorithms they compare produce the
   same answer on the same input; they do not verify it. Any
   discrepancy the benches surface (e.g. a distance count that

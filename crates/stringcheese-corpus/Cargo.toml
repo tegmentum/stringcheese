@@ -1,0 +1,22 @@
+[package]
+name = "stringcheese-corpus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Golden-case schema and validation corpus for the StringCheese sequence-comparison toolkit."
+categories = ["algorithms", "development-tools::testing"]
+keywords = ["comparison", "validation", "golden", "corpus", "testing"]
+
+[features]
+default = ["std"]
+std = ["alloc", "stringcheese-core/std"]
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[lints]
+workspace = true

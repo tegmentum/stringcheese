@@ -1,6 +1,6 @@
-# Publishing Comparand
+# Publishing StringCheese
 
-Playbook for cutting a Comparand release and pushing the initial
+Playbook for cutting a StringCheese release and pushing the initial
 GitHub repository. Follow this end-to-end the first time; on subsequent
 releases the GitHub-repo section is a no-op and only the crates.io
 sequence matters.
@@ -34,7 +34,7 @@ The GitHub remote does not yet exist. Bootstrap it with the `gh` CLI:
 
 ```sh
 # Assumes `gh auth login` has been completed.
-gh repo create tegmentum/comparand \
+gh repo create tegmentum/stringcheese \
     --public \
     --source=. \
     --description="Rigorous sequence comparison for Rust and WebAssembly" \
@@ -43,7 +43,7 @@ gh repo create tegmentum/comparand \
 
 After the push, the `[![CI]]` badge in `README.md` will start
 resolving; the `[![crates.io]]` and `[![docs.rs]]` badges start
-resolving once the `comparand` facade is published for the first time.
+resolving once the `stringcheese` facade is published for the first time.
 
 ## crates.io token (one-time)
 
@@ -59,33 +59,33 @@ project-local configuration.
 ## Publish order
 
 Every publishable crate is `0.1.0` and lives under
-`crates/`. `comparand-bench` has `publish = false` and is deliberately
+`crates/`. `stringcheese-bench` has `publish = false` and is deliberately
 skipped. The dependency graph dictates the following strict order —
 crates.io refuses to accept a crate whose declared dependencies do not
 yet exist on the index.
 
-1. `comparand-core` — substrate; depends on nothing in the workspace.
-2. `comparand-corpus` — depends on `comparand-core`.
+1. `stringcheese-core` — substrate; depends on nothing in the workspace.
+2. `stringcheese-corpus` — depends on `stringcheese-core`.
 3. First-wave algorithm crates (parallelizable within this tier but
    sequenced here for clarity):
-   1. `comparand-levenshtein`
-   2. `comparand-hamming`
-   3. `comparand-jaro`
-   4. `comparand-damerau`
-   5. `comparand-lcs`
-   6. `comparand-ngram`
-   7. `comparand-unicode`
-   8. `comparand-phonetic`
-   9. `comparand-align`
-   10. `comparand-search`
-   11. `comparand-cdc`
-   12. `comparand-minhash`
+   1. `stringcheese-levenshtein`
+   2. `stringcheese-hamming`
+   3. `stringcheese-jaro`
+   4. `stringcheese-damerau`
+   5. `stringcheese-lcs`
+   6. `stringcheese-ngram`
+   7. `stringcheese-unicode`
+   8. `stringcheese-phonetic`
+   9. `stringcheese-align`
+   10. `stringcheese-search`
+   11. `stringcheese-cdc`
+   12. `stringcheese-minhash`
 4. Second-wave crates that depend on algorithm crates:
-   1. `comparand-set-similarity` — depends on `comparand-ngram`.
-   2. `comparand-index` — depends only on `comparand-core` at build
+   1. `stringcheese-set-similarity` — depends on `stringcheese-ngram`.
+   2. `stringcheese-index` — depends only on `stringcheese-core` at build
       time; the `levenshtein` / `damerau` requirements are `dev-dependencies`
       and do not gate publication.
-5. `comparand` — the facade; re-exports every algorithm crate above.
+5. `stringcheese` — the facade; re-exports every algorithm crate above.
 
 ## Publish sequence
 
@@ -98,23 +98,23 @@ safety margin.
 set -euo pipefail
 
 crates=(
-    comparand-core
-    comparand-corpus
-    comparand-levenshtein
-    comparand-hamming
-    comparand-jaro
-    comparand-damerau
-    comparand-lcs
-    comparand-ngram
-    comparand-unicode
-    comparand-phonetic
-    comparand-align
-    comparand-search
-    comparand-cdc
-    comparand-minhash
-    comparand-set-similarity
-    comparand-index
-    comparand
+    stringcheese-core
+    stringcheese-corpus
+    stringcheese-levenshtein
+    stringcheese-hamming
+    stringcheese-jaro
+    stringcheese-damerau
+    stringcheese-lcs
+    stringcheese-ngram
+    stringcheese-unicode
+    stringcheese-phonetic
+    stringcheese-align
+    stringcheese-search
+    stringcheese-cdc
+    stringcheese-minhash
+    stringcheese-set-similarity
+    stringcheese-index
+    stringcheese
 )
 
 for crate in "${crates[@]}"; do
@@ -134,10 +134,10 @@ published.
 ## Post-publish
 
 - Tag the release: `git tag v0.1.0 && git push --tags`.
-- Verify each crate landed: browse `https://crates.io/crates/comparand`
+- Verify each crate landed: browse `https://crates.io/crates/stringcheese`
   and the algorithm crates.
 - Verify docs.rs successfully built the facade with all features:
-  `https://docs.rs/comparand`. docs.rs uses each crate's default
+  `https://docs.rs/stringcheese`. docs.rs uses each crate's default
   feature set unless overridden — the facade's default `std` feature
   transitively enables every sub-crate, so a plain build is
   sufficient.
@@ -147,7 +147,7 @@ published.
 
 ## What NOT to do
 
-- Do not publish `comparand-bench`. It has `publish = false` for a
+- Do not publish `stringcheese-bench`. It has `publish = false` for a
   reason (it depends on host-only benchmark tooling and is not
   intended to be consumed as a library).
 - Do not bump crate versions individually. The workspace pins every

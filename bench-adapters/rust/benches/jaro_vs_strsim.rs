@@ -1,20 +1,20 @@
-//! Head-to-head: Comparand's Jaro / Jaro-Winkler vs. `strsim` 0.11.
+//! Head-to-head: StringCheese's Jaro / Jaro-Winkler vs. `strsim` 0.11.
 //!
 //! # Representation caveat
 //!
 //! `strsim::jaro` and `strsim::jaro_winkler` accept `&str` and
-//! iterate `chars` internally; Comparand's `Jaro.similarity` accepts
+//! iterate `chars` internally; StringCheese's `Jaro.similarity` accepts
 //! `&[T: Eq]` and is called here on `&[u8]`. The inputs are ASCII so
 //! the two are semantically equivalent, but strsim pays the cost of
 //! UTF-8 iteration on every call. This is exactly the representation
-//! choice discussion the Comparand toolkit is designed to make
+//! choice discussion the StringCheese toolkit is designed to make
 //! visible — the byte-slice path is genuinely faster on ASCII input;
 //! the `&[char]` path is what a caller with non-ASCII data would
 //! actually use.
 //!
 //! # Return-type extraction
 //!
-//! `strsim::jaro` returns bare `f64`; Comparand's `Jaro.similarity`
+//! `strsim::jaro` returns bare `f64`; StringCheese's `Jaro.similarity`
 //! returns `Similarity<f64>`. We call `into_inner()` inside the
 //! timing loop for both sides so the two implementations are timed
 //! doing the same amount of work — the newtype-unwrap is a
@@ -25,14 +25,14 @@
 //! # Matrix
 //!
 //! (length ∈ {8, 32, 128, 512, 2048}) × (regime ∈ {random, similar,
-//! identical}) × (implementation ∈ {`comparand_jaro`, `strsim_jaro`,
-//! `comparand_jw`, `strsim_jw`}).
+//! identical}) × (implementation ∈ {`stringcheese_jaro`, `strsim_jaro`,
+//! `stringcheese_jw`, `strsim_jw`}).
 
 use std::hint::black_box;
 
-use comparand_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
-use comparand_core::SimilarityMetric;
-use comparand_jaro::{Jaro, JaroWinkler};
+use stringcheese_bench_adapters_rust::{LENGTHS, Pair, REGIMES, build_pair};
+use stringcheese_core::SimilarityMetric;
+use stringcheese_jaro::{Jaro, JaroWinkler};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const SALTS: (u64, u64, u64) = (0xC1, 0xC2, 0xC3);
@@ -44,7 +44,7 @@ fn bench_jaro(c: &mut Criterion) {
         for &kind in REGIMES {
             let pair = build_pair(len, kind, SALTS);
             group.bench_with_input(
-                BenchmarkId::new(format!("comparand/{kind}"), len),
+                BenchmarkId::new(format!("stringcheese/{kind}"), len),
                 &pair,
                 |bencher, pair: &Pair| {
                     let alg = Jaro;
@@ -77,7 +77,7 @@ fn bench_jaro(c: &mut Criterion) {
 }
 
 fn bench_jaro_winkler(c: &mut Criterion) {
-    // Comparand's `JaroWinkler::classic()` = Winkler-1990: prefix
+    // StringCheese's `JaroWinkler::classic()` = Winkler-1990: prefix
     // limit 4, scaling 0.1, always-apply boost. `strsim::jaro_winkler`
     // is documented as the classic variant with the same parameters,
     // so this is a same-algorithm head-to-head.
@@ -87,7 +87,7 @@ fn bench_jaro_winkler(c: &mut Criterion) {
         for &kind in REGIMES {
             let pair = build_pair(len, kind, SALTS);
             group.bench_with_input(
-                BenchmarkId::new(format!("comparand/{kind}"), len),
+                BenchmarkId::new(format!("stringcheese/{kind}"), len),
                 &pair,
                 |bencher, pair: &Pair| {
                     let alg = JaroWinkler::classic();

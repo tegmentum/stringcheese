@@ -1,0 +1,34 @@
+[package]
+name = "stringcheese-damerau"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Damerau-Levenshtein and Optimal String Alignment edit distances for the StringCheese sequence-comparison toolkit."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["damerau", "levenshtein", "osa", "edit-distance", "comparison"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+# Full Damerau's production kernel requires `std` because it uses
+# `HashMap`; OSA is `alloc`-only.
+std = ["alloc", "stringcheese-core/std"]
+# When enabled, the crate may use heap-allocating types from `alloc`. Every
+# dynamic-programming kernel here requires this; without it the crate
+# compiles as an empty no-alloc surface for embedded builds that only need
+# to link against the substrate crates.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[dev-dependencies]
+# Golden-case schema; test-only.
+stringcheese-corpus = { workspace = true }
+proptest = "1"
+
+[lints]
+workspace = true

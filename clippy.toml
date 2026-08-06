@@ -1,0 +1,14 @@
+# clippy configuration for the StringCheese workspace.
+#
+# `doc-valid-idents` extends the default allowlist for `clippy::doc_markdown`,
+# which otherwise flags any run of CamelCase or SCREAMING_SNAKE as a "should
+# be in backticks" identifier. The names listed here are project brands,
+# specification/algorithm proper nouns, or external systems — none of them
+# are Rust identifiers, so wrapping them in backticks would be misleading.
+doc-valid-idents = [
+    # StringCheese brand
+    "StringCheese",
+    "SCUD",
+    # Extend the default clippy list (must be re-declared when overriding)
+    "..",
+]

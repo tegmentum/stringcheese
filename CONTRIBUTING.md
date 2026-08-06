@@ -1,6 +1,6 @@
-# Contributing to Comparand
+# Contributing to StringCheese
 
-Thank you for considering a contribution. Comparand aims to be the
+Thank you for considering a contribution. StringCheese aims to be the
 canonical Rust library for sequence comparison, which means the bar for
 correctness, documentation, and API coherence is high. This document
 describes how to work in the repository so a pull request lands with
@@ -11,8 +11,8 @@ minimum friction.
 Clone and build:
 
 ```sh
-git clone https://github.com/tegmentum/comparand.git
-cd comparand
+git clone https://github.com/tegmentum/stringcheese.git
+cd stringcheese
 cargo test --workspace --all-features
 ```
 
@@ -31,20 +31,20 @@ version is fine for development.
 The workspace is split into small, focused crates. The map is
 maintained in [`README.md`](README.md); the short version is:
 
-- **`comparand-core`** — traits, result types, `AlgorithmDescriptor`,
+- **`stringcheese-core`** — traits, result types, `AlgorithmDescriptor`,
   `MetricProperties`, workspace and sequence abstractions. Every other
   crate depends on this one.
-- **`comparand-corpus`** — golden-case schema, oracle framework,
+- **`stringcheese-corpus`** — golden-case schema, oracle framework,
   exhaustive generators, differential vocabulary. Test-only for the
   algorithm crates but a first-class published deliverable in its own
   right.
-- **`comparand-<algorithm>`** — one crate per algorithm family, each
-  ownership-scoped so it can evolve independently. `comparand-hamming`,
-  `comparand-levenshtein`, and `comparand-jaro` are the first three.
-- **`comparand`** — a thin facade that re-exports the stable public API.
-- Placeholder crates (`comparand-unicode`, `comparand-phonetic`,
-  `comparand-search`, `comparand-cdc`, `comparand-index`,
-  `comparand-bench`) reserve names for milestones described in
+- **`stringcheese-<algorithm>`** — one crate per algorithm family, each
+  ownership-scoped so it can evolve independently. `stringcheese-hamming`,
+  `stringcheese-levenshtein`, and `stringcheese-jaro` are the first three.
+- **`stringcheese`** — a thin facade that re-exports the stable public API.
+- Placeholder crates (`stringcheese-unicode`, `stringcheese-phonetic`,
+  `stringcheese-search`, `stringcheese-cdc`, `stringcheese-index`,
+  `stringcheese-bench`) reserve names for milestones described in
   [`docs/DESIGN.md`](docs/DESIGN.md).
 
 Design context lives under [`docs/`](docs/):
@@ -67,7 +67,7 @@ This is the workflow most contributions follow. The order matters:
 skipping steps causes rework.
 
 1. **Pick a family.** Every algorithm belongs to an `AlgorithmFamily`
-   in `comparand-core::descriptor`. If your algorithm does not fit an
+   in `stringcheese-core::descriptor`. If your algorithm does not fit an
    existing family, propose adding a variant to that enum in a separate
    PR before starting on the implementation. `AlgorithmFamily` is
    `#[non_exhaustive]` specifically so new variants are additive.
@@ -80,7 +80,7 @@ skipping steps causes rework.
    cycle.
 
 3. **Decide DistanceMetric vs SimilarityMetric vs both.**
-   `comparand-core` exposes distinct `DistanceMetric` and
+   `stringcheese-core` exposes distinct `DistanceMetric` and
    `SimilarityMetric` traits, plus normalized counterparts. Distance
    is not similarity; do not paper over the distinction by picking one
    and casting. If your algorithm is fundamentally a distance,
@@ -102,7 +102,7 @@ skipping steps causes rework.
 
 6. **Wire golden cases to the corpus schema.** Add cases to the
    crate's `golden.rs` (or `golden/` submodule). Cases must use the
-   schema from `comparand_corpus`, must reference the descriptor's
+   schema from `stringcheese_corpus`, must reference the descriptor's
    variant slug, and must include enough coverage to demonstrate every
    documented edge case — empty inputs, identical inputs, maximally
    different inputs, unicode boundary cases where applicable.
@@ -119,15 +119,15 @@ skipping steps causes rework.
 Each of the three shipped algorithms illustrates a different point on
 the spectrum:
 
-- [`crates/comparand-hamming`](crates/comparand-hamming) — the minimal
+- [`crates/stringcheese-hamming`](crates/stringcheese-hamming) — the minimal
   case: single kernel, single descriptor. Start here to understand the
   smallest possible shape a crate can take.
-- [`crates/comparand-levenshtein`](crates/comparand-levenshtein) — the
+- [`crates/stringcheese-levenshtein`](crates/stringcheese-levenshtein) — the
   multi-kernel case: `full_matrix.rs` (oracle), `rolling_rows.rs`
   (production), `banded.rs` (Ukkonen cutoff variant), plus a shared
   `workspace.rs` for scratch-buffer reuse. Study the module split
   before splitting your own algorithm across files.
-- [`crates/comparand-jaro`](crates/comparand-jaro) — the
+- [`crates/stringcheese-jaro`](crates/stringcheese-jaro) — the
   `FloatExpectation` case: because Jaro is a floating-point
   similarity, its golden cases and property tests use `FloatExpectation`
   to control comparison tolerance rather than exact equality.
@@ -200,15 +200,15 @@ Every algorithm PR should include:
 - **Unit tests.** Small, targeted, colocated with the code they
   exercise. Doc-tests count as unit tests for coverage purposes.
 - **Property tests via `proptest`.** One test per declared metric
-  property. See `crates/comparand-hamming/src/property_tests.rs` for
+  property. See `crates/stringcheese-hamming/src/property_tests.rs` for
   the pattern.
 - **Differential tests (oracle vs optimized).** When a crate has more
   than one kernel, one is the oracle and the others must agree with it
-  on generated inputs. See `crates/comparand-levenshtein` for the
+  on generated inputs. See `crates/stringcheese-levenshtein` for the
   reference layout.
 - **Golden cases.** Fixed input-and-expected-output records that
   survive refactors and document the intended behavior. Use the
-  `comparand-corpus` schema so a shared runner can execute them.
+  `stringcheese-corpus` schema so a shared runner can execute them.
 - **Cross-target verification.** New algorithms must build under
   `--no-default-features` and `--no-default-features --features alloc`,
   and — until [`docs/design/wasm-and-wit-interface.md`](docs/design/wasm-and-wit-interface.md)
@@ -243,9 +243,9 @@ For the wasm cross-compile checks (requires `rustup target add
 wasm32-unknown-unknown wasm32-wasip1` once):
 
 ```sh
-cargo check --workspace --exclude comparand-bench \
+cargo check --workspace --exclude stringcheese-bench \
   --all-features --target wasm32-unknown-unknown --locked
-cargo check --workspace --exclude comparand-bench \
+cargo check --workspace --exclude stringcheese-bench \
   --all-features --target wasm32-wasip1 --locked
 ```
 
@@ -271,6 +271,6 @@ an issue — the tree should be clean.
 
 ## License
 
-Comparand is dual-licensed under [MIT](LICENSE-MIT) and
+StringCheese is dual-licensed under [MIT](LICENSE-MIT) and
 [Apache-2.0](LICENSE-APACHE). By submitting a contribution you agree
 that it may be distributed under the same terms.

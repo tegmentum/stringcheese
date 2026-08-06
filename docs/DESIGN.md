@@ -1,9 +1,9 @@
-# Comparand — Design Document
+# StringCheese — Design Document
 
 Status: Design Proposal
 Target Version: 0.1 (Foundation)
 
-This document is the north-star vision for Comparand. It records the
+This document is the north-star vision for StringCheese. It records the
 philosophy, scope, algorithm coverage, memory model, and validation strategy
 the project is being built against. Where the code has not yet caught up, this
 document reflects intent rather than current state.
@@ -16,7 +16,7 @@ interface — will be added under `docs/` as their scope is fleshed out.
 
 ## Vision
 
-Comparand is a comprehensive, high-performance Rust library for sequence
+StringCheese is a comprehensive, high-performance Rust library for sequence
 comparison. While its primary API targets strings, the underlying
 architecture is designed around generic sequences.
 
@@ -39,7 +39,7 @@ of every comparison are explicit.
 
 ## Scope
 
-Comparand's mission is **string comparison** — given two sequences,
+StringCheese's mission is **string comparison** — given two sequences,
 produce a distance, similarity, alignment, phonetic key, or match
 result whose semantics are precise, whose cost is inspectable, and
 whose correctness is testable.
@@ -49,26 +49,26 @@ in separate downstream libraries:
 
 - **String manipulation** — tokenization, splitting, joining, general
   string transformation beyond what a comparison requires as
-  preprocessing. Comparand's `comparand-unicode` preprocessing
+  preprocessing. StringCheese's `stringcheese-unicode` preprocessing
   pipeline is explicitly comparison-oriented (normalize before
   comparing); general-purpose string manipulation belongs elsewhere.
 
 - **Record linkage** — combining per-field comparisons into whole-record
   match/non-match decisions, blocking strategies, learned or
-  probabilistic classifiers that consume per-field scores. Comparand
+  probabilistic classifiers that consume per-field scores. StringCheese
   supplies the per-field scores; deciding whether two records refer to
   the same real-world entity is a downstream concern.
   See [record-linkage](https://github.com/tegmentum/record-linkage)
   for the sibling library that implements the Fellegi-Sunter classifier
-  and sorted-neighborhood blocking on top of Comparand.
+  and sorted-neighborhood blocking on top of StringCheese.
 
 The scope boundary is a coherent commitment, not a fence against
 convenience. Sketches, small helpers, or "we already computed the
 number, we may as well combine them" utilities that drift into these
 adjacent spaces belong in the downstream libraries.
 
-Historically Comparand shipped a `comparand-linkage` crate and a
-`sorted_neighborhood` module in `comparand-index`; both were
+Historically StringCheese shipped a `stringcheese-linkage` crate and a
+`sorted_neighborhood` module in `stringcheese-index`; both were
 extracted to the sibling record-linkage repo when this scope decision
 crystallized. See the extraction commit for the migration record.
 
@@ -135,7 +135,7 @@ Every design decision should consider:
 ## Architecture
 
 ```
-comparand/
+stringcheese/
     core/           — sequence abstractions, traits, comparison types
     distance/
     similarity/
@@ -475,7 +475,7 @@ Benchmark more than runtime:
 
 ## Public Goals
 
-Comparand should become:
+StringCheese should become:
 
 - the definitive Rust comparison library
 - the reference implementation for sequence comparison
@@ -543,8 +543,8 @@ Core infrastructure:
 
 ## Guiding Principle
 
-The defining characteristic of Comparand is semantic precision. Existing
-libraries generally expose algorithms. Comparand exposes algorithms and their
+The defining characteristic of StringCheese is semantic precision. Existing
+libraries generally expose algorithms. StringCheese exposes algorithms and their
 meaning. Every comparison carries explicit information about:
 
 - what was compared
@@ -564,7 +564,7 @@ environments.
 
 ## Purpose
 
-Comparand must provide objective evidence that its implementations are:
+StringCheese must provide objective evidence that its implementations are:
 
 - mathematically correct
 - semantically well-defined
@@ -664,7 +664,7 @@ ecosystems. The objective is not to blindly match every implementation — it
 is to identify genuine defects, semantic ambiguities, normalization
 differences, variant mismatches, and undocumented edge-case behavior.
 
-Disagreement must not automatically cause Comparand to imitate the majority
+Disagreement must not automatically cause StringCheese to imitate the majority
 result. The implementation must follow its declared semantics and source
 definition.
 
@@ -807,7 +807,7 @@ A release does not proceed unless:
 3. All optimized implementations agree with their independent oracle.
 4. Native and WebAssembly results agree.
 5. Scalar and SIMD implementations agree.
-6. No unresolved differential discrepancy is classified as a Comparand defect.
+6. No unresolved differential discrepancy is classified as a StringCheese defect.
 7. Performance regressions beyond defined thresholds are reviewed.
 8. Binary-size and memory regressions are reviewed.
 9. Dataset and benchmark versions are recorded in the release manifest.
@@ -832,7 +832,7 @@ Each release publishes a machine-generated correctness report:
 
 The golden corpus is a standalone deliverable. Structure:
 
-    comparand-corpus/
+    stringcheese-corpus/
         schema/
         edit-distance/
         similarity/
@@ -878,7 +878,7 @@ The corpus is versioned independently from the Rust library.
 
 ## Design Principle
 
-Comparand should never ask users to trust that an implementation is correct
+StringCheese should never ask users to trust that an implementation is correct
 because it is fast, widely used, or resembles a textbook implementation.
 Correctness must be demonstrated through:
 

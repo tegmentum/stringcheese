@@ -1,0 +1,34 @@
+[package]
+name = "stringcheese-levenshtein"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Unit-cost Levenshtein edit distance for the StringCheese sequence-comparison toolkit. Full-matrix oracle, rolling-rows production kernel, and Ukkonen-style banded cutoff variant."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["comparison", "distance", "levenshtein", "edit-distance", "wasm"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "stringcheese-core/std"]
+# When enabled, the crate may use heap-allocating types from `alloc`. The
+# workspace and every dynamic-programming kernel in this crate require this;
+# without it the crate compiles as an empty no-alloc surface for embedded
+# builds that only need to link against the substrate crates.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[dev-dependencies]
+# Golden-case schema (workspace-inherited so version and path stay in sync
+# with the rest of the workspace); test-only, never linked into a normal
+# library build.
+stringcheese-corpus = { workspace = true }
+proptest = "1"
+
+[lints]
+workspace = true

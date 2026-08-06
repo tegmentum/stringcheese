@@ -94,52 +94,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "comparand-bench-adapters-rust"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
- "comparand-damerau",
- "comparand-hamming",
- "comparand-jaro",
- "comparand-levenshtein",
- "criterion",
- "rapidfuzz",
- "strsim",
-]
-
-[[package]]
-name = "comparand-core"
-version = "0.1.0"
-
-[[package]]
-name = "comparand-damerau"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-hamming"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-jaro"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-levenshtein"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
 name = "criterion"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -364,6 +318,52 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "stringcheese-bench-adapters-rust"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "rapidfuzz",
+ "stringcheese-core",
+ "stringcheese-damerau",
+ "stringcheese-hamming",
+ "stringcheese-jaro",
+ "stringcheese-levenshtein",
+ "strsim",
+]
+
+[[package]]
+name = "stringcheese-core"
+version = "0.1.0"
+
+[[package]]
+name = "stringcheese-damerau"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-hamming"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-jaro"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-levenshtein"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
 ]
 
 [[package]]

@@ -20,7 +20,7 @@
 
 #![no_main]
 
-use comparand_ngram::{CharacterGramSlices, CharacterGrams, NGramGenerator, PaddingPolicy, count_grams};
+use stringcheese_ngram::{CharacterGramSlices, CharacterGrams, NGramGenerator, PaddingPolicy, count_grams};
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]

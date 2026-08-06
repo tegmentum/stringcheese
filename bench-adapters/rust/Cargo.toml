@@ -1,6 +1,6 @@
 [workspace]
 # Standalone-crate sentinel — bench-adapters/rust/ is deliberately not a
-# member of the outer Comparand workspace. The workspace root at
+# member of the outer StringCheese workspace. The workspace root at
 # /Cargo.toml uses an explicit `members = [...]` list (not a glob), so
 # nothing would drag this crate in even without a sentinel; the empty
 # `[workspace]` table here is a belt-and-braces guarantee that the
@@ -10,14 +10,14 @@
 # `Cargo.lock`.
 
 [package]
-name = "comparand-bench-adapters-rust"
+name = "stringcheese-bench-adapters-rust"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-authors = ["Zachary Whitley <mail@zacharywhitley.com>"]
-repository = "https://github.com/tegmentum/comparand"
-description = "Head-to-head Rust-ecosystem benchmark adapters for the Comparand toolkit (strsim, rapidfuzz)."
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/stringcheese"
+description = "Head-to-head Rust-ecosystem benchmark adapters for the StringCheese toolkit (strsim, rapidfuzz)."
 publish = false
 
 [features]
@@ -25,15 +25,15 @@ default = ["std"]
 std = []
 
 [dependencies]
-# Comparand crates via path into the sibling workspace. `default-features = false`
-# with an explicit `["std"]` matches how `comparand-bench` pulls them in and
+# StringCheese crates via path into the sibling workspace. `default-features = false`
+# with an explicit `["std"]` matches how `stringcheese-bench` pulls them in and
 # keeps the adapter's dependency graph identical to the toolkit's own bench
 # suite for a fair head-to-head.
-comparand-core = { path = "../../crates/comparand-core", default-features = false, features = ["std"] }
-comparand-levenshtein = { path = "../../crates/comparand-levenshtein", default-features = false, features = ["std"] }
-comparand-hamming = { path = "../../crates/comparand-hamming", default-features = false, features = ["std"] }
-comparand-jaro = { path = "../../crates/comparand-jaro", default-features = false, features = ["std"] }
-comparand-damerau = { path = "../../crates/comparand-damerau", default-features = false, features = ["std"] }
+stringcheese-core = { path = "../../crates/stringcheese-core", default-features = false, features = ["std"] }
+stringcheese-levenshtein = { path = "../../crates/stringcheese-levenshtein", default-features = false, features = ["std"] }
+stringcheese-hamming = { path = "../../crates/stringcheese-hamming", default-features = false, features = ["std"] }
+stringcheese-jaro = { path = "../../crates/stringcheese-jaro", default-features = false, features = ["std"] }
+stringcheese-damerau = { path = "../../crates/stringcheese-damerau", default-features = false, features = ["std"] }
 
 # External Rust libraries under comparison. Pinned to current-stable
 # minor as of 2026-08:

@@ -15,91 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
 
 [[package]]
-name = "comparand-component-host"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
- "comparand-damerau",
- "comparand-hamming",
- "comparand-jaro",
- "comparand-lcs",
- "comparand-levenshtein",
- "comparand-ngram",
- "comparand-phonetic",
- "comparand-search",
- "comparand-set-similarity",
- "wit-bindgen",
-]
-
-[[package]]
-name = "comparand-core"
-version = "0.1.0"
-
-[[package]]
-name = "comparand-damerau"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-hamming"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-jaro"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-lcs"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-levenshtein"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-ngram"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-phonetic"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-search"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
-]
-
-[[package]]
-name = "comparand-set-similarity"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
- "comparand-ngram",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -248,6 +163,91 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "stringcheese-component-host"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+ "stringcheese-damerau",
+ "stringcheese-hamming",
+ "stringcheese-jaro",
+ "stringcheese-lcs",
+ "stringcheese-levenshtein",
+ "stringcheese-ngram",
+ "stringcheese-phonetic",
+ "stringcheese-search",
+ "stringcheese-set-similarity",
+ "wit-bindgen",
+]
+
+[[package]]
+name = "stringcheese-core"
+version = "0.1.0"
+
+[[package]]
+name = "stringcheese-damerau"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-hamming"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-jaro"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-lcs"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-levenshtein"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-ngram"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-phonetic"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-search"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+]
+
+[[package]]
+name = "stringcheese-set-similarity"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-core",
+ "stringcheese-ngram",
 ]
 
 [[package]]

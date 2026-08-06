@@ -1,8 +1,8 @@
-//! WebAssembly Component Model host for Comparand.
+//! WebAssembly Component Model host for StringCheese.
 //!
-//! This crate implements the `comparand:core` WIT interface (see
-//! `../wit/comparand.wit`) by delegating to the underlying algorithm
-//! crates in the main Comparand workspace. When built with
+//! This crate implements the `stringcheese:core` WIT interface (see
+//! `../wit/stringcheese.wit`) by delegating to the underlying algorithm
+//! crates in the main StringCheese workspace. When built with
 //! `cargo component build --release` the output is a valid WebAssembly
 //! component that any Component-Model-capable host (Wasmtime, jco,
 //! WasmCloud, …) can invoke without linking Rust.
@@ -12,7 +12,7 @@
 //! The `wit_bindgen::generate!` invocation below reads the WIT file and
 //! emits, at macro-expansion time, one Rust trait per WIT interface
 //! (each named `Guest`, nested under
-//! `exports::comparand::core::<interface>`). The `Component` unit
+//! `exports::stringcheese::core::<interface>`). The `Component` unit
 //! struct then `impl`s each of those traits, translating between the
 //! wire types the generated code produces (`Vec<u8>`, `String`, `u32`,
 //! `f64`, the generated `BoundedDistance` variant) and the
@@ -23,7 +23,7 @@
 //!
 //! # Adding a function
 //!
-//! 1. Add the `func` declaration to `../wit/comparand.wit`.
+//! 1. Add the `func` declaration to `../wit/stringcheese.wit`.
 //! 2. Rebuild — the `wit_bindgen::generate!` macro will emit a new
 //!    trait method and the compiler will error until you implement it.
 //! 3. Add the corresponding method to the `impl` block below, calling
@@ -53,7 +53,7 @@
 // time. The macro emits (roughly):
 //
 //   pub mod exports {
-//       pub mod comparand {
+//       pub mod stringcheese {
 //           pub mod core {
 //               pub mod distance   { pub trait Guest { ... }; pub enum BoundedDistance { ... } }
 //               pub mod similarity { pub trait Guest { ... } }
@@ -66,7 +66,7 @@
 // plus an `export!` macro that installs a Component-implementing type
 // into the component's export table.
 wit_bindgen::generate!({
-    world: "comparand-core",
+    world: "stringcheese-core",
     path: "../wit",
 });
 
@@ -86,10 +86,10 @@ struct Component;
 // better served by a future `resource batch-workspace { … }` in the WIT
 // interface (see README "Path forward") than by a hidden global here.
 
-impl exports::comparand::core::distance::Guest for Component {
+impl exports::stringcheese::core::distance::Guest for Component {
     fn levenshtein(a: Vec<u8>, b: Vec<u8>) -> u32 {
-        use comparand_core::DistanceMetric;
-        comparand_levenshtein::Levenshtein
+        use stringcheese_core::DistanceMetric;
+        stringcheese_levenshtein::Levenshtein
             .distance(&a[..], &b[..])
             .into_inner()
     }
@@ -98,10 +98,10 @@ impl exports::comparand::core::distance::Guest for Component {
         a: Vec<u8>,
         b: Vec<u8>,
         cutoff: u32,
-    ) -> exports::comparand::core::distance::BoundedDistance {
-        use comparand_core::{BoundedDistance as RustBounded, BoundedDistanceMetric};
-        use exports::comparand::core::distance::BoundedDistance as WitBounded;
-        match comparand_levenshtein::Levenshtein.distance_within(&a[..], &b[..], cutoff) {
+    ) -> exports::stringcheese::core::distance::BoundedDistance {
+        use stringcheese_core::{BoundedDistance as RustBounded, BoundedDistanceMetric};
+        use exports::stringcheese::core::distance::BoundedDistance as WitBounded;
+        match stringcheese_levenshtein::Levenshtein.distance_within(&a[..], &b[..], cutoff) {
             RustBounded::Within(d) => WitBounded::Within(d.into_inner()),
             RustBounded::Exceeded { cutoff } => WitBounded::Exceeded(cutoff),
         }
@@ -111,7 +111,7 @@ impl exports::comparand::core::distance::Guest for Component {
         // The Hamming trait impl panics on length mismatch; use the
         // fallible entry point and flatten the typed error to `string`
         // for the WIT boundary.
-        comparand_hamming::Hamming
+        stringcheese_hamming::Hamming
             .try_distance(&a[..], &b[..])
             .map(|d| d.into_inner())
             .map_err(|e| {
@@ -123,8 +123,8 @@ impl exports::comparand::core::distance::Guest for Component {
     }
 
     fn osa(a: Vec<u8>, b: Vec<u8>) -> u32 {
-        use comparand_core::DistanceMetric;
-        comparand_damerau::Osa.distance(&a[..], &b[..]).into_inner()
+        use stringcheese_core::DistanceMetric;
+        stringcheese_damerau::Osa.distance(&a[..], &b[..]).into_inner()
     }
 
     fn lcs_distance(a: Vec<u8>, b: Vec<u8>) -> u32 {
@@ -132,7 +132,7 @@ impl exports::comparand::core::distance::Guest for Component {
         // addition to its `DistanceMetric` impl, so the trait does not
         // need to be in scope here — unlike the `levenshtein` and `osa`
         // paths above, which reach through the trait exclusively.
-        comparand_lcs::LcsDistance
+        stringcheese_lcs::LcsDistance
             .distance(&a[..], &b[..])
             .into_inner()
     }
@@ -142,29 +142,29 @@ impl exports::comparand::core::distance::Guest for Component {
 // similarity interface
 // -------------------------------------------------------------------------
 
-impl exports::comparand::core::similarity::Guest for Component {
+impl exports::stringcheese::core::similarity::Guest for Component {
     fn jaro(a: Vec<u8>, b: Vec<u8>) -> f64 {
-        comparand_jaro::Jaro
+        stringcheese_jaro::Jaro
             .similarity_normalized(&a[..], &b[..])
             .into_inner()
     }
 
     fn jaro_winkler(a: Vec<u8>, b: Vec<u8>) -> f64 {
-        comparand_jaro::JaroWinkler::classic()
+        stringcheese_jaro::JaroWinkler::classic()
             .similarity_normalized(&a[..], &b[..])
             .into_inner()
     }
 
     fn dice_bigrams(a: Vec<u8>, b: Vec<u8>) -> f64 {
         let (set_a, set_b) = byte_bigram_sets(&a, &b);
-        comparand_set_similarity::DiceOverSet
+        stringcheese_set_similarity::DiceOverSet
             .similarity_normalized(&set_a, &set_b)
             .into_inner()
     }
 
     fn jaccard_bigrams(a: Vec<u8>, b: Vec<u8>) -> f64 {
         let (set_a, set_b) = byte_bigram_sets(&a, &b);
-        comparand_set_similarity::JaccardOverSet
+        stringcheese_set_similarity::JaccardOverSet
             .similarity_normalized(&set_a, &set_b)
             .into_inner()
     }
@@ -183,10 +183,10 @@ fn byte_bigram_sets(
     a: &[u8],
     b: &[u8],
 ) -> (
-    comparand_ngram::GramSet<Vec<u8>>,
-    comparand_ngram::GramSet<Vec<u8>>,
+    stringcheese_ngram::GramSet<Vec<u8>>,
+    stringcheese_ngram::GramSet<Vec<u8>>,
 ) {
-    use comparand_ngram::{CharacterGrams, GramSet, PaddingPolicy};
+    use stringcheese_ngram::{CharacterGrams, GramSet, PaddingPolicy};
     // `try_new` cannot fail with n=2, but pattern-matching the
     // Result keeps the panic path explicit rather than hidden behind
     // `.unwrap()`.
@@ -208,9 +208,9 @@ fn byte_bigram_sets(
 // search time (O(|haystack|)) — a sensible default for a one-shot API
 // where the caller has not signalled any preference.
 
-impl exports::comparand::core::search::Guest for Component {
+impl exports::stringcheese::core::search::Guest for Component {
     fn find_first(pattern: Vec<u8>, haystack: Vec<u8>) -> Option<u32> {
-        use comparand_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
+        use stringcheese_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
         let prep = Kmp::prepare(&pattern);
         Kmp::find(&prep, &haystack).map(|m| {
             // WIT `u32` matches most Wasm-land 32-bit indexing; the
@@ -222,7 +222,7 @@ impl exports::comparand::core::search::Guest for Component {
     }
 
     fn find_all(pattern: Vec<u8>, haystack: Vec<u8>) -> Vec<u32> {
-        use comparand_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
+        use stringcheese_search::{Kmp, SearchAlgorithm, SinglePatternSearch};
         let prep = Kmp::prepare(&pattern);
         Kmp::find_all(&prep, &haystack)
             .into_iter()
@@ -239,24 +239,24 @@ impl exports::comparand::core::search::Guest for Component {
 // hands the guest a `String` — pass it through as `&str` with a plain
 // borrow, no re-encoding.
 
-impl exports::comparand::core::phonetic::Guest for Component {
+impl exports::stringcheese::core::phonetic::Guest for Component {
     fn soundex(name: String) -> String {
-        comparand_phonetic::Soundex::encode(&name)
+        stringcheese_phonetic::Soundex::encode(&name)
     }
 
     fn nysiis(name: String) -> String {
-        comparand_phonetic::Nysiis::encode(&name)
+        stringcheese_phonetic::Nysiis::encode(&name)
     }
 
     fn double_metaphone_primary(name: String) -> String {
-        comparand_phonetic::DoubleMetaphone::primary_only()
+        stringcheese_phonetic::DoubleMetaphone::primary_only()
             .encode(&name)
             .primary
     }
 }
 
 // Register `Component` as the export table's implementer of every
-// interface in the `comparand-core` world. This must appear exactly
+// interface in the `stringcheese-core` world. This must appear exactly
 // once, and after all Guest impls, or the resulting `.wasm` will fail
 // its component-model validation.
 export!(Component);

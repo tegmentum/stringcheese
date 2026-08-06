@@ -1,10 +1,10 @@
 # N-Gram and Fingerprinting Subsystem
 
 Status: Design
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](../DESIGN.md), [type-system.md](./type-system.md), [preprocessing-pipeline.md](./preprocessing-pipeline.md), [phonetic-subsystem.md](./phonetic-subsystem.md), [wasm-and-wit-interface.md](./wasm-and-wit-interface.md)
 
-The design of Comparand's n-gram generation and fingerprinting subsystems — the representation layer beneath set similarity, MinHash, LSH, n-gram inverted indexes, substring search, and content-defined chunking.
+The design of StringCheese's n-gram generation and fingerprinting subsystems — the representation layer beneath set similarity, MinHash, LSH, n-gram inverted indexes, substring search, and content-defined chunking.
 
 ## N-grams are a representation layer
 
@@ -19,7 +19,7 @@ An n-gram generator produces a *representation* of the input. The same gram set 
 - **Substring search preprocessing.** N-gram signatures gate Rabin-Karp scans over large corpora.
 - **Explainability.** The intersection of two inputs' gram sets is a legible "why did these match" artifact.
 
-Comparand exposes generation and consumption as separate concerns: an `NGramGenerator` produces a gram sequence or set; downstream consumers (similarity kernels, MinHash sketches, inverted indexes) pull from that representation.
+StringCheese exposes generation and consumption as separate concerns: an `NGramGenerator` produces a gram sequence or set; downstream consumers (similarity kernels, MinHash sketches, inverted indexes) pull from that representation.
 
 ## Gram generation
 
@@ -90,7 +90,7 @@ The choice of padding policy is inspectable in the generator's descriptor and in
 
 ## Rabin fingerprints and rolling hashes as reusable primitives
 
-Rabin fingerprints and rolling hashes appear in at least three places in Comparand:
+Rabin fingerprints and rolling hashes appear in at least three places in StringCheese:
 
 - **N-gram generation.** Hashing each gram to an integer for fast set operations, MinHash bucketing, and index-lookup keys.
 - **Substring search.** Rabin-Karp scans a text for a pattern by maintaining a rolling hash of the current window.
@@ -98,7 +98,7 @@ Rabin fingerprints and rolling hashes appear in at least three places in Compara
 
 The temptation is to re-implement a rolling hash in each subsystem. The subsystems require the same primitive with slightly different consumers, and every reimplementation is an opportunity for a subtle rounding or masking discrepancy that then makes cross-subsystem interoperability harder than it should be.
 
-The rule: never re-implement a rolling hash. The rolling-hash implementations live in `comparand-cdc` (their most performance-critical consumer) and are re-exported through `comparand-core`'s public API surface — or, more likely, through a thin `comparand-hash` re-export crate — for other subsystems to depend on.
+The rule: never re-implement a rolling hash. The rolling-hash implementations live in `stringcheese-cdc` (their most performance-critical consumer) and are re-exported through `stringcheese-core`'s public API surface — or, more likely, through a thin `stringcheese-hash` re-export crate — for other subsystems to depend on.
 
 The hash trait is small:
 
@@ -190,7 +190,7 @@ The choice is exposed as an algorithm variant, not a runtime configuration on a 
 ```rust
 // Proposed — not yet implemented.
 
-use comparand_core::AlgorithmDescriptor;
+use stringcheese_core::AlgorithmDescriptor;
 
 /// Represents a source of grams over an input.
 pub trait NGramGenerator {
@@ -263,4 +263,4 @@ Concrete workspace types will live alongside their generators (`CharacterGramWor
 - The result types the subsystem returns (`NormalizedSimilarity`, `Similarity<f64>`) and the classifications the subsystem's algorithms carry are defined in [type-system.md](./type-system.md).
 - The pipeline stages that transition to n-gram representations — including padding and multiplicity configuration — are described in [preprocessing-pipeline.md § Representation transitions](./preprocessing-pipeline.md#representation-transitions).
 - Phoneme grams depend on the encoder trait defined in [phonetic-subsystem.md](./phonetic-subsystem.md); phoneme-space n-gram similarity is a research direction that combines this subsystem with the phonetic subsystem's phoneme-level roadmap.
-- The rolling hashes shared with CDC and search live in `comparand-cdc`; the WebAssembly footprint of pulling in the full hash suite is discussed in [wasm-and-wit-interface.md § Feature-gate strategy](./wasm-and-wit-interface.md#feature-gate-strategy).
+- The rolling hashes shared with CDC and search live in `stringcheese-cdc`; the WebAssembly footprint of pulling in the full hash suite is discussed in [wasm-and-wit-interface.md § Feature-gate strategy](./wasm-and-wit-interface.md#feature-gate-strategy).

@@ -1,23 +1,23 @@
 # Comparison Type System
 
 Status: Design
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](../DESIGN.md), [preprocessing-pipeline.md](./preprocessing-pipeline.md), [phonetic-subsystem.md](./phonetic-subsystem.md), [ngram-and-fingerprinting.md](./ngram-and-fingerprinting.md), [wasm-and-wit-interface.md](./wasm-and-wit-interface.md)
 
-The reference specification for Comparand's result-type hierarchy, metric traits, algorithm-descriptor scheme, sequence contract, workspace contract, and normalization policy — the substrate every algorithm crate builds against.
+The reference specification for StringCheese's result-type hierarchy, metric traits, algorithm-descriptor scheme, sequence contract, workspace contract, and normalization policy — the substrate every algorithm crate builds against.
 
 ## Purpose
 
 The type system exists for two reasons.
 
-- **Preserve semantics.** Distance and similarity carry opposite directional meaning. A normalized value carries a normalization policy. A raw alignment score has no meaning without its scoring scheme. Erasing these distinctions to hand back a bare `f64` from every algorithm is what most libraries do; it is what Comparand refuses to do.
+- **Preserve semantics.** Distance and similarity carry opposite directional meaning. A normalized value carries a normalization policy. A raw alignment score has no meaning without its scoring scheme. Erasing these distinctions to hand back a bare `f64` from every algorithm is what most libraries do; it is what StringCheese refuses to do.
 - **Prevent silent misuse.** A value returned from a distance function cannot accidentally be passed to code expecting a similarity. A cutoff-exceeded result cannot accidentally be treated as if the true distance equalled the cutoff. A raw distance cannot accidentally be passed to an index structure that requires a metric. Each rule is enforced by a distinct nominal type or an inspectable descriptor, not by convention or documentation.
 
 The system is intentionally shallow — a handful of concrete result types, three traits, one descriptor scheme, one sequence trait, one workspace trait, one policy enum. Every algorithm crate speaks these types and nothing else at its boundary.
 
 ## The result-type hierarchy
 
-Every Comparand comparison returns one of six result types. All six live in [`comparand_core::result`](../../crates/comparand-core/src/result.rs); this section is authoritative documentation for their intended shape.
+Every StringCheese comparison returns one of six result types. All six live in [`stringcheese_core::result`](../../crates/stringcheese-core/src/result.rs); this section is authoritative documentation for their intended shape.
 
 ### `Distance<T>`
 
@@ -85,7 +85,7 @@ The two carry different meanings and support different downstream reasoning.
 
 ## Why there is no implicit distance↔similarity conversion
 
-Comparand does not provide a global `From<NormalizedDistance> for NormalizedSimilarity` (or the reverse) and refuses to encode a rule such as `similarity = 1 - distance` in the type system.
+StringCheese does not provide a global `From<NormalizedDistance> for NormalizedSimilarity` (or the reverse) and refuses to encode a rule such as `similarity = 1 - distance` in the type system.
 
 The identity `similarity = 1 - distance` holds only when:
 
@@ -202,7 +202,7 @@ pub enum MetricClass {
 
 ### How the two relate
 
-`class()` and `properties()` are both queryable on every algorithm trait. They should be internally consistent — an algorithm returning `MetricClass::Metric` must return `MetricProperties::METRIC` or `NORMALIZED_METRIC` — and Comparand's property-based test suite exercises exactly the axioms the properties claim. A downstream consumer picks whichever is convenient:
+`class()` and `properties()` are both queryable on every algorithm trait. They should be internally consistent — an algorithm returning `MetricClass::Metric` must return `MetricProperties::METRIC` or `NORMALIZED_METRIC` — and StringCheese's property-based test suite exercises exactly the axioms the properties claim. A downstream consumer picks whichever is convenient:
 
 - An index structure (BK-tree) queries `class` and refuses non-metrics.
 - A validation harness queries `properties` to know which axioms to test.
@@ -227,8 +227,8 @@ Every algorithm implementation carries a `const AlgorithmDescriptor` describing 
 
 ### `AlgorithmFamily`
 
-- `#[non_exhaustive]` enum listing the broad families Comparand covers — Levenshtein, Damerau–Levenshtein, Jaro, Soundex, Rabin-Karp, FastCDC, and so on. Two implementations in different families are not interchangeable.
-- The enum is exhaustive for the algorithms Comparand implements; being `#[non_exhaustive]` reserves the freedom to add new families without a major version bump.
+- `#[non_exhaustive]` enum listing the broad families StringCheese covers — Levenshtein, Damerau–Levenshtein, Jaro, Soundex, Rabin-Karp, FastCDC, and so on. Two implementations in different families are not interchangeable.
+- The enum is exhaustive for the algorithms StringCheese implements; being `#[non_exhaustive]` reserves the freedom to add new families without a major version bump.
 
 ### `VariantId`
 
@@ -238,7 +238,7 @@ pub struct VariantId(pub &'static str);
 
 - A lowercase kebab-case slug identifying a variant within a family: `"unit-cost-unicode-scalars"`, `"restricted"`, `"unrestricted"`, `"prefix-limit-4"`, `"english-1918"`.
 - **`&'static str`, not `String`.** The registry must work in `no_std` + no-`alloc` builds. Descriptors are compile-time constants; a heap-allocated `String` would forfeit both properties.
-- **`&'static str`, not an enum.** Variants are open-ended. A phonetic algorithm may accumulate a variant per language over years; forcing every new variant to expand a central enum in `comparand-core` would either couple every algorithm crate to core version bumps or forbid variants outside core entirely. A slug is decentralized.
+- **`&'static str`, not an enum.** Variants are open-ended. A phonetic algorithm may accumulate a variant per language over years; forcing every new variant to expand a central enum in `stringcheese-core` would either couple every algorithm crate to core version bumps or forbid variants outside core entirely. A slug is decentralized.
 - The slug describes the *distinguishing* choice, not the family. `Levenshtein::unit-cost-unicode-scalars`, not `Levenshtein::levenshtein-standard`.
 
 ### `DescriptorVersion`
@@ -261,11 +261,11 @@ An `#[non_exhaustive]` enum recording where the variant's semantics come from:
 - `ReferenceImplementation { name }` — as implemented by a widely used reference codebase.
 - `IndependentlyDerived` — derived from the algorithm's mathematical definition without imitating another implementation.
 
-The source informs discrepancy investigations: a disagreement with a `Paper` case is much stronger evidence of a Comparand defect than a disagreement with a `ReferenceImplementation` case, which may carry the bug being compared against.
+The source informs discrepancy investigations: a disagreement with a `Paper` case is much stronger evidence of a StringCheese defect than a disagreement with a `ReferenceImplementation` case, which may carry the bug being compared against.
 
 ### Why golden cases reference descriptors, not names
 
-A golden case that says "expected Damerau-Levenshtein distance = 3" is ambiguous — restricted-transposition and unrestricted-transposition variants disagree on many inputs. A golden case that says "expected `AlgorithmDescriptor { family: DamerauLevenshtein, variant: "restricted", version: 0.1.0, source: Paper { ... } }` distance = 3" pins the expectation exactly. See `GoldenCase<I, O>` in [`comparand-corpus`](../../crates/comparand-corpus/src/lib.rs); a case that references a different descriptor than the algorithm under test is a schema error, not a silent mismatch.
+A golden case that says "expected Damerau-Levenshtein distance = 3" is ambiguous — restricted-transposition and unrestricted-transposition variants disagree on many inputs. A golden case that says "expected `AlgorithmDescriptor { family: DamerauLevenshtein, variant: "restricted", version: 0.1.0, source: Paper { ... } }` distance = 3" pins the expectation exactly. See `GoldenCase<I, O>` in [`stringcheese-corpus`](../../crates/stringcheese-corpus/src/lib.rs); a case that references a different descriptor than the algorithm under test is a schema error, not a silent mismatch.
 
 ## `IndexableSequence`
 
@@ -286,7 +286,7 @@ The deliberately-narrow generic sequence contract used by algorithm kernels that
 
 ### No `IndexableSequence` impl for `&str`
 
-Comparand refuses to make the representation choice for strings silently.
+StringCheese refuses to make the representation choice for strings silently.
 
 - Under UTF-8 bytes, `len("naïve") == 6`.
 - Under Unicode scalar values, `len("naïve") == 5`.
@@ -363,10 +363,10 @@ pub enum NormalizationPolicy {
 
 ## API sketch: a fictional `PhoneticEditDistance`
 
-The following illustrates the full pattern an algorithm implementation follows. It is intentionally fictional — no such algorithm ships with Comparand — but every algorithm crate should be readable through this template.
+The following illustrates the full pattern an algorithm implementation follows. It is intentionally fictional — no such algorithm ships with StringCheese — but every algorithm crate should be readable through this template.
 
 ```rust
-use comparand_core::{
+use stringcheese_core::{
     AlgorithmDescriptor, AlgorithmFamily, DefinitionSource, DescriptorVersion,
     Distance, DistanceMetric, MetricClass, MetricProperties, VariantId,
 };
@@ -415,6 +415,6 @@ Every algorithm implementation follows the same shape:
 2. A `DistanceMetric`, `BoundedDistanceMetric`, or `SimilarityMetric` implementation over an explicit sequence type.
 3. `properties()` and `class()` returning values consistent with what the algorithm actually guarantees under the configuration on `Self`.
 4. Optional companion workspace type for allocation-free repeated calls.
-5. Golden cases in `comparand-corpus` keyed to `Self::DESCRIPTOR`.
+5. Golden cases in `stringcheese-corpus` keyed to `Self::DESCRIPTOR`.
 
 Nothing about this template is specific to distance metrics — the equivalent for a similarity algorithm reads the same, with `SimilarityMetric<S>` and `Similarity<Self::Output>` in place of the distance types.

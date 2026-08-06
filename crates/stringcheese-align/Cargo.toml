@@ -1,0 +1,30 @@
+[package]
+name = "stringcheese-align"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Global (Needleman-Wunsch) and local (Smith-Waterman) sequence alignment with linear and affine gap penalties for the StringCheese toolkit."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["alignment", "needleman-wunsch", "smith-waterman", "sequence"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "stringcheese-core/std"]
+# When enabled, the alignment kernels, the workspace, and the edit-script
+# reconstruction are exposed. The `scoring` module (ScoringScheme trait,
+# LinearGap, AffineGap) is available even without alloc.
+alloc = ["stringcheese-core/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+
+[dev-dependencies]
+stringcheese-corpus = { workspace = true, features = ["alloc"] }
+proptest = "1"
+
+[lints]
+workspace = true

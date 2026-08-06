@@ -1,10 +1,10 @@
 # Preprocessing Pipeline
 
 Status: Design
-Applies to: Comparand 0.1 and later
+Applies to: StringCheese 0.1 and later
 Related: [DESIGN.md](../DESIGN.md), [type-system.md](./type-system.md), [phonetic-subsystem.md](./phonetic-subsystem.md), [ngram-and-fingerprinting.md](./ngram-and-fingerprinting.md), [wasm-and-wit-interface.md](./wasm-and-wit-interface.md)
 
-The design of Comparand's composable normalization, tokenization, and encoding pipeline — the layer that turns raw inputs into whatever representation an algorithm actually compares.
+The design of StringCheese's composable normalization, tokenization, and encoding pipeline — the layer that turns raw inputs into whatever representation an algorithm actually compares.
 
 ## Motivation
 
@@ -17,7 +17,7 @@ Comparison is almost never performed on raw strings.
 
 Scoring quality is dominated by preprocessing choices — often by an order of magnitude more than by algorithm choice. Most libraries leave preprocessing scattered across callsites, hidden in helper functions, or absent entirely; results are then not reproducible across users of the same library.
 
-Comparand treats preprocessing as a first-class, inspectable, reusable subsystem.
+StringCheese treats preprocessing as a first-class, inspectable, reusable subsystem.
 
 ## The pipeline model
 
@@ -80,7 +80,7 @@ Preprocessing stages do not commute in the general case.
 
 The pipeline is *inspectable* precisely so callers know what was actually computed. `pipeline.describe()` returns an ordered list of stage descriptors; the [explainability output](#explainability-hooks) includes it verbatim.
 
-The pipeline does not silently reorder stages for performance. If reordering is safe (two commutative stages), the caller states it by writing them in the more efficient order. Comparand does not second-guess.
+The pipeline does not silently reorder stages for performance. If reordering is safe (two commutative stages), the caller states it by writing them in the more efficient order. StringCheese does not second-guess.
 
 ## Representation transitions
 

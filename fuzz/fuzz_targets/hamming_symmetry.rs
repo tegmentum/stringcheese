@@ -16,7 +16,7 @@
 
 #![no_main]
 
-use comparand_hamming::{Hamming, LengthMismatch, hamming_distance};
+use stringcheese_hamming::{Hamming, LengthMismatch, hamming_distance};
 use libfuzzer_sys::fuzz_target;
 
 #[path = "common.rs"]
