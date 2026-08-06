@@ -83,6 +83,33 @@ impl Levenshtein {
         distance_rolling_rows_with_workspace(left, right, ws)
     }
 
+    /// Byte-slice specialization that opts into the SIMD Myers backend
+    /// when the `simd` feature is enabled and the input pair meets the
+    /// backend's viability criterion
+    /// ([`crate::levenshtein::simd::is_byte_amenable_for_myers`]).
+    ///
+    /// The workspace is only consulted for the scalar fallback path —
+    /// Myers keeps its Peq table on the stack — so callers who always
+    /// hit the SIMD path pay no allocation. Unicode-scalar callers
+    /// (`&[char]`) go through the generic `distance_with_workspace` and
+    /// stay on the rolling-rows kernel; the SIMD backend is byte-oriented
+    /// because the 256-entry Peq lookup is what makes it fast.
+    #[inline]
+    pub fn distance_bytes_with_workspace(
+        self,
+        left: &[u8],
+        right: &[u8],
+        ws: &mut LevenshteinWorkspace,
+    ) -> Distance<u32> {
+        #[cfg(feature = "simd")]
+        {
+            if crate::levenshtein::simd::is_byte_amenable_for_myers(left, right) {
+                return Distance::new(crate::levenshtein::simd::distance(left, right));
+            }
+        }
+        distance_rolling_rows_with_workspace(left, right, ws)
+    }
+
     /// Computes the distance between `left` and `right` with an
     /// early-termination cutoff, reusing `ws` as scratch across the call.
     #[inline]
@@ -215,5 +242,28 @@ mod tests {
         let with_ws = alg.distance_with_workspace(a, b, &mut ws);
         let without_ws = alg.distance(a, b);
         assert_eq!(with_ws, without_ws);
+    }
+
+    #[test]
+    fn distance_bytes_with_workspace_matches_oracle() {
+        // Covers both the short-input scalar fallthrough and the
+        // SIMD-eligible long-input path (32-byte threshold).
+        let alg = Levenshtein;
+        let mut ws = LevenshteinWorkspace::new();
+        let short_a: &[u8] = b"kitten";
+        let short_b: &[u8] = b"sitting";
+        assert_eq!(
+            alg.distance_bytes_with_workspace(short_a, short_b, &mut ws)
+                .into_inner(),
+            distance_full_matrix(short_a, short_b),
+        );
+
+        let long_a: &[u8] = b"the quick brown fox jumps over the lazy dog";
+        let long_b: &[u8] = b"the quick brown fox leaps over the lazy dog";
+        assert_eq!(
+            alg.distance_bytes_with_workspace(long_a, long_b, &mut ws)
+                .into_inner(),
+            distance_full_matrix(long_a, long_b),
+        );
     }
 }

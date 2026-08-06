@@ -26,6 +26,7 @@ use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
 use stringcheese_compare::levenshtein::{
     Levenshtein, LevenshteinWorkspace, distance_banded_with_workspace, distance_full_matrix,
     distance_rolling_rows_with_workspace,
+    simd::{self as levenshtein_simd, myers_scalar},
 };
 use stringcheese_core::DistanceMetric;
 
@@ -170,6 +171,45 @@ fn bench_handle_no_workspace(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_myers_scalar(c: &mut Criterion) {
+    // Scalar Myers 1999 bit-parallel kernel. For patterns of length
+    // <= 64 this is the algorithmic-win path; for longer patterns it
+    // falls through to an inline rolling-rows DP whose numbers should
+    // look identical to `bench_rolling_rows`.
+    let mut group = c.benchmark_group("levenshtein/myers_scalar");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher.iter(|| {
+                    myers_scalar::distance(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_myers_dispatched(c: &mut Criterion) {
+    // Runtime-dispatched entry point. The overhead of the CPU-feature
+    // check is what this group measures vs. `myers_scalar` — it should
+    // be negligible for any input above the MYERS_MIN_LEN threshold.
+    let mut group = c.benchmark_group("levenshtein/myers_dispatched");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher.iter(|| {
+                    levenshtein_simd::distance(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_full_matrix,
@@ -177,5 +217,7 @@ criterion_group!(
     bench_banded_permissive,
     bench_banded_tight,
     bench_handle_no_workspace,
+    bench_myers_scalar,
+    bench_myers_dispatched,
 );
 criterion_main!(benches);

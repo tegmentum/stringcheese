@@ -55,7 +55,15 @@
 //!   kernel and every representation type here needs this.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// The crate is `deny(unsafe_code)` rather than `forbid(unsafe_code)` so
+// that the optional SIMD backend under `levenshtein::simd` (only compiled
+// with `--features simd`) can carry a documented module-scoped
+// `#[allow(unsafe_code)]`. `deny` is enforced everywhere else — every
+// module outside `levenshtein::simd` is expected to be safe Rust; the
+// allow attribute must be added deliberately and comes with a `reason`
+// explaining the exception. See `levenshtein/simd/mod.rs` for the full
+// unsafe policy.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 #[allow(unused_extern_crates)]

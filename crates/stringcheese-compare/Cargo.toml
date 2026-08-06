@@ -25,6 +25,14 @@ std   = ["alloc", "stringcheese-core/std"]
 # without it the crate compiles as an empty no-alloc surface for embedded
 # builds that only need to link against the substrate crates.
 alloc = ["stringcheese-core/alloc"]
+# When enabled, the byte-slice-oriented Levenshtein entry point transparently
+# swaps in a SIMD-accelerated backend (Myers 1999 bit-parallel algorithm,
+# dispatched at run time to AVX2 / SSE2 on x86_64 or NEON on aarch64). SIMD
+# is opt-in because it needs runtime CPU-feature detection — that pulls in
+# `std::arch::is_*_feature_detected!`, which lives in `std`, not `core` or
+# `alloc`. Default builds keep the scalar rolling-rows kernel intact so the
+# `no_std` and `alloc`-only configurations are unaffected.
+simd = ["std"]
 
 [dependencies]
 stringcheese-core = { workspace = true }

@@ -22,7 +22,11 @@ alloc-tracking = ["dep:dhat"]
 
 [dependencies]
 stringcheese-core = { workspace = true, features = ["std"] }
-stringcheese-compare = { workspace = true, features = ["std"] }
+# `simd` enables the Myers 1999 bit-parallel Levenshtein backend so the
+# benchmark suite can measure it against the scalar rolling-rows kernel.
+# `stringcheese-compare` still ships with SIMD off by default; the bench
+# crate is publish = false, so opting in here does not affect downstream.
+stringcheese-compare = { workspace = true, features = ["std", "simd"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }

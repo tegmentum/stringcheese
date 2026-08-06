@@ -78,6 +78,12 @@ pub mod banded;
 pub mod full_matrix;
 #[cfg(feature = "alloc")]
 pub mod rolling_rows;
+/// Optional SIMD-accelerated byte-slice Levenshtein backend (Myers 1999
+/// bit-parallel algorithm). Compiled only under `--features simd`; see
+/// the [`simd`] module docs for the dispatch architecture and the
+/// documented unsafe-code exception the module carries.
+#[cfg(feature = "simd")]
+pub mod simd;
 #[cfg(feature = "alloc")]
 pub mod workspace;
 
@@ -87,6 +93,10 @@ mod golden;
 #[cfg(all(test, feature = "alloc"))]
 #[cfg(not(target_family = "wasm"))]
 mod property_tests;
+
+#[cfg(all(test, feature = "simd"))]
+#[cfg(not(target_family = "wasm"))]
+mod simd_property_tests;
 
 #[cfg(feature = "alloc")]
 pub use algorithm::Levenshtein;
