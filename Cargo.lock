@@ -46,6 +46,7 @@ dependencies = [
  "comparand-levenshtein",
  "comparand-ngram",
  "comparand-phonetic",
+ "comparand-set-similarity",
  "comparand-unicode",
 ]
 
@@ -125,6 +126,16 @@ dependencies = [
 [[package]]
 name = "comparand-search"
 version = "0.1.0"
+
+[[package]]
+name = "comparand-set-similarity"
+version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "comparand-ngram",
+ "proptest",
+]
 
 [[package]]
 name = "comparand-unicode"

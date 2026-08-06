@@ -14,6 +14,7 @@ members = [
     "crates/comparand-ngram",
     "crates/comparand-unicode",
     "crates/comparand-phonetic",
+    "crates/comparand-set-similarity",
 ]
 exclude = [
     "crates/comparand-bench",
@@ -53,6 +54,7 @@ comparand-hamming = { version = "0.1.0", path = "crates/comparand-hamming", defa
 comparand-jaro = { version = "0.1.0", path = "crates/comparand-jaro", default-features = false }
 comparand-damerau = { version = "0.1.0", path = "crates/comparand-damerau", default-features = false }
 comparand-ngram = { version = "0.1.0", path = "crates/comparand-ngram", default-features = false }
+comparand-set-similarity = { version = "0.1.0", path = "crates/comparand-set-similarity", default-features = false }
 
 [profile.release]
 lto = "thin"

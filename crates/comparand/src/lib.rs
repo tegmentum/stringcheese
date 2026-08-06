@@ -58,6 +58,11 @@ pub use comparand_unicode as unicode;
 /// unchanged from the `comparand-phonetic` crate.
 pub use comparand_phonetic as phonetic;
 
+/// The set-similarity subsystem: Dice, Jaccard, Overlap, and Cosine over
+/// the n-gram representations from `comparand_ngram`, re-exported
+/// unchanged from the `comparand-set-similarity` crate.
+pub use comparand_set_similarity as set_similarity;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.

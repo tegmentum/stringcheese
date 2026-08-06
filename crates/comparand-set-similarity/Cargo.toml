@@ -1,0 +1,37 @@
+[package]
+name = "comparand-set-similarity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Set-similarity metrics (Dice, Jaccard, Overlap, Cosine) for the Comparand sequence-comparison toolkit."
+categories = ["algorithms", "text-processing"]
+keywords = ["similarity", "dice", "jaccard", "cosine", "ngram"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+# The Cosine similarity needs `f64::sqrt`, which is not part of `core`, so
+# the `cosine` module is `std`-gated; the other three similarities live
+# behind `alloc`.
+std = ["alloc", "comparand-core/std", "comparand-ngram/std"]
+# When enabled, the crate exposes its set/multiset public surface. Without
+# `alloc` the crate compiles to an empty module — the ngram types this
+# crate consumes are themselves `alloc`-only, so there is no possible
+# public surface without heap allocation.
+alloc = ["comparand-core/alloc", "comparand-ngram/alloc"]
+
+[dependencies]
+comparand-core = { workspace = true }
+comparand-ngram = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+# Golden-case schema; test-only. `alloc` is enabled so property tests can
+# use the exhaustive generators and the golden-case schema types.
+comparand-corpus = { workspace = true, features = ["alloc"] }
+proptest = "1"
+
+[lints]
+workspace = true
