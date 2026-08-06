@@ -1,5 +1,9 @@
 //! The Sørensen–Dice coefficient over set and multiset gram representations.
 //!
+//! Introduced by Dice (1945) and independently by Sørensen (1948) in the
+//! context of ecological association between species; see the crate-level
+//! `References` section for full citations.
+//!
 //! # Formula
 //!
 //! On sets `A`, `B` the Dice coefficient is
@@ -41,6 +45,10 @@ use comparand_ngram::{GramMultiSet, GramSet};
 use crate::shared::{multiset_min_intersection, set_intersection_size};
 
 /// The Dice coefficient over deduplicated [`GramSet`]s.
+///
+/// Introduced by Dice (1945); the crate-level `References` section carries
+/// the full citation, along with the parallel Sørensen (1948) reference for
+/// the Sørensen-Dice pairing.
 ///
 /// A zero-size unit struct implementing [`SimilarityMetric<GramSet<G>>`]
 /// for any `G: Ord`. Construct it as `DiceOverSet` and share across

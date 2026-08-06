@@ -60,6 +60,11 @@ use crate::workspace::DamerauWorkspace;
 /// [`Osa::properties`] and the crate's `property_tests` module (test-only)
 /// for a hard-coded violation case that documents this as known behavior.
 ///
+/// OSA is folkloric — the recurrence is a one-branch extension of the
+/// Wagner-Fischer (1974) Levenshtein DP, and no single paper is universally
+/// cited as its origin. See the crate-level `References` section for the
+/// Wagner-Fischer citation.
+///
 /// The type is a zero-sized unit struct; construct it as `Osa` and reuse
 /// the value across threads.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -184,6 +189,11 @@ impl<T: Eq> BoundedDistanceMetric<[T]> for Osa {
 /// Substitutions, insertions, deletions, and adjacent transpositions each
 /// cost `1`; unlike [`Osa`], there is no per-substring edit restriction, so
 /// full Damerau *is* a true metric under unit costs.
+///
+/// Introduced by Damerau (1964) as an information-retrieval keying scheme
+/// for spelling correction; the polynomial DP formulation used here is
+/// Lowrance and Wagner (1975). Full citations are in the crate-level
+/// `References` section.
 ///
 /// The type is a zero-sized unit struct; construct it as `Damerau` and
 /// reuse the value across threads.

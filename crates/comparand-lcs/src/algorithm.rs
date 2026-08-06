@@ -38,6 +38,11 @@ use crate::workspace::LcsWorkspace;
 /// bound other than `min(|a|, |b|)`; if a normalized similarity is desired,
 /// the caller can divide by `max(|a|, |b|)` at the call site.
 ///
+/// The DP recurrence backing every kernel here is the "no substitution"
+/// specialization of the Wagner-Fischer (1974) string-to-string correction
+/// DP; Hirschberg (1975) is the standard reference for the linear-space
+/// variant. See the crate-level `References` section for full citations.
+///
 /// LCS length is not itself a metric (it does not satisfy identity of
 /// indiscernibles: `lcs(x, x) = |x|`, not `0`). The related
 /// [`LcsDistance`] type provides the corresponding true metric.
@@ -116,8 +121,8 @@ impl Lcs {
 ///
 /// LCS distance is a **true metric**: symmetric, non-negative, satisfies
 /// identity of indiscernibles under `T: Eq`, and satisfies the triangle
-/// inequality. See L. Bergroth, H. Hakonen, T. Raita, "A survey of longest
-/// common subsequence algorithms" (2000) for the standard treatment.
+/// inequality. See Bergroth, Hakonen, and Raita (2000) for the standard
+/// treatment; the full citation is in the crate-level `References` section.
 ///
 /// The type is a zero-sized unit struct; construct it as `LcsDistance`
 /// and reuse the value across threads.

@@ -13,10 +13,12 @@
 //! two rows: for each `(i, j)`, the transposition branch may reach a cell
 //! at `(k-1, l-1)` where `k` is the row of the most recent occurrence of
 //! `b[j-1]` in `a`, and `l` is the column of the most recent match of
-//! `a[i-1]` in `b` within the current row. The Lowrance-Wagner 1975
+//! `a[i-1]` in `b` within the current row. The Lowrance and Wagner (1975)
 //! formulation adds this in as one extra DP branch and preserves the
 //! `O(m · n)` time bound *provided* the "last position of symbol" lookup
 //! is `O(1)` — for which a hash table is the standard tool.
+//!
+//! Both source papers are listed in the crate-level `References` section.
 //!
 //! # Kernels
 //!

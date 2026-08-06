@@ -1,5 +1,9 @@
 //! The Jaccard coefficient over set and multiset gram representations.
 //!
+//! Introduced by Paul Jaccard (1912) in a study of alpine flora
+//! distribution; the full citation lives in the crate-level `References`
+//! section.
+//!
 //! # Formula
 //!
 //! On sets `A`, `B` the Jaccard coefficient is
@@ -56,6 +60,9 @@ use comparand_ngram::{GramMultiSet, GramSet};
 use crate::shared::{multiset_min_intersection, set_intersection_size};
 
 /// The Jaccard coefficient over deduplicated [`GramSet`]s.
+///
+/// Introduced by Paul Jaccard (1912); see the crate-level `References`
+/// section for the full citation.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JaccardOverSet;
 

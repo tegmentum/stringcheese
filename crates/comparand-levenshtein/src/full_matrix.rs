@@ -6,6 +6,11 @@
 //! written for clarity: variable names match the standard notation and the
 //! loop body is a one-to-one translation of the recurrence.
 //!
+//! The recurrence is the one Wagner and Fischer (1974) published as the
+//! solution to the string-to-string correction problem — the canonical DP
+//! formulation of Levenshtein's (1966) metric. Both citations appear in the
+//! crate-level `References` section.
+//!
 //! # Complexity
 //!
 //! `O(m · n)` time. `O(m · n)` space. Both dimensions are proportional to

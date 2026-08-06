@@ -9,7 +9,10 @@
 //!   `|a| + |b| - 2 · lcs(a, b)`, computed from the same matrix.
 //!
 //! Both functions compute the full `(m+1) × (n+1)` dynamic-programming
-//! matrix, exactly as it appears in every textbook. The recurrence is:
+//! matrix, exactly as it appears in every textbook. The recurrence is the
+//! "no substitution" specialization of Wagner and Fischer's (1974)
+//! string-to-string correction DP; see the crate-level `References` section
+//! for the full citation. The recurrence is:
 //!
 //! ```text
 //! lcs[i][j] = 0                              if i == 0 or j == 0

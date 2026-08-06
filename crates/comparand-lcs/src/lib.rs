@@ -58,6 +58,22 @@
 //! no-alloc surface, which is what makes the crate safe to add as a
 //! dependency in embedded configurations that only need to link against
 //! the substrate crates.
+//!
+//! # References
+//!
+//! - Wagner, R. A., & Fischer, M. J. (1974). "The string-to-string correction
+//!   problem." *Journal of the ACM*, 21(1), 168-173.
+//!   <https://doi.org/10.1145/321796.321811> (the LCS DP is the "no
+//!   substitution" specialization of the Wagner-Fischer recurrence.)
+//! - Hirschberg, D. S. (1975). "A linear space algorithm for computing
+//!   maximal common subsequences." *Communications of the ACM*, 18(6),
+//!   341-343. <https://doi.org/10.1145/360825.360861>
+//! - Bergroth, L., Hakonen, H., & Raita, T. (2000). "A survey of longest
+//!   common subsequence algorithms." *Proceedings of the Seventh
+//!   International Symposium on String Processing and Information Retrieval
+//!   (SPIRE)*, 39-48. <https://doi.org/10.1109/SPIRE.2000.878178>
+//!   (the reference for the metric-distance formulation
+//!   `|a| + |b| - 2 · lcs(a, b)` this crate exposes as [`LcsDistance`].)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

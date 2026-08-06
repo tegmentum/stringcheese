@@ -36,6 +36,10 @@ use crate::kernel::{hamming_distance, hamming_distance_within};
 /// callers who cannot statically prove equal-length inputs should use the
 /// fallible [`try_distance`] and [`try_distance_within`] methods instead.
 ///
+/// Introduced by Hamming (1950) as the theoretical footing for binary
+/// error-detecting and error-correcting codes; see the crate-level
+/// `References` section for the full citation.
+///
 /// The type is a zero-sized unit struct; construct it as `Hamming` and reuse
 /// the value across threads.
 ///

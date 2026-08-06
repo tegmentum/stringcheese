@@ -106,6 +106,19 @@
 //! feature; a build with neither `std` nor `alloc` compiles as an empty
 //! no-alloc surface, matching the pattern of every other algorithm crate
 //! in the workspace.
+//!
+//! # References
+//!
+//! - Damerau, F. J. (1964). "A technique for computer detection and
+//!   correction of spelling errors." *Communications of the ACM*, 7(3),
+//!   171-176. <https://doi.org/10.1145/363958.363994>
+//! - Lowrance, R., & Wagner, R. A. (1975). "An extension of the
+//!   string-to-string correction problem." *Journal of the ACM*, 22(2),
+//!   177-183. <https://doi.org/10.1145/321879.321880>
+//! - Wagner, R. A., & Fischer, M. J. (1974). "The string-to-string correction
+//!   problem." *Journal of the ACM*, 21(1), 168-173.
+//!   <https://doi.org/10.1145/321796.321811> (the OSA recurrence is a
+//!   one-branch extension of the Wagner-Fischer Levenshtein DP.)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

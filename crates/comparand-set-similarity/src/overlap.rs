@@ -1,5 +1,10 @@
 //! The Szymkiewicz–Simpson overlap coefficient.
 //!
+//! Named for Szymkiewicz's 1934 statistical contribution to floristic
+//! geography and Simpson's 1943 reformulation in the context of mammalian
+//! biogeography; both citations are in the crate-level `References`
+//! section.
+//!
 //! # Formula
 //!
 //! On sets `A`, `B`:
@@ -48,6 +53,9 @@ use comparand_ngram::GramSet;
 use crate::shared::set_intersection_size;
 
 /// The Szymkiewicz–Simpson overlap coefficient over [`GramSet`]s.
+///
+/// Named for Szymkiewicz (1934) and Simpson (1943); see the crate-level
+/// `References` section for the full citations.
 ///
 /// A zero-size unit struct implementing [`SimilarityMetric<GramSet<G>>`]
 /// for any `G: Ord`. The coefficient is symmetric and bounded to

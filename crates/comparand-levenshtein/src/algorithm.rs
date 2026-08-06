@@ -31,6 +31,10 @@ use crate::workspace::LevenshteinWorkspace;
 /// `2` under this metric — Damerau–Levenshtein is a distinct algorithm and
 /// lives in its own crate).
 ///
+/// Introduced by Levenshtein (1966); the dynamic-programming formulation
+/// backing every kernel here is Wagner and Fischer (1974). See the
+/// crate-level `References` section for full citations.
+///
 /// The type is a zero-sized unit struct; construct it as `Levenshtein` and
 /// reuse the value across threads.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]

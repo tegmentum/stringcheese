@@ -13,10 +13,10 @@
 //!
 //! For two sequences of *equal length*, the Hamming distance is the number of
 //! positions at which the corresponding symbols differ. As originally defined
-//! in [Hamming's 1950 paper](https://ieeexplore.ieee.org/document/6772729) for
-//! binary error-detecting codes, the distance is not defined for sequences of
-//! different length. Comparand takes that restriction seriously — see the
-//! unequal-length policy below.
+//! in Hamming (1950) for binary error-detecting codes, the distance is not
+//! defined for sequences of different length. Comparand takes that
+//! restriction seriously — see the unequal-length policy below. The full
+//! citation is listed in the crate-level `References` section.
 //!
 //! # Semantics
 //!
@@ -73,6 +73,12 @@
 //! implements [`std::error::Error`].
 //!
 //! [`LengthMismatch`]: error::LengthMismatch
+//!
+//! # References
+//!
+//! - Hamming, R. W. (1950). "Error detecting and error correcting codes."
+//!   *Bell System Technical Journal*, 29(2), 147-160.
+//!   <https://doi.org/10.1002/j.1538-7305.1950.tb00463.x>
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

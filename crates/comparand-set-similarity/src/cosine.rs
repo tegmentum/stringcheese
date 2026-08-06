@@ -1,5 +1,10 @@
 //! Cosine similarity over the [`GramVector`] weighted-vector representation.
 //!
+//! The definition of cosine similarity itself long predates its use in
+//! information retrieval, but the term-frequency-vector formulation this
+//! crate consumes was codified by Salton and `McGill` (1983); see the
+//! crate-level `References` section for the full citation.
+//!
 //! # Formula
 //!
 //! Given two vectors `A`, `B` over the same gram support:
@@ -54,6 +59,10 @@ use comparand_core::{
 use comparand_ngram::GramVector;
 
 /// Cosine similarity over [`GramVector`]s.
+///
+/// The information-retrieval-flavored formulation over term-frequency
+/// vectors is Salton and `McGill` (1983); see the crate-level `References`
+/// section for the full citation.
 ///
 /// A zero-size unit struct implementing [`SimilarityMetric<GramVector<G>>`]
 /// for any `G: Ord + Clone`. Output is a [`Similarity<f64>`] in

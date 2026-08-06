@@ -104,6 +104,28 @@
 //! [`NormalizedSimilarity`]: comparand_core::NormalizedSimilarity
 //! [`SimilarityMetric`]: comparand_core::SimilarityMetric
 //! [`comparand_jaro::Jaro`]: https://docs.rs/comparand-jaro
+//!
+//! # References
+//!
+//! - Jaccard, P. (1912). "The distribution of the flora in the alpine zone."
+//!   *New Phytologist*, 11(2), 37-50.
+//!   <https://doi.org/10.1111/j.1469-8137.1912.tb05611.x>
+//! - Dice, L. R. (1945). "Measures of the amount of ecologic association
+//!   between species." *Ecology*, 26(3), 297-302.
+//!   <https://doi.org/10.2307/1932409>
+//! - Sørensen, T. A. (1948). "A method of establishing groups of equal
+//!   amplitude in plant sociology based on similarity of species content,
+//!   and its application to analyses of the vegetation on Danish commons."
+//!   *Kongelige Danske Videnskabernes Selskab, Biologiske Skrifter*, 5(4),
+//!   1-34. (Cited alongside Dice for the Sørensen-Dice coefficient.)
+//! - Szymkiewicz, D. (1934). "Une contribution statistique à la géographie
+//!   floristique." *Acta Societatis Botanicorum Poloniae*, 11(3), 249-265.
+//!   (Cited alongside Simpson for the overlap coefficient.)
+//! - Simpson, G. G. (1943). "Mammals and the nature of continents."
+//!   *American Journal of Science*, 241, 1-31.
+//! - Salton, G., & `McGill`, M. J. (1983). *Introduction to Modern Information
+//!   Retrieval*. McGraw-Hill. ISBN: 0-07-054484-0. (The canonical IR
+//!   reference for cosine similarity over term-frequency vectors.)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

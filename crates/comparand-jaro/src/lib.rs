@@ -52,6 +52,17 @@
 //! [`SimilarityMetric`]: comparand_core::SimilarityMetric
 //! [`NormalizedSimilarity`]: comparand_core::NormalizedSimilarity
 //! [`FloatExpectation`]: https://docs.rs/comparand-corpus
+//!
+//! # References
+//!
+//! - Jaro, M. A. (1989). "Advances in record-linkage methodology as applied
+//!   to matching the 1985 census of Tampa, Florida." *Journal of the American
+//!   Statistical Association*, 84(406), 414-420.
+//!   <https://doi.org/10.1080/01621459.1989.10478785>
+//! - Winkler, W. E. (1990). "String comparator metrics and enhanced decision
+//!   rules in the Fellegi-Sunter model of record linkage." *Proceedings of
+//!   the Section on Survey Research Methods, American Statistical
+//!   Association*, 354-359.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

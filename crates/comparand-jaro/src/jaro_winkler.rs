@@ -3,7 +3,8 @@
 //! Winkler (1990) proposed a *boost* on top of the base Jaro similarity that
 //! favors pairs sharing a common prefix — an empirical observation from
 //! record-linkage work that surname disagreements are much more likely at
-//! the end of a string than the beginning. The boost is
+//! the end of a string than the beginning. See the crate-level `References`
+//! section for the full citation. The boost is
 //!
 //! ```text
 //!     jw = jaro + p * s * (1 - jaro)
@@ -42,6 +43,10 @@ use comparand_core::{
 use crate::jaro::jaro_similarity;
 
 /// The Jaro-Winkler similarity family.
+///
+/// The prefix-boost variant introduced by Winkler (1990) on top of Jaro's
+/// (1989) base similarity; see the crate-level `References` section for
+/// full citations.
 ///
 /// Configured by three parameters:
 ///

@@ -6,6 +6,13 @@
 //! substrate under real load so that any rough edge in the substrate is
 //! surfaced before the rest of the algorithm crates depend on it.
 //!
+//! Named for V. I. Levenshtein, whose 1966 paper introduced the metric on
+//! binary strings under insertion, deletion, and reversal (substitution
+//! being a composition of a deletion and an insertion). The modern
+//! dynamic-programming formulation universally used to compute the distance
+//! is due to Wagner and Fischer (1974), and the banded cutoff kernel below
+//! follows Ukkonen (1985).
+//!
 //! # Kernels
 //!
 //! Three implementations of the same recurrence coexist here on purpose —
@@ -13,15 +20,15 @@
 //! correctness than any single one being fast:
 //!
 //! * [`full_matrix`] — the deliberately-simple `O(m · n)`-time,
-//!   `O(m · n)`-space textbook implementation. This is the oracle every other
-//!   kernel is checked against.
+//!   `O(m · n)`-space textbook implementation (Wagner & Fischer 1974). This
+//!   is the oracle every other kernel is checked against.
 //! * [`rolling_rows`] — the production kernel: `O(m · n)` time with
 //!   `O(min(m, n))` scratch memory backed by a caller-owned
 //!   [`LevenshteinWorkspace`].
 //! * [`banded`] — an Ukkonen-style banded kernel that touches
-//!   `O(k · min(m, n))` cells when the caller supplies a distance cutoff `k`.
-//!   Returns [`BoundedDistance`] so an early-terminated result cannot be
-//!   silently mistaken for an exact one.
+//!   `O(k · min(m, n))` cells when the caller supplies a distance cutoff `k`
+//!   (Ukkonen 1985). Returns [`BoundedDistance`] so an early-terminated
+//!   result cannot be silently mistaken for an exact one.
 //!
 //! # Semantics
 //!
@@ -50,6 +57,18 @@
 //! crates.
 //!
 //! [`BoundedDistance`]: comparand_core::BoundedDistance
+//!
+//! # References
+//!
+//! - Levenshtein, V. I. (1966). "Binary codes capable of correcting deletions,
+//!   insertions, and reversals." *Soviet Physics Doklady*, 10(8), 707-710.
+//!   (Originally published 1965 in Russian in *Doklady Akademii Nauk SSSR*.)
+//! - Wagner, R. A., & Fischer, M. J. (1974). "The string-to-string correction
+//!   problem." *Journal of the ACM*, 21(1), 168-173.
+//!   <https://doi.org/10.1145/321796.321811>
+//! - Ukkonen, E. (1985). "Algorithms for approximate string matching."
+//!   *Information and Control*, 64(1-3), 100-118.
+//!   <https://doi.org/10.1016/S0019-9958(85)80046-2>
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

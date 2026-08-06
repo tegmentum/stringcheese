@@ -7,6 +7,10 @@
 //! first floating-point similarity in Comparand — it also serves as the
 //! reference for the crate's [`FloatExpectation`]-driven golden-case pattern.
 //!
+//! The primary reference is Matthew A. Jaro's 1989 record-linkage paper on
+//! matching the 1985 Tampa census; the full citation is listed in the
+//! crate-level `References` section.
+//!
 //! # Formula
 //!
 //! Given sequences `a` (length `|a|`) and `b` (length `|b|`), the matching
@@ -57,6 +61,9 @@ use comparand_core::{
 /// A zero-size unit struct that implements [`SimilarityMetric`] for any
 /// `&[T]` with `T: Eq`. Construct it as `Jaro` and share the value across
 /// threads; the algorithm carries no per-call state.
+///
+/// Introduced by Matthew A. Jaro (1989) in the context of record linkage;
+/// see the crate-level `References` section for the full citation.
 ///
 /// Output is a [`Similarity<f64>`] in the closed interval `[0.0, 1.0]`. If a
 /// range-checked wrapper is needed downstream, prefer

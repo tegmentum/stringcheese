@@ -1,5 +1,10 @@
 //! Ukkonen-style banded Levenshtein kernel with early termination.
 //!
+//! The banding strategy is Ukkonen's (1985) — the observation that any
+//! optimal edit path stays within a band of width `2k + 1` around the main
+//! diagonal when the total edit cost is bounded by `k`. See the crate-level
+//! `References` section for the full citation.
+//!
 //! Given a cutoff `k`, the kernel is allowed to abandon a comparison as soon
 //! as it can prove the true distance exceeds `k`. Two facts make the pruning
 //! sound:
