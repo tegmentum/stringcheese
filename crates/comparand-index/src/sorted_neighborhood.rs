@@ -48,8 +48,9 @@
 //! # References
 //!
 //! * Hernández, M. A., & Stolfo, S. J. (1995). "The merge/purge problem
-//!   for large databases." *ACM SIGMOD Record*, 24(2), 127-138.
-//!   <https://doi.org/10.1145/568271.223807> — the original
+//!   for large databases." *Proceedings of the 1995 ACM SIGMOD
+//!   International Conference on Management of Data*, 127-138.
+//!   <https://doi.org/10.1145/223784.223807> — the original
 //!   sorted-neighborhood method for record linkage.
 //! * Christen, P. (2012). *Data Matching: Concepts and Techniques for
 //!   Record Linkage, Entity Resolution, and Duplicate Detection*.

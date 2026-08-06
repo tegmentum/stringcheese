@@ -175,6 +175,18 @@ report.)
 Cited by: `comparand-jaro` (family JaroWinkler; prefix boost and
 adjustable prefix scale).
 
+### Winkler (1999)
+
+Winkler, W. E. (1999). "The state of record linkage and current research
+problems." *Statistical Research Division, U.S. Bureau of the Census*,
+research report RR99/04.
+URL: https://www.census.gov/library/working-papers/1999/adrm/rr99-04.html
+
+Cited by: `comparand-jaro` (family JaroWinkler; the threshold-gated
+variant `philips-1999-full` derives from Winkler's threshold refinement
+introduced in this report). Also the source cited by
+`JaroWinkler::WITH_THRESHOLD_DESCRIPTOR`.
+
 ---
 
 ## Set similarity and n-grams
@@ -353,6 +365,15 @@ Cited by: `comparand-search` (two-way string matching; the algorithm
 underlying Rust's `str::find` and many modern libc `memmem`
 implementations).
 
+### Crochemore, Hancart, & Lecroq (2007)
+
+Crochemore, M., Hancart, C., & Lecroq, T. (2007). *Algorithms on
+Strings*. Cambridge University Press. ISBN 978-0-521-84899-2.
+
+Cited by: `comparand-search` (comprehensive treatment of two-way string
+matching and its complexity analysis; used to cross-check the critical-
+factorization derivation).
+
 ### Galil (1979)
 
 Galil, Z. (1979). "On improving the worst case running time of the
@@ -440,6 +461,16 @@ sub-minimum cut-point skipping).
 ---
 
 ## Index structures
+
+### Baeza-Yates & Ribeiro-Neto (2011)
+
+Baeza-Yates, R., & Ribeiro-Neto, B. (2011). *Modern Information
+Retrieval: The Concepts and Technology Behind Search* (2nd ed.).
+Addison-Wesley Professional. ISBN 978-0-321-41691-9.
+
+Cited by: `comparand-index` (modern reference for metric-space
+indexing, cited in the BK-tree module as background for tree-based
+best-match search).
 
 ### Burkhard & Keller (1973)
 
@@ -540,6 +571,18 @@ Companion site: http://www.mmds.org/
 
 Cited by: `comparand-minhash` (Chapter 3 as a self-contained treatment
 of shingling, MinHash, LSH banding, and threshold-to-band-count tuning).
+
+### Shrivastava (2014)
+
+Shrivastava, A. (2014). "Optimal densification for fast and accurate
+minwise hashing." arXiv:1406.4784.
+URL: https://arxiv.org/abs/1406.4784
+
+Cited by: `comparand-minhash` (referenced in prose in the sketch module
+as the standard densification technique for the one-permutation MinHash
+alternative to this crate's k-permutation implementation; the crate
+carries the k-permutation approach because its unbiasedness proof does
+not require densification).
 
 ### Steele, Lea, & Flood (2014)
 
