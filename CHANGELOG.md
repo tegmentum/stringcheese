@@ -42,6 +42,117 @@ bump; `0.x` versions are pre-stability.
   linkage stays a sibling library (planned rename to
   `stringcheese-linkage`); the substantive scope split is unchanged.
 
+- **`stringcheese-cdc`: Buzhash rolling hash.** Uzgalis (1983)
+  cyclic-polynomial rolling hash with a 256-entry byte-substitution
+  table (generated at compile time from a fixed `SplitMix64` seed for
+  cross-target reproducibility; variant slug `splitmix64-seed-buzz`
+  pins the table). Implements the `RollingHash` trait alongside the
+  existing Rabin, polynomial, and Gear implementations. New public
+  types: `stringcheese_cdc::Buzhash` and
+  `stringcheese_cdc::fingerprint::buzhash::{Buzhash, BUZ_TABLE}`.
+  Windows larger than 64 bytes are supported by folding the eviction
+  rotate through `window mod 64` (unlike Gear's 64-byte natural
+  horizon). Adds 4 golden cases + 12 unit tests + 3 property tests
+  (17 new tests).
+
+- **`stringcheese-manip`: `inspect`, `trim`, and `case` modules.**
+  First three scaffold-status modules become real implementations
+  (11 of the 15 modules still ship as scaffold-only stubs — the
+  charter is unchanged; those land in follow-on waves).
+  * `inspect` — `is_empty`, `byte_len`, `scalar_count`,
+    `grapheme_count`, `first_char` / `last_char`, `first_grapheme` /
+    `last_grapheme`. Every function names its boundary in its doc
+    comment (byte vs USV vs grapheme); all zero-allocation.
+    Grapheme-inspect functions gated on `feature = "alloc"`
+    (delegating to `stringcheese-unicode` which is `alloc`-gated).
+  * `trim` — `trim` / `trim_start` / `trim_end` (whitespace),
+    `trim_matches` (predicate), `trim_chars` (char-set) plus
+    start-only / end-only variants; and the reusable `Trim`
+    configured-operation type. Zero-allocation for all trim
+    functions; `Trim` value type is `alloc`-gated (holds
+    `Box<dyn Fn>`).
+  * `case` — `to_lowercase` / `to_uppercase` / `to_title_case` /
+    `capitalize`, both owned (`-> String`) and buffer-appending
+    (`*_into(&str, &mut String)`) variants, plus ASCII fast paths.
+    Delegates to `stringcheese-unicode` for Unicode-aware case
+    folding. Title-case buffers each word's tail into a `String`
+    and calls `str::to_lowercase()` on it so Greek final-sigma is
+    honored. Word boundary is "grapheme whose first scalar is
+    `char::is_alphabetic()`, preceded by a non-alphabetic
+    grapheme"; full UAX #29 word segmentation deferred.
+  * Adds 76 unit tests + 24 property tests + 29 doctests (133 new
+    tests). Extension-trait API (`s.stringcheese_trim()` style)
+    deferred to a follow-up wave.
+
+- **`stringcheese-phonetic`: Double Metaphone rule sets completed.**
+  All four remaining rule families from Philips (1999) now land in
+  the encoder:
+  * **Slavo-Germanic modifications** — the paper's standard heuristic
+    (detected by presence of `W`, `K`, `CZ`, or `WITZ` in the
+    normalized name) enables three conditional rules: initial `S`
+    before `L`/`M`/`N`/`W` diverges the alternate to `X`
+    (*Sniepis*, *Slavik*); `CZ` anywhere emits `S` in primary, `X`
+    in alternate (*Czajka*); word-final `-WITZ` has the alternate
+    emit `F` and consume the whole cluster (*Rabinowitz*,
+    *Horowitz*).
+  * **SC-before-IEY** — `SC` (not `SCH`) followed by `I`/`E`/`Y`
+    collapses to `S` in both branches (*Scientific*, *Scenic*,
+    *Ascension*); `SCH` followed by `ER`/`EN`/`OO`/`UY`/`ED`/`EM`
+    emits `SK` (the German consonantal reading — *Schenker*,
+    *Schooner*, *Schuyler*).
+  * **French silent-terminal endings** — word-final `-GN` skips the
+    `G` (*Reign*, *Coign*); word-final `-MB` emits `M` and skips
+    the silent `B` (*Lamb*, *Thumb*, *Coulomb*); the `-MPT-`
+    cluster silences the `P` (*Compton*, *Hampton*, *Empty*,
+    *Symptom*), with `-MPS` (Thompson) intentionally preserved.
+  * **Surname exceptions** — chemistry `CH` at word start followed
+    by `IA` / `YS` / `EM` emits `K` (*Chianti*, *Chemistry*),
+    overriding the default `X`. Scots/Irish `MC` and `MAC`
+    patronymic prefixes force hard `K` on their `C` even when the
+    following letter would otherwise soften it (*McIver*,
+    *MacBride*).
+
+  Primary-key stability is preserved: the module's contract that the
+  primary-only variant's primary key equals the full variant's
+  primary key byte-for-byte for every input is honored, verified
+  case-by-case against all pre-existing goldens (including surnames
+  that now count as Slavo-Germanic under the new heuristic). Adds
+  24 inline unit tests + 40 primary-only goldens + 10 full-variant
+  goldens + 5 property tests.
+
+- **`stringcheese-compare::minhash`: three new sibling sketches.**
+  * **SimHash** (Charikar 2002) — signed random projections for
+    cosine LSH. `SimHashSketch` exposes `from_iter`, `signature()`,
+    `hamming_distance()`, and `estimated_cosine_similarity()`
+    (std-gated). Fixed 64-bit signature; empty accumulators
+    tie-break to non-negative producing `u64::MAX` so two empty
+    sketches have Hamming 0 and cosine 1.0. Multiset (signed-sum)
+    semantics rather than the set-invariance of regular MinHash —
+    callers who want set semantics dedupe upstream.
+  * **One-permutation MinHash** (Li-Owen-Zhang 2012 with
+    Shrivastava-Li 2014 rotation densification) — single-permutation
+    approximation with cleaner densification for empty bins.
+    Bucket assignment uses Lemire top-bits multiplication
+    (`((h as u128 * k as u128) >> 64) as usize`) not `hash % k` —
+    top-bits preserves item-hash order, which is the condition
+    Li-Owen-Zhang's unbiasedness proof requires; the low-bits
+    variant fails a golden case empirically. Densification stores
+    `splitmix64(source_value XOR splitmix64(hop_distance))` rather
+    than a raw copy so long runs of empty bins with a shared
+    source don't collapse to a single value on both sketches
+    (which would inflate the estimator).
+  * **p-stable LSH** (Datar-Immorlica-Indyk-Mirrokni 2004) — LSH
+    families for L_p distances. `PStableLshSketch` +
+    `PStableFamily::{L1, L2}`. Adds `AlgorithmFamily::PStableLsh`
+    to `stringcheese-core`. Std-gated (needs `sqrt`/`ln` for
+    inversion sampling — Box-Muller for Gaussian; direct inverse
+    for Cauchy). Exposes `bucket() -> i64` and
+    `collide_with(other) -> bool`; callers compose multiple
+    sketches for LSH amplification.
+
+  Adds 8 golden cases + 13 property tests (57 new tests total
+  spanning the three sketches).
+
 ### Changed
 
 - **Import paths.** `use stringcheese_<family>::X` becomes
