@@ -6,19 +6,30 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Scaffold-only in v0.1 — modules are placeholders that record the charter; items land in subsequent releases."
+description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Unicode-aware and allocation-conscious; three modules ship in v0.1 (inspect, trim, case), remaining modules land in subsequent releases."
 categories = ["text-processing", "no-std"]
 keywords = ["string", "text", "manipulation", "no-std", "wasm"]
 
 [features]
 default = ["std"]
 # When enabled, the crate uses the standard library. Also implies `alloc`.
-std = ["alloc", "stringcheese-core/std"]
+std = ["alloc", "stringcheese-core/std", "stringcheese-unicode/std"]
 # When enabled, the crate may use heap-allocating types from `alloc`.
-alloc = ["stringcheese-core/alloc"]
+# Grapheme-aware inspect helpers, the owned `String`-returning case
+# transformations, and the `Trim` configured operation all require this
+# feature. Without it the crate exposes only the borrowing zero-alloc
+# subset (byte / scalar inspects and the trim free functions).
+alloc = ["stringcheese-core/alloc", "stringcheese-unicode/alloc"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
+# `stringcheese-unicode` is the sanctioned delegation target for grapheme
+# iteration and case folding — `stringcheese-manip` never depends on the
+# ICU / unicode-* crates directly, so all Unicode data lives in one place.
+stringcheese-unicode = { workspace = true }
+
+[dev-dependencies]
+proptest = "1"
 
 [lints]
 workspace = true

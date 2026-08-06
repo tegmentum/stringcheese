@@ -857,7 +857,9 @@ dependencies = [
 name = "stringcheese-manip"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "stringcheese-core",
+ "stringcheese-unicode",
 ]
 
 [[package]]

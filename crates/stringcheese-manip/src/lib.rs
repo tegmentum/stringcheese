@@ -9,14 +9,16 @@
 //!
 //! # Status
 //!
-//! **Scaffold only in v0.1.** Every module below is declared but empty; the
-//! module docs record the intended scope. Items land in follow-on releases,
-//! module-by-module.
+//! **First wave shipped in v0.1.** Three modules — [`inspect`], [`trim`],
+//! and [`case`] — carry real implementations; every other module below is
+//! still a placeholder whose doc comment records the intended scope. Items
+//! land in follow-on releases, module-by-module.
 //!
 //! Depending on `stringcheese-manip` today is safe — the crate compiles
 //! and re-releases will only *add* items, never remove them at this
-//! pre-1.0 stage. Callers who need manipulation today should reach for
-//! the standard library and re-evaluate as modules populate.
+//! pre-1.0 stage. Callers who need manipulation the shipped modules do not
+//! yet cover should reach for the standard library and re-evaluate as more
+//! modules populate.
 //!
 //! # Design commitments
 //!
@@ -41,17 +43,23 @@
 //!
 //! # Module map
 //!
-//! Every module below is a placeholder in v0.1; the doc comment records
-//! the scope. See `docs/DESIGN.md` for the full charter.
+//! Modules marked *shipped* below carry real implementations in v0.1;
+//! the remainder are placeholders whose doc comment records the scope.
+//! See `docs/DESIGN.md` for the full charter.
 //!
-//! - [`inspect`] — read-only interrogation: is-empty, byte / scalar /
-//!   grapheme count, display width, first / last character, character
-//!   class predicates.
-//! - [`trim`] — remove characters from the edges: whitespace-trim,
-//!   char-set trim, predicate trim, trim-once vs trim-all.
-//! - [`case`] — case transformations that respect the locale: fold,
-//!   upper, lower, title, capitalize; Unicode case-mapping (which
-//!   changes string length) as first-class.
+//! - [`inspect`] — *shipped.* Read-only interrogation: is-empty, byte /
+//!   scalar / grapheme count, first / last character, first / last
+//!   grapheme. Every function names the boundary it works at and
+//!   performs zero allocation.
+//! - [`trim`] — *shipped.* Remove characters from the edges:
+//!   whitespace-trim, char-set trim, predicate trim, both a family of
+//!   zero-allocation free functions and a reusable [`trim::Trim`]
+//!   configured operation.
+//! - [`case`] — *shipped.* Case transformations that respect Unicode:
+//!   `to_lowercase`, `to_uppercase`, `to_title_case`, `capitalize`, plus
+//!   `_into` variants that append into a caller-owned buffer and ASCII
+//!   fast paths for callers who know their input is ASCII. Delegates to
+//!   `stringcheese-unicode` for grapheme iteration.
 //! - [`split`] — divide a string into pieces: by scalar, by pattern,
 //!   by predicate, by Unicode boundary (word / sentence / grapheme).
 //! - [`join`] — combine pieces back: `Vec<&str>` join, iterator join,
@@ -102,35 +110,16 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
 
-// `alloc` is not yet used — the modules below are all empty scaffolds. It
-// will be brought into scope (`#[cfg(feature = "alloc")] extern crate alloc;`)
-// as soon as the first module that needs owned/heap-backed types lands.
+// `alloc` is brought into scope for the modules that need heap-allocating
+// types: the owned-`String`-returning case transformations, the
+// `Trim` configured operation, and any inspect helper that delegates to
+// `stringcheese-unicode` (which itself requires alloc).
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
-/// Read-only interrogation: is-empty, byte / scalar / grapheme count,
-/// display width, first / last character, character class predicates.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet. See the crate-level module map
-/// for the intended scope.
-pub mod inspect {}
-
-/// Remove characters from the edges of a string: whitespace-trim,
-/// char-set trim, predicate trim, trim-once vs trim-all.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod trim {}
-
-/// Case transformations that respect the locale: fold, upper, lower,
-/// title, capitalize; Unicode case-mapping (which changes string length)
-/// as first-class.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod case {}
+pub mod case;
+pub mod inspect;
+pub mod trim;
 
 /// Divide a string into pieces: by scalar, by pattern, by predicate,
 /// by Unicode boundary (word / sentence / grapheme).
