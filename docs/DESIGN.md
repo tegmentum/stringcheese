@@ -58,7 +58,7 @@ in separate downstream libraries:
   probabilistic classifiers that consume per-field scores. Comparand
   supplies the per-field scores; deciding whether two records refer to
   the same real-world entity is a downstream concern.
-  See [record-linkage](https://github.com/zacharywhitley/record-linkage)
+  See [record-linkage](https://github.com/tegmentum/record-linkage)
   for the sibling library that implements the Fellegi-Sunter classifier
   and sorted-neighborhood blocking on top of Comparand.
 

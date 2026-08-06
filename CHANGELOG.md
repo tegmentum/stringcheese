@@ -133,5 +133,5 @@ rather than by commit; consult `git log` for the per-commit narrative.
   test-only `property_tests` module, which produced rustdoc warnings on
   a non-test build.
 
-[Unreleased]: https://github.com/zacharywhitley/comparand/compare/HEAD...HEAD
-[0.1.0-alpha]: https://github.com/zacharywhitley/comparand/commits/main
+[Unreleased]: https://github.com/tegmentum/comparand/compare/HEAD...HEAD
+[0.1.0-alpha]: https://github.com/tegmentum/comparand/commits/main

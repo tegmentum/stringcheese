@@ -1,6 +1,6 @@
 # Comparand
 
-[![CI](https://github.com/zacharywhitley/comparand/actions/workflows/ci.yml/badge.svg)](https://github.com/zacharywhitley/comparand/actions/workflows/ci.yml)
+[![CI](https://github.com/tegmentum/comparand/actions/workflows/ci.yml/badge.svg)](https://github.com/tegmentum/comparand/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/comparand.svg)](https://crates.io/crates/comparand)
 [![docs.rs](https://docs.rs/comparand/badge.svg)](https://docs.rs/comparand)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)

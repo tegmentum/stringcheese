@@ -23,7 +23,7 @@
 //! primary-only variant so that the crate's `Default` behavior is unchanged
 //! from the initial delivery.
 //!
-//! [phon]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/phonetic-subsystem.md
+//! [phon]: https://github.com/tegmentum/comparand/blob/main/docs/design/phonetic-subsystem.md
 //! [vid]: comparand_core::VariantId
 //!
 //! # Primary-key stability

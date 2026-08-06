@@ -15,7 +15,7 @@
 //! ```
 //!
 //! This is a *partial* realization of the design document's
-//! [`Comparator`](https://github.com/zacharywhitley/comparand/blob/main/docs/design/preprocessing-pipeline.md)
+//! [`Comparator`](https://github.com/tegmentum/comparand/blob/main/docs/design/preprocessing-pipeline.md)
 //! builder — the pipeline handles the `&str → String` preprocessing
 //! prefix, and downstream algorithms consume the output. A future
 //! evolution of the type system will fold this pipeline together with a
@@ -210,7 +210,7 @@ impl PreprocessingPipeline {
     /// explainability output.
     ///
     /// See [`docs/design/preprocessing-pipeline.md § Explainability
-    /// hooks`](https://github.com/zacharywhitley/comparand/blob/main/docs/design/preprocessing-pipeline.md).
+    /// hooks`](https://github.com/tegmentum/comparand/blob/main/docs/design/preprocessing-pipeline.md).
     #[must_use]
     pub fn describe(&self) -> String {
         let mut s = String::from("PreprocessingPipeline: [");

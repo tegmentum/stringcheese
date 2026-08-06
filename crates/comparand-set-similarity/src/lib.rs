@@ -83,8 +83,8 @@
 //! that IS a metric.
 //!
 //! [`class`]: comparand_core::SimilarityMetric::class
-//! [ng]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
-//! [ts]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/type-system.md
+//! [ng]: https://github.com/tegmentum/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
+//! [ts]: https://github.com/tegmentum/comparand/blob/main/docs/design/type-system.md
 //! [gs]: comparand_ngram::GramSet::from_generator
 //!
 //! # `no_std`

@@ -93,7 +93,7 @@
 //! output. In exchange, the crate has zero non-Comparand runtime
 //! dependencies.
 //!
-//! [`property_tests`]: https://github.com/zacharywhitley/comparand
+//! [`property_tests`]: https://github.com/tegmentum/comparand
 //!
 //! # Empty-vs-empty convention
 //!

@@ -26,7 +26,7 @@
 //! See [`docs/design/phonetic-subsystem.md`][phon] for the definitive
 //! specification.
 //!
-//! [phon]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/phonetic-subsystem.md
+//! [phon]: https://github.com/tegmentum/comparand/blob/main/docs/design/phonetic-subsystem.md
 //!
 //! # Encoding vs comparison
 //!

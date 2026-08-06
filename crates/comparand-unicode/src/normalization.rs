@@ -111,7 +111,7 @@ pub fn nfkd(input: &str) -> String {
 /// [`comparand_core::NormalizationPolicy`], which names how a raw
 /// [`Distance<T>`](comparand_core::Distance) is scaled into `[0.0, 1.0]`.
 /// The two never collide; see
-/// [`docs/design/preprocessing-pipeline.md § Cross-references`](https://github.com/zacharywhitley/comparand/blob/main/docs/design/preprocessing-pipeline.md).
+/// [`docs/design/preprocessing-pipeline.md § Cross-references`](https://github.com/tegmentum/comparand/blob/main/docs/design/preprocessing-pipeline.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Normalization {
     /// Canonical composition — the web-default form. See [`nfc`].

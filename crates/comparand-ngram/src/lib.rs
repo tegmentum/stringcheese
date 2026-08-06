@@ -23,7 +23,7 @@
 //! `MinHash` bucketing, and Rabin variants) lives in `comparand-cdc` and its
 //! consumers.
 //!
-//! [ng]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
+//! [ng]: https://github.com/tegmentum/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
 //!
 //! # What this crate provides
 //!

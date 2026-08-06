@@ -11,7 +11,7 @@ minimum friction.
 Clone and build:
 
 ```sh
-git clone https://github.com/zacharywhitley/comparand.git
+git clone https://github.com/tegmentum/comparand.git
 cd comparand
 cargo test --workspace --all-features
 ```

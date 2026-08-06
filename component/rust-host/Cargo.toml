@@ -29,7 +29,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Zachary Whitley <mail@zacharywhitley.com>"]
-repository = "https://github.com/zacharywhitley/comparand"
+repository = "https://github.com/tegmentum/comparand"
 description = "WebAssembly Component Model host implementation of the comparand:core WIT interface."
 publish = false
 

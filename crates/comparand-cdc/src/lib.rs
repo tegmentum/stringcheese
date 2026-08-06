@@ -25,7 +25,7 @@
 //! — so it fits every consumer without forcing them through a CDC-shaped
 //! interface.
 //!
-//! [design]: https://github.com/zacharywhitley/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
+//! [design]: https://github.com/tegmentum/comparand/blob/main/docs/design/ngram-and-fingerprinting.md
 //!
 //! # `no_std`
 //!

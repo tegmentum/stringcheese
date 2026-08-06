@@ -34,7 +34,7 @@ The GitHub remote does not yet exist. Bootstrap it with the `gh` CLI:
 
 ```sh
 # Assumes `gh auth login` has been completed.
-gh repo create zacharywhitley/comparand \
+gh repo create tegmentum/comparand \
     --public \
     --source=. \
     --description="Rigorous sequence comparison for Rust and WebAssembly" \
