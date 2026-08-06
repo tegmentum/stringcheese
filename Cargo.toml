@@ -3,9 +3,6 @@ resolver = "3"
 members = [
     "crates/comparand",
     "crates/comparand-core",
-    "crates/comparand-search",
-    "crates/comparand-cdc",
-    "crates/comparand-index",
     "crates/comparand-corpus",
     "crates/comparand-levenshtein",
     "crates/comparand-hamming",
@@ -17,8 +14,11 @@ members = [
     "crates/comparand-set-similarity",
     "crates/comparand-bench",
     "crates/comparand-lcs",
+    "crates/comparand-search",
 ]
 exclude = [
+    "crates/comparand-cdc",
+    "crates/comparand-index",
     "fuzz",
 ]
 

@@ -45,6 +45,11 @@ pub use comparand_damerau as damerau;
 /// re-exported unchanged from the `comparand-lcs` crate.
 pub use comparand_lcs as lcs;
 
+/// The substring-search subsystem: Rabin-Karp, KMP, Boyer-Moore
+/// (bad-character variant), and Aho-Corasick multi-pattern matching,
+/// re-exported unchanged from the `comparand-search` crate.
+pub use comparand_search as search;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.

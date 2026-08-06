@@ -156,6 +156,7 @@ dependencies = [
  "comparand-levenshtein",
  "comparand-ngram",
  "comparand-phonetic",
+ "comparand-search",
  "comparand-set-similarity",
  "comparand-unicode",
 ]
@@ -173,10 +174,6 @@ dependencies = [
  "criterion",
  "dhat",
 ]
-
-[[package]]
-name = "comparand-cdc"
-version = "0.1.0"
 
 [[package]]
 name = "comparand-core"
@@ -206,10 +203,6 @@ dependencies = [
  "comparand-corpus",
  "proptest",
 ]
-
-[[package]]
-name = "comparand-index"
-version = "0.1.0"
 
 [[package]]
 name = "comparand-jaro"
@@ -259,6 +252,11 @@ dependencies = [
 [[package]]
 name = "comparand-search"
 version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "proptest",
+]
 
 [[package]]
 name = "comparand-set-similarity"
