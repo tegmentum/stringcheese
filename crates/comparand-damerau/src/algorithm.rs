@@ -209,6 +209,16 @@ impl<T: Eq> BoundedDistanceMetric<[T]> for Osa {
 pub struct Damerau;
 
 impl Damerau {
+    // NOTE (descriptor `source` choice): `DefinitionSource::Paper` holds a
+    // single citation, and we deliberately point at Damerau (1964) — the
+    // paper that *names* the algorithm — rather than at Lowrance & Wagner
+    // (1975), which is the source of the polynomial DP formulation this
+    // crate actually implements. The descriptor identifies what the
+    // algorithm *is*, not how its DP is derived; readers who care about
+    // the implementation lineage should consult the crate-level `References`
+    // section (which lists both papers prominently) and the module-level
+    // doc comment on this type (which spells out the Damerau→Lowrance-Wagner
+    // provenance).
     /// The algorithm descriptor for this variant.
     ///
     /// The variant slug `"unrestricted-unit-cost-generic-eq"` names the
@@ -261,25 +271,34 @@ impl Damerau {
     /// reusing `ws` as scratch across the call.
     ///
     /// This is the workspace-aware entry point for batch comparisons.
+    ///
+    /// The `T: Clone` bound (added in a follow-up to the initial release
+    /// for the zero-allocation-on-hot-path property) is trivially satisfied
+    /// by every `Copy` symbol type — `u8`, `char`, and every integer scalar
+    /// — which covers essentially every real-world Damerau caller.
+    /// [`DamerauWorkspace<T>`] owns the auxiliary "last position of
+    /// symbol" `HashMap`; owning it in the workspace across calls is what
+    /// makes the hot path allocation-free, and owning it requires owning
+    /// its keys.
     #[cfg(feature = "std")]
     #[inline]
-    pub fn distance_with_workspace<T: Eq + Hash>(
+    pub fn distance_with_workspace<T: Eq + Hash + Clone>(
         self,
         left: &[T],
         right: &[T],
-        ws: &mut DamerauWorkspace,
+        ws: &mut DamerauWorkspace<T>,
     ) -> Distance<u32> {
         distance_production_with_workspace(left, right, ws)
     }
 }
 
 #[cfg(feature = "std")]
-impl<T: Eq + Hash> DistanceMetric<[T]> for Damerau {
+impl<T: Eq + Hash + Clone> DistanceMetric<[T]> for Damerau {
     type Output = u32;
 
     #[inline]
     fn distance(&self, left: &[T], right: &[T]) -> Distance<Self::Output> {
-        let mut ws = DamerauWorkspace::new();
+        let mut ws: DamerauWorkspace<T> = DamerauWorkspace::new();
         self.distance_with_workspace(left, right, &mut ws)
     }
 
@@ -452,12 +471,50 @@ mod tests {
     #[test]
     fn damerau_workspace_reuse_matches_fresh_workspace() {
         let alg = Damerau;
-        let mut ws = DamerauWorkspace::new();
+        let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
         let a: &[u8] = b"prefix-common-tail-A";
         let b: &[u8] = b"prefix-common-tail-B";
         let with_ws = alg.distance_with_workspace(a, b, &mut ws);
         let without_ws = alg.distance(a, b);
         assert_eq!(with_ws, without_ws);
+    }
+
+    /// Zero-allocation-on-hot-path invariant: after the workspace has been
+    /// warmed up on one comparison, a second comparison of the same shape
+    /// must give the same answer as a fresh workspace *and* the same answer
+    /// as any subsequent call — the reused `HashMap` and DP matrix must not
+    /// corrupt the result. This is the correctness property the
+    /// Item-1-motivated `HashMap` reuse in `DamerauWorkspace` protects.
+    #[cfg(feature = "std")]
+    #[test]
+    fn damerau_workspace_reuse_matches_per_call_workspace_across_shapes() {
+        let alg = Damerau;
+        let pairs: &[(&[u8], &[u8])] = &[
+            (b"", b""),
+            (b"a", b""),
+            (b"", b"z"),
+            (b"ab", b"ba"),
+            (b"ca", b"abc"),
+            (b"abcd", b"badc"),
+            (b"kitten", b"sitting"),
+            (b"Saturday", b"Sunday"),
+            (b"aaaaa", b"aaaaa"),
+            (b"prefix-common-tail-A", b"prefix-common-tail-B"),
+            (b"", b"long-tail-after-a-short-lhs"),
+        ];
+        let mut hot_ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
+        for (a, b) in pairs {
+            // Fresh workspace each iteration — the baseline.
+            let mut cold_ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
+            let cold = alg.distance_with_workspace(a, b, &mut cold_ws).into_inner();
+            // Reused workspace — must match, even after previous calls left
+            // arbitrary residue in the HashMap and DP-matrix cells.
+            let hot = alg.distance_with_workspace(a, b, &mut hot_ws).into_inner();
+            assert_eq!(
+                cold, hot,
+                "reused-workspace disagreed with per-call workspace on ({a:?}, {b:?})"
+            );
+        }
     }
 
     #[cfg(feature = "std")]

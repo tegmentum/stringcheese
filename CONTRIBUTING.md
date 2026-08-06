@@ -161,6 +161,38 @@ the spectrum:
   commits, PR descriptions, changelogs, or docs. Contributions stand
   on their content, not their tooling.
 
+## Unsafe code policy
+
+- **Default: `#![forbid(unsafe_code)]` in every crate.** Every algorithm
+  crate, every substrate crate, and every future addition starts with a
+  crate-level `forbid(unsafe_code)`. That default is not aspirational —
+  it is enforced at compile time, and CI will refuse to merge a crate
+  that quietly removes it.
+- **The one exception: `component/rust-host`.** The Wasm component-host
+  crate uses `#![deny(unsafe_op_in_unsafe_fn)]` (not `forbid`) because
+  the ABI plumbing `wit-bindgen` generates for lowering `list<u8>` and
+  friends across the component boundary is `unsafe` at the language
+  level. Every line of hand-written code in that crate is still safe
+  Rust; the exception exists only so that macro-generated ABI code can
+  compile without spraying `unsafe fn` wrappers through the surface. A
+  file-level comment in `component/rust-host/src/lib.rs` records the
+  rationale next to the attribute.
+- **Rule for future work.** Any new crate defaults to
+  `forbid(unsafe_code)`. If a genuine need for unsafe arises (SIMD
+  intrinsics, FFI stubs, additional ABI plumbing, a hot path that must
+  bypass a bounds check for measurable reason), the exception must be:
+  1. **Scoped** — behind a dedicated feature flag when the unsafe is
+     optional, or crate-scoped when it is intrinsic to the crate's
+     purpose. Do not sprinkle `unsafe` blocks through an otherwise-safe
+     crate.
+  2. **Documented in-file** — a file-level comment above the crate-root
+     attribute explains why the exception exists and what invariant the
+     unsafe code upholds.
+  3. **Documented here** — add a bullet to this list naming the crate,
+     the attribute, and a one-line reason. A reviewer who has never
+     seen the codebase should be able to enumerate every unsafe-using
+     crate from this file alone.
+
 ## Testing
 
 Every algorithm PR should include:
