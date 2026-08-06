@@ -1,0 +1,143 @@
+name: fuzz-nightly
+
+# ------------------------------------------------------------------------------
+# Scheduled fuzz sweep. Each cargo-fuzz target under `fuzz/` gets its own matrix
+# job with a fixed 30-minute time budget. Crashes are uploaded as artifacts so
+# they can be triaged and promoted into the regression corpus (see the
+# "Fuzzing" and "Regression Corpus" sections of docs/DESIGN.md).
+#
+# This workflow is deliberately isolated from ci.yml — CI runs on every push
+# and PR and must stay fast; fuzz runs nightly and takes hours in aggregate.
+# ------------------------------------------------------------------------------
+
+on:
+  # 06:00 UTC — quiet globally; well before US morning and after EU/AS end-of-day.
+  schedule:
+    - cron: "0 6 * * *"
+  # Manual invocation for on-demand ad-hoc fuzzing.
+  workflow_dispatch:
+    inputs:
+      time_seconds:
+        description: "Per-target fuzz budget in seconds (default 1800 = 30 min)"
+        type: string
+        default: "1800"
+      target:
+        description: "Single target to run, or 'all' to run every target"
+        type: string
+        default: "all"
+
+# Nightly runs are precious — never cancel one in flight. If a workflow_dispatch
+# collides with a scheduled run, the newer run queues up behind it.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# Explicit least-privilege token surface. `actions: write` is required for the
+# cache-save half of actions/cache@v4; `contents: read` is enough for checkout.
+permissions:
+  contents: read
+  actions: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-target:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # 30-minute fuzz budget + build + install + cache overhead. 40 minutes gives
+    # the runner room to shut things down cleanly if libFuzzer overruns.
+    timeout-minutes: 40
+    strategy:
+      # A crash in one target must not cancel the other six — fuzz jobs are the
+      # canonical case for wanting every matrix leg to finish independently.
+      fail-fast: false
+      matrix:
+        # Kept in lock-step with the [[bin]] entries in fuzz/Cargo.toml. When a
+        # new target is added there, add it here too.
+        target:
+          - levenshtein_differential
+          - osa_differential
+          - damerau_differential
+          - hamming_symmetry
+          - jaro_range
+          - ngram_count_agreement
+          - metric_axioms_levenshtein
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-fuzz requires a nightly toolchain (libfuzzer-sys needs the
+      # -Zsanitizer flags). We deliberately do NOT pin to a specific nightly
+      # date: the whole point of a nightly fuzz job is to exercise the evolving
+      # compiler so regressions surface here first, not in a user's build.
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+
+      # Build cache for the fuzz workspace itself. Keyed per-target because the
+      # binary being linked differs and cache reuse across targets is minimal.
+      - name: Cache cargo registry and fuzz target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          key: fuzz-${{ matrix.target }}
+
+      # `--locked` refuses to touch Cargo.lock, which is what we want for a
+      # reproducible install. cargo-fuzz is small enough that the ~1-minute
+      # per-job install cost is not worth working around with a shared setup.
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Single-form actions/cache: restores on job start, saves on job success.
+      # One canonical corpus per target that accumulates coverage over time —
+      # simpler than the split restore/save+run-id pattern, and sufficient for
+      # v0.1. If we later need to preserve per-run historical corpora, revisit.
+      - name: Restore and save fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}
+
+      # Honor the workflow_dispatch `target` input: if the user asked for a
+      # single target, every other matrix leg becomes a no-op.
+      - name: Should this leg run?
+        id: filter
+        env:
+          TARGET_FILTER: ${{ github.event.inputs.target }}
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TARGET_FILTER:-}" ] \
+             && [ "${TARGET_FILTER}" != "all" ] \
+             && [ "${TARGET_FILTER}" != "${MATRIX_TARGET}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run cargo fuzz
+        if: steps.filter.outputs.skip != 'true'
+        env:
+          # Default 1800s (30 min) on schedule; overridable via workflow_dispatch.
+          TIME_SECONDS: ${{ github.event.inputs.time_seconds || '1800' }}
+        run: |
+          set -euo pipefail
+          cargo fuzz run ${{ matrix.target }} \
+            --fuzz-dir fuzz \
+            -- -max_total_time="${TIME_SECONDS}"
+
+      # Crash artifacts. libFuzzer writes reproducers to
+      # fuzz/artifacts/<target>/ on any finding; uploading them here surfaces
+      # them in the run's artifacts panel so a maintainer can pull them down
+      # for triage. `if-no-files-found: ignore` keeps unrelated failure modes
+      # (e.g. runner-level infra failures) from adding a spurious warning.
+      # Default retention is 90 days — long enough to promote real crashes
+      # into the regression golden corpus per DESIGN.md's discipline.
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
