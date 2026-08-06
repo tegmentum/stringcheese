@@ -38,6 +38,15 @@
 //! for backwards compatibility with pre-Unicode-10 text engines.
 //!
 //! [Unicode Standard Annex #29]: https://www.unicode.org/reports/tr29/
+//!
+//! # References
+//!
+//! * Unicode Standard Annex #29. *Unicode Text Segmentation*. URL:
+//!   <https://www.unicode.org/reports/tr29/> — the specification
+//!   [`GraphemeSequence`] and [`graphemes`] implement (extended
+//!   grapheme-cluster boundary rules).
+//! * Unicode Consortium (2022). *The Unicode Standard, Version 15.0.0*.
+//!   Mountain View, CA: The Unicode Consortium. ISBN 978-1-936213-32-0.
 
 use alloc::vec::Vec;
 use comparand_core::IndexableSequence;

@@ -48,6 +48,17 @@
 //!
 //! [`str::to_lowercase`]: str::to_lowercase
 //! [`CaseFolding.txt`]: https://www.unicode.org/Public/UCD/latest/ucd/CaseFolding.txt
+//!
+//! # References
+//!
+//! * Unicode Standard Annex #21. *Case Mappings*. URL:
+//!   <https://www.unicode.org/reports/tr21/> — the specification governing
+//!   case mapping and case folding.
+//! * Unicode Consortium. *`CaseFolding.txt`* — the authoritative full-folding
+//!   table this module's full-folding implementation is bound to. URL:
+//!   <https://www.unicode.org/Public/UCD/latest/ucd/CaseFolding.txt>
+//! * Unicode Consortium (2022). *The Unicode Standard, Version 15.0.0*.
+//!   Mountain View, CA: The Unicode Consortium. ISBN 978-1-936213-32-0.
 
 use alloc::string::String;
 use icu_casemap::CaseMapper;

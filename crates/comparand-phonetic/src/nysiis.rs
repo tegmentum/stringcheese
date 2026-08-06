@@ -76,6 +76,15 @@
 //! Non-ASCII characters and non-letters are stripped in step 1. Callers who
 //! want other behavior (e.g. transliterate `"Müller"` → `"Mueller"` first)
 //! should apply their transliteration before calling `encode`.
+//!
+//! # References
+//!
+//! * Taft, R. L. (1970). *Name Search Techniques*. New York State
+//!   Identification and Intelligence System, Special Report No. 1. Albany,
+//!   NY. — the original NYSIIS specification this module implements.
+//! * Apache Software Foundation. *Apache Commons Codec* — `Nysiis.java`.
+//!   URL: <https://commons.apache.org/proper/commons-codec/> — the widely
+//!   mirrored reference implementation the rule ordering here follows.
 
 use alloc::string::String;
 use alloc::vec::Vec;

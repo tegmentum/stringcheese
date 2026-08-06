@@ -57,6 +57,15 @@
 //! Soundex of the input's ASCII-letter subsequence. Callers who want other
 //! behavior (e.g. transliterate `"Müller"` → `"Mueller"` first) should apply
 //! their transliteration before calling `encode`.
+//!
+//! # References
+//!
+//! * Russell, R. C. (1918). *Method and means for identifying names by
+//!   phonetic sound*. US Patent 1,261,167 (filed 1917, issued April 2, 1918).
+//!   The original Soundex patent.
+//! * US National Archives and Records Administration. *The Soundex Indexing
+//!   System*. URL: <https://www.archives.gov/research/census/soundex> — the
+//!   canonical NARA specification this module implements.
 
 use alloc::string::String;
 use comparand_core::{

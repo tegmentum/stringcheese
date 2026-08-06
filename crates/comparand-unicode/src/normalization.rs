@@ -27,6 +27,15 @@
 //! example, [`crate::diacritics`] uses NFD internally).
 //!
 //! Reference: [Unicode Standard Annex #15](https://www.unicode.org/reports/tr15/).
+//!
+//! # References
+//!
+//! * Unicode Consortium (2022). *The Unicode Standard, Version 15.0.0*.
+//!   Mountain View, CA: The Unicode Consortium. ISBN 978-1-936213-32-0.
+//!   URL: <https://www.unicode.org/versions/Unicode15.0.0/>
+//! * Unicode Standard Annex #15. *Unicode Normalization Forms*. URL:
+//!   <https://www.unicode.org/reports/tr15/> — the specification the four
+//!   normal forms in this module implement.
 
 use alloc::string::String;
 use unicode_normalization::UnicodeNormalization;

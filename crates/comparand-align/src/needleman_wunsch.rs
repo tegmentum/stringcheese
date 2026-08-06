@@ -20,6 +20,19 @@
 //! Score-only: `O(m * n)` time, `O(n)` space (rolling row).
 //! With edit-script backtrace: `O(m * n)` time, `O(m * n)` space (full
 //! matrix / matrices for the trace).
+//!
+//! # References
+//!
+//! * Needleman, S. B., & Wunsch, C. D. (1970). "A general method applicable
+//!   to the search for similarities in the amino acid sequence of two
+//!   proteins." *Journal of Molecular Biology*, 48(3), 443-453.
+//!   DOI: <https://doi.org/10.1016/0022-2836(70)90057-4> — the original
+//!   global-alignment dynamic-programming formulation this module implements.
+//! * Gotoh, O. (1982). "An improved algorithm for matching biological
+//!   sequences." *Journal of Molecular Biology*, 162(3), 705-708.
+//!   DOI: <https://doi.org/10.1016/0022-2836(82)90398-9> — the three-matrix
+//!   (M, X, Y) affine-gap DP this module switches to when the scoring
+//!   scheme reports `gap_open != gap_extend`.
 
 use alloc::vec::Vec;
 

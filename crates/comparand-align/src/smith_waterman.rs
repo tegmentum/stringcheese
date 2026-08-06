@@ -21,6 +21,18 @@
 //! Score-only: `O(m * n)` time, `O(n)` space (linear gap) or `O(3 * n)`
 //! space (affine).
 //! With edit-script backtrace: `O(m * n)` time and space.
+//!
+//! # References
+//!
+//! * Smith, T. F., & Waterman, M. S. (1981). "Identification of common
+//!   molecular subsequences." *Journal of Molecular Biology*, 147(1),
+//!   195-197. DOI: <https://doi.org/10.1016/0022-2836(81)90087-5> — the
+//!   original local-alignment formulation this module implements.
+//! * Gotoh, O. (1982). "An improved algorithm for matching biological
+//!   sequences." *Journal of Molecular Biology*, 162(3), 705-708.
+//!   DOI: <https://doi.org/10.1016/0022-2836(82)90398-9> — the affine-gap
+//!   three-matrix DP this module adapts for local alignment when the
+//!   scoring scheme reports `gap_open != gap_extend`.
 
 use alloc::vec::Vec;
 

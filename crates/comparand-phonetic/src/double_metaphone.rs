@@ -144,6 +144,18 @@
 //! Non-ASCII characters and non-letters are stripped in the first step;
 //! callers who want other behavior should transliterate before calling
 //! `encode`.
+//!
+//! # References
+//!
+//! * Philips, L. (1990). "Hanging on the metaphone." *Computer Language*,
+//!   7(12), 39-43. The original Metaphone paper.
+//! * Philips, L. (2000). "The double metaphone search algorithm."
+//!   *C/C++ Users Journal*, 18(6). — the Double Metaphone specification.
+//! * Apache Software Foundation. *Apache Commons Codec* —
+//!   `DoubleMetaphone.java`. URL:
+//!   <https://commons.apache.org/proper/commons-codec/> — the widely
+//!   mirrored reference implementation whose two-key branch structure this
+//!   module's alternate-key pass follows.
 
 use alloc::string::String;
 use alloc::vec::Vec;

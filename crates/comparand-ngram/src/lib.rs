@@ -79,6 +79,23 @@
 //! [`Similarity`]: comparand_core::Similarity
 //! [`Score`]: comparand_core::Score
 //! [`AlgorithmDescriptor`]: comparand_core::AlgorithmDescriptor
+//!
+//! # References
+//!
+//! * Broder, A. Z. (1997). "On the resemblance and containment of documents."
+//!   *Proceedings of the Compression and Complexity of Sequences 1997*,
+//!   21-29. DOI: <https://doi.org/10.1109/SEQUEN.1997.666900> — the seminal
+//!   analysis of n-gram (shingle) resemblance and containment that motivates
+//!   set and multiset representations for approximate document similarity.
+//! * Ukkonen, E. (1992). "Approximate string-matching with q-grams and
+//!   maximal matches." *Theoretical Computer Science*, 92(1), 191-211.
+//!   DOI: <https://doi.org/10.1016/0304-3975(92)90143-4> — q-gram-based
+//!   approximate string comparison, the theoretical grounding for using
+//!   n-gram profiles as a distance surrogate.
+//! * Manning, C. D., Raghavan, P., & Schütze, H. (2008). *Introduction to
+//!   Information Retrieval*. Cambridge University Press. ISBN
+//!   978-0-521-86571-5. — see Chapter 3 for n-gram representations in
+//!   information retrieval and their use in tolerant matching.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

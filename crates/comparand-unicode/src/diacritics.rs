@@ -37,6 +37,16 @@
 //! will live in its own module because the choices it forces on the
 //! caller (source script, target script, romanization scheme, mapping
 //! table) are orthogonal to the mechanical NFD-based approach here.
+//!
+//! # References
+//!
+//! * Unicode Standard Annex #15. *Unicode Normalization Forms*. URL:
+//!   <https://www.unicode.org/reports/tr15/> — NFD, the decomposition step
+//!   this module relies on to expose combining marks for removal.
+//! * Unicode Consortium (2022). *The Unicode Standard, Version 15.0.0*.
+//!   Mountain View, CA: The Unicode Consortium. ISBN 978-1-936213-32-0. —
+//!   defines the combining-mark general categories (`Mn`, `Mc`, `Me`) this
+//!   module's filter step consults.
 
 use crate::normalization::{nfc, nfd};
 use alloc::string::String;

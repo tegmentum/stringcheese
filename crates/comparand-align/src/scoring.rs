@@ -15,6 +15,19 @@
 //! a wrapper around a BLOSUM-style substitution matrix) as long as the four
 //! required methods return the appropriate constants. All scores are `i32`;
 //! see the crate-level docs for the rationale.
+//!
+//! # References
+//!
+//! * Gotoh, O. (1982). "An improved algorithm for matching biological
+//!   sequences." *Journal of Molecular Biology*, 162(3), 705-708.
+//!   DOI: <https://doi.org/10.1016/0022-2836(82)90398-9> — the
+//!   affine-gap-cost formulation `gap_open + (k - 1) * gap_extend` that
+//!   [`AffineGap`] realizes.
+//! * Henikoff, S., & Henikoff, J. G. (1992). "Amino acid substitution
+//!   matrices from protein blocks." *PNAS*, 89(22), 10915-10919.
+//!   DOI: <https://doi.org/10.1073/pnas.89.22.10915> — BLOSUM, cited as
+//!   the canonical example of a substitution matrix downstream users
+//!   might plug into a custom [`ScoringScheme`] implementation.
 
 /// Contract for an alignment scoring scheme.
 ///
