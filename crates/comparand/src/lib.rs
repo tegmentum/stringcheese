@@ -72,6 +72,13 @@ pub use comparand_index as index;
 /// `comparand-align` crate.
 pub use comparand_align as align;
 
+/// The `MinHash` subsystem: probabilistic Jaccard-similarity sketches
+/// and LSH banding for approximate-nearest-neighbor search at scale.
+/// K-permutation `MinHash` (Broder 1997) + weighted `MinHash`
+/// (Ioffe 2010 CWS) + banded LSH (Gionis-Indyk-Motwani 1999),
+/// re-exported unchanged from the `comparand-minhash` crate.
+pub use comparand_minhash as minhash;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.
