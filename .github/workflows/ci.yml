@@ -135,20 +135,31 @@ jobs:
   # ------------------------------------------------------------------
   # WebAssembly cross-compile.
   #
-  # This is the FIRST run of wasm compilation in CI for this project.
-  # `continue-on-error: true` is intentional: if any crate fails to build
-  # for wasm32, the job reports the failure without blocking the merge
-  # queue. The failure is aspirational-CI signal — once every crate
-  # cleanly cross-compiles, drop `continue-on-error`. Do not treat green
-  # here as a correctness guarantee until this note is removed.
+  # Every workspace crate that ships code (i.e. everything except the
+  # `comparand-bench` benchmark harness and the currently-empty
+  # `comparand-search`, `comparand-cdc`, `comparand-index` placeholder
+  # crates) is verified against both wasm targets under three feature
+  # configurations:
   #
-  # The `comparand-bench` crate is excluded because its harness depends
-  # on host-only benchmarking machinery.
+  #   * `--all-features`                       — every feature enabled
+  #   * `--no-default-features --features alloc` — no_std + alloc
+  #   * `--no-default-features`                — pure no_std, no alloc
+  #
+  # That's 11 crates × 2 targets × 3 feature-sets = 66 `cargo check`
+  # invocations. If a new alloc-capable crate lands, add it to `CRATES`.
+  # If a new placeholder crate lands with no code, it stays out until
+  # it carries an implementation.
+  #
+  # `wasm32-wasip1` has a real std (WASI syscalls, file I/O, timing);
+  # `wasm32-unknown-unknown` has no std beyond core primitives — see
+  # docs/wasm-build-recipes.md for the definitive matrix.
+  #
+  # `comparand-bench` is excluded because criterion depends on host-only
+  # timing/IO machinery; benchmark-harness code is not a wasm target.
   # ------------------------------------------------------------------
   wasm:
     name: wasm cross-compile (aspirational)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -163,15 +174,48 @@ jobs:
         with:
           key: wasm-stable
 
-      - name: cargo check --target wasm32-unknown-unknown
+      - name: cargo check — full (crate × target × features) matrix
         run: |
-          cargo check --workspace --exclude comparand-bench \
-            --all-features --target wasm32-unknown-unknown --locked
-
-      - name: cargo check --target wasm32-wasip1
-        run: |
-          cargo check --workspace --exclude comparand-bench \
-            --all-features --target wasm32-wasip1 --locked
+          set -euo pipefail
+          crates=(
+            comparand
+            comparand-core
+            comparand-corpus
+            comparand-levenshtein
+            comparand-hamming
+            comparand-jaro
+            comparand-damerau
+            comparand-ngram
+            comparand-unicode
+            comparand-phonetic
+            comparand-set-similarity
+          )
+          targets=(wasm32-wasip1 wasm32-unknown-unknown)
+          # Feature-set label -> flag string. Kept as parallel arrays so
+          # the loop below stays legible.
+          labels=(
+            "all-features"
+            "no-default+alloc"
+            "no-default"
+          )
+          flag_sets=(
+            "--all-features"
+            "--no-default-features --features alloc"
+            "--no-default-features"
+          )
+          for crate in "${crates[@]}"; do
+            for target in "${targets[@]}"; do
+              for i in 0 1 2; do
+                label="${labels[$i]}"
+                flags="${flag_sets[$i]}"
+                echo "::group::${crate} @ ${target} [${label}]"
+                # shellcheck disable=SC2086
+                cargo check -p "${crate}" --target "${target}" \
+                  ${flags} --locked
+                echo "::endgroup::"
+              done
+            done
+          done
 
   # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
