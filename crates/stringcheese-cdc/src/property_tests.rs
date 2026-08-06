@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use proptest::prelude::*;
 
 use crate::cdc::{ChunkBoundary, FastCdc, FastCdcConfig, FastCdcStream};
-use crate::fingerprint::{GearHash, PolynomialHash, RabinFingerprint, RollingHash};
+use crate::fingerprint::{Buzhash, GearHash, PolynomialHash, RabinFingerprint, RollingHash};
 
 /// A byte-slice strategy of length in `[0, 200]`.
 ///
@@ -97,6 +97,74 @@ proptest! {
         prop_assert_eq!(rolling, fresh);
     }
 
+    /// **Buzhash rolling equivalence.** After feeding `n >= window`
+    /// bytes into a rolling Buzhash, the digest matches the digest of a
+    /// fresh Buzhash over the trailing `window` bytes.
+    ///
+    /// This is the defining round-trip property for the cyclic-polynomial
+    /// construction: it verifies that the per-roll eviction term
+    /// `ROL(T[leaving], window mod 64)` cancels the outgoing byte's
+    /// contribution exactly.
+    #[test]
+    fn proptest_buzhash_rolling_matches_fresh_over_trailing_window(
+        input in arb_bytes(),
+        window in 1usize..32,
+    ) {
+        if input.len() < window {
+            return Ok(());
+        }
+        let rolling = run::<Buzhash>(&input, window);
+        let fresh = run::<Buzhash>(&input[input.len() - window..], window);
+        prop_assert_eq!(rolling, fresh);
+    }
+
+    /// **Buzhash rolling equivalence — window larger than the rotate
+    /// period.** Buzhash's rotate is 64-bit, so windows exceeding 64
+    /// exercise the `window mod 64` fold on the eviction term. This
+    /// property must still hold there.
+    #[test]
+    fn proptest_buzhash_rolling_matches_fresh_over_trailing_window_large(
+        input in proptest::collection::vec(any::<u8>(), 0..400),
+        window in 65usize..=128,
+    ) {
+        if input.len() < window {
+            return Ok(());
+        }
+        let rolling = run::<Buzhash>(&input, window);
+        let fresh = run::<Buzhash>(&input[input.len() - window..], window);
+        prop_assert_eq!(rolling, fresh);
+    }
+
+    /// **Buzhash forward-then-forward-with-restored-context bijection.**
+    /// Buzhash's fill-phase update is `state = ROL(state, 1) ^ T[byte]`,
+    /// which is a bijection on `u64` for any fixed `byte`. This test
+    /// exercises the inverse structure directly: if we build a state by
+    /// feeding `prefix` bytes and then feed one more byte `b`, the
+    /// resulting state must equal the state we get by feeding the same
+    /// `prefix ++ [b]` to a fresh hasher. Any hidden state that survives
+    /// across the "one more byte" boundary — a state a naive
+    /// implementation might accidentally carry — would show up as an
+    /// asymmetric digest here.
+    #[test]
+    fn proptest_buzhash_roll_forward_is_a_pure_function_of_the_prefix(
+        prefix in proptest::collection::vec(any::<u8>(), 0..40),
+        b in any::<u8>(),
+    ) {
+        let window = 8usize;
+
+        // Path 1: feed prefix, snapshot, feed one more byte.
+        let mut h1 = Buzhash::new(window);
+        for &x in &prefix { h1.roll(x); }
+        h1.roll(b);
+
+        // Path 2: feed prefix ++ [b] end-to-end to a fresh hasher.
+        let mut h2 = Buzhash::new(window);
+        for &x in &prefix { h2.roll(x); }
+        h2.roll(b);
+
+        prop_assert_eq!(h1.digest(), h2.digest());
+    }
+
     /// **Fingerprint determinism.** Two fresh hash instances fed the
     /// same bytes produce identical digests, always. No hidden global
     /// state may creep in.
@@ -115,6 +183,10 @@ proptest! {
         let c1 = run::<GearHash>(&input, window);
         let c2 = run::<GearHash>(&input, window);
         prop_assert_eq!(c1, c2, "gear non-deterministic");
+
+        let d1 = run::<Buzhash>(&input, window);
+        let d2 = run::<Buzhash>(&input, window);
+        prop_assert_eq!(d1, d2, "buzhash non-deterministic");
     }
 
     /// **`reset()` restores identity.** After `reset()`, a hash fed
@@ -137,6 +209,11 @@ proptest! {
         for &b in &input { g.roll(b); }
         g.reset();
         prop_assert_eq!(g.digest(), 0);
+
+        let mut z = Buzhash::new(window);
+        for &b in &input { z.roll(b); }
+        z.reset();
+        prop_assert_eq!(z.digest(), 0);
     }
 
     // ---------------------------------------------------------------

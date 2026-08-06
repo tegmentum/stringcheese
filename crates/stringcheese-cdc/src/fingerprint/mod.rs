@@ -2,7 +2,7 @@
 //!
 //! A rolling hash maintains a fixed-size sliding window over an input byte
 //! stream and reports a hash of the current window in `O(1)` per byte fed.
-//! StringCheese ships three families, distinguished by their numerical
+//! StringCheese ships four families, distinguished by their numerical
 //! properties:
 //!
 //! * [`RabinFingerprint`] — polynomial hash over `GF(2)`, defined by an
@@ -11,10 +11,14 @@
 //! * [`PolynomialHash`] — Horner-form polynomial over the Mersenne-61
 //!   prime field. Very fast; fine for cryptographically uninteresting
 //!   workloads such as n-gram set hashing or Rabin-Karp substring search.
+//! * [`Buzhash`] — Uzgalis's cyclic-polynomial rolling hash, a XOR of
+//!   rotate-left'd substitution-table entries. The `rsync` and `restic`
+//!   lineage of content-defined-chunking implementations use this
+//!   construction.
 //! * [`GearHash`] — the byte-indexed table-plus-shift hash that underlies
 //!   `FastCDC`. Extremely cheap per byte on modern superscalar CPUs.
 //!
-//! All three implement the [`RollingHash`] trait, so downstream code can
+//! All four implement the [`RollingHash`] trait, so downstream code can
 //! pick a fingerprint at instantiation time and continue against a uniform
 //! interface. Each implementation also exposes a `descriptor()` function
 //! returning an [`AlgorithmDescriptor`] that pins down the specific
@@ -23,12 +27,16 @@
 //!
 //! [`AlgorithmDescriptor`]: stringcheese_core::AlgorithmDescriptor
 
+#[cfg(feature = "alloc")]
+pub mod buzhash;
 pub mod gear;
 #[cfg(feature = "alloc")]
 pub mod polynomial;
 #[cfg(feature = "alloc")]
 pub mod rabin;
 
+#[cfg(feature = "alloc")]
+pub use buzhash::Buzhash;
 pub use gear::GearHash;
 #[cfg(feature = "alloc")]
 pub use polynomial::PolynomialHash;

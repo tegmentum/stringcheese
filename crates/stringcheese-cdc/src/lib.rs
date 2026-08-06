@@ -3,12 +3,12 @@
 //!
 //! This crate contains two cooperating subsystems:
 //!
-//! * **Rolling-hash fingerprints** — three families, each a small stateful
+//! * **Rolling-hash fingerprints** — four families, each a small stateful
 //!   struct that ingests bytes one at a time and reports a digest over the
 //!   most recent `window` bytes: [`RabinFingerprint`], [`PolynomialHash`],
-//!   and [`GearHash`]. All three implement the shared [`RollingHash`] trait
-//!   so consumers can pick one at instantiation time and continue against a
-//!   uniform interface.
+//!   [`Buzhash`], and [`GearHash`]. All four implement the shared
+//!   [`RollingHash`] trait so consumers can pick one at instantiation time
+//!   and continue against a uniform interface.
 //! * **Content-defined chunking (CDC)** — algorithms that consume a byte
 //!   stream and emit boundary offsets whose position depends on the *content*
 //!   rather than absolute byte counts. Version 0.1 ships one CDC algorithm,
@@ -41,8 +41,6 @@
 //! * **Rabin CDC** — the pre-`FastCDC` generation of content-defined chunking
 //!   algorithms. Superseded in practice by `FastCDC` on modern CPUs; deferred
 //!   as future work.
-//! * **Buzhash** — a byte-indexed XOR-and-rotate rolling hash. Not distinct
-//!   enough from the polynomial rolling hash for a 0.1 slot; deferred.
 //! * **SIMD backends** — every kernel here is scalar. SIMD variants live
 //!   under a future `simd` feature flag and must produce byte-identical
 //!   output to the scalar variant.
@@ -64,6 +62,6 @@ mod golden;
 mod property_tests;
 
 pub use cdc::{ChunkBoundary, FastCdc, FastCdcConfig, FastCdcIter, FastCdcStream};
-pub use fingerprint::{GearHash, RollingHash};
 #[cfg(feature = "alloc")]
-pub use fingerprint::{PolynomialHash, RabinFingerprint};
+pub use fingerprint::{Buzhash, PolynomialHash, RabinFingerprint};
+pub use fingerprint::{GearHash, RollingHash};

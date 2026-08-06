@@ -21,7 +21,8 @@ use alloc::{vec, vec::Vec};
 use stringcheese_corpus::{GoldenCase, GoldenSource};
 
 use crate::cdc::{ChunkBoundary, FastCdc, FastCdcConfig};
-use crate::fingerprint::{GearHash, PolynomialHash, RabinFingerprint, RollingHash};
+use crate::fingerprint::buzhash::BUZ_TABLE;
+use crate::fingerprint::{Buzhash, GearHash, PolynomialHash, RabinFingerprint, RollingHash};
 
 /// A fingerprint golden case: an input, window size, and expected digest.
 pub type FingerprintCase = GoldenCase<(&'static [u8], usize), u64>;
@@ -80,6 +81,53 @@ pub const POLYNOMIAL_CASES: &[FingerprintCase] = &[
         expected: 0x41_u64 * 257 + 0x42,
         source: GoldenSource::IndependentlyDerived,
         notes: "Two bytes 'AB': H = (0x41 * 257 + 0x42) mod (2^61-1) = 16769 + 66 = 16835.",
+        tags: &["basic", "two-byte"],
+    },
+];
+
+/// Buzhash golden cases.
+///
+/// The single-byte and two-byte expected values are derived at compile
+/// time from `BUZ_TABLE`, following the same table-derived pattern used
+/// for the Gear single-byte test. Because both `BUZ_TABLE` and
+/// `u64::rotate_left` are `const`, the derived expectations remain
+/// verifiable at compile time and cannot silently drift if the seed
+/// changes.
+pub const BUZHASH_CASES: &[FingerprintCase] = &[
+    GoldenCase {
+        id: "buzhash/empty",
+        descriptor: Buzhash::DESCRIPTOR,
+        input: (b"", 8),
+        expected: 0,
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Empty input: no bytes rolled, state remains at the identity zero.",
+        tags: &["basic", "empty"],
+    },
+    GoldenCase {
+        id: "buzhash/single-byte-A",
+        descriptor: Buzhash::DESCRIPTOR,
+        input: (b"A", 8),
+        expected: BUZ_TABLE[0x41],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Single byte 'A' (0x41): state = ROL(0, 1) ^ BUZ_TABLE[0x41] = BUZ_TABLE[0x41].",
+        tags: &["basic", "single-byte"],
+    },
+    GoldenCase {
+        id: "buzhash/single-byte-0xFF",
+        descriptor: Buzhash::DESCRIPTOR,
+        input: (b"\xFF", 8),
+        expected: BUZ_TABLE[0xFF],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Single byte 0xFF: state = BUZ_TABLE[0xFF]. Guards against a sign-extension bug on the byte-to-usize index.",
+        tags: &["basic", "single-byte"],
+    },
+    GoldenCase {
+        id: "buzhash/two-bytes-AB",
+        descriptor: Buzhash::DESCRIPTOR,
+        input: (b"AB", 8),
+        expected: BUZ_TABLE[0x41].rotate_left(1) ^ BUZ_TABLE[0x42],
+        source: GoldenSource::IndependentlyDerived,
+        notes: "Two bytes 'AB': state = ROL(BUZ_TABLE[0x41], 1) ^ BUZ_TABLE[0x42]. Exercises the one-bit rotate on the fill phase.",
         tags: &["basic", "two-byte"],
     },
 ];
@@ -197,9 +245,9 @@ impl FastCdcCase {
 ///
 /// Each entry is `(id, input, window)`. The property under test — a
 /// rolling digest after `n` bytes equals a fresh digest over the
-/// trailing `window` bytes — holds for Rabin and Polynomial exactly and
-/// for Gear when the window fits within Gear's effective 64-byte
-/// horizon.
+/// trailing `window` bytes — holds for Rabin, Polynomial, and Buzhash
+/// exactly and for Gear when the window fits within Gear's effective
+/// 64-byte horizon.
 pub const WINDOW_TRANSITION_CASES: &[(&str, &[u8], usize)] = &[
     ("window-transition/exactly-window", b"abcdefgh", 8),
     ("window-transition/window-plus-one", b"abcdefghX", 8),
@@ -211,7 +259,7 @@ pub const WINDOW_TRANSITION_CASES: &[(&str, &[u8], usize)] = &[
     ("window-transition/short-input", b"abc", 8),
 ];
 
-/// Pairs the spec calls out as distinguishing between the three
+/// Pairs the spec calls out as distinguishing between the four
 /// fingerprint families. Each entry is a `(id, bytes, window)`.
 pub const CROSS_FAMILY_DISTINCTIVENESS_CASES: &[(&str, &[u8], usize)] = &[
     ("cross/short-ascii", b"abcdef", 4),
@@ -259,6 +307,14 @@ mod tests {
                 case.id
             );
         }
+        for case in BUZHASH_CASES {
+            assert_eq!(
+                case.descriptor,
+                Buzhash::DESCRIPTOR,
+                "buzhash case {}",
+                case.id
+            );
+        }
     }
 
     #[test]
@@ -271,6 +327,9 @@ mod tests {
             ids.push(c.id);
         }
         for c in RABIN_CASES {
+            ids.push(c.id);
+        }
+        for c in BUZHASH_CASES {
             ids.push(c.id);
         }
         for c in FastCdcCase::corpus() {
@@ -288,6 +347,7 @@ mod tests {
         let total = GEAR_CASES.len()
             + POLYNOMIAL_CASES.len()
             + RABIN_CASES.len()
+            + BUZHASH_CASES.len()
             + FastCdcCase::corpus().len()
             + WINDOW_TRANSITION_CASES.len()
             + CROSS_FAMILY_DISTINCTIVENESS_CASES.len();
@@ -335,6 +395,19 @@ mod tests {
                 run_hash::<RabinFingerprint>(input, window),
                 case.expected,
                 "rabin case {}",
+                case.id
+            );
+        }
+    }
+
+    #[test]
+    fn buzhash_fixed_digest_cases_match_kernel() {
+        for case in BUZHASH_CASES {
+            let (input, window) = case.input;
+            assert_eq!(
+                run_hash::<Buzhash>(input, window),
+                case.expected,
+                "buzhash case {}",
                 case.id
             );
         }
@@ -388,6 +461,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn buzhash_rolling_matches_fresh_over_trailing_window() {
+        for &(id, input, window) in WINDOW_TRANSITION_CASES {
+            let trailing = if input.len() >= window {
+                &input[input.len() - window..]
+            } else {
+                input
+            };
+            let rolling = run_hash::<Buzhash>(input, window);
+            let fresh = run_hash::<Buzhash>(trailing, window);
+            assert_eq!(rolling, fresh, "buzhash {id}");
+        }
+    }
+
     // -------------------------------------------------------------------
     // Cross-family distinctiveness
     // -------------------------------------------------------------------
@@ -397,10 +484,14 @@ mod tests {
         for &(id, input, window) in CROSS_FAMILY_DISTINCTIVENESS_CASES {
             let rabin = run_hash::<RabinFingerprint>(input, window);
             let polynomial = run_hash::<PolynomialHash>(input, window);
+            let buzhash = run_hash::<Buzhash>(input, window);
             let gear = run_hash::<GearHash>(input, window);
             assert_ne!(rabin, polynomial, "rabin == polynomial on {id}");
+            assert_ne!(rabin, buzhash, "rabin == buzhash on {id}");
             assert_ne!(rabin, gear, "rabin == gear on {id}");
+            assert_ne!(polynomial, buzhash, "polynomial == buzhash on {id}");
             assert_ne!(polynomial, gear, "polynomial == gear on {id}");
+            assert_ne!(buzhash, gear, "buzhash == gear on {id}");
         }
     }
 
