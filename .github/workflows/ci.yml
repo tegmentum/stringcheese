@@ -354,7 +354,7 @@ jobs:
 
       - name: Cache ~/.cargo/bin (twiggy, cargo-component)
         id: cargo-bin-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/twiggy
