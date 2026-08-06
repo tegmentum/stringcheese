@@ -790,6 +790,7 @@ dependencies = [
  "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-index",
+ "stringcheese-lang",
  "stringcheese-manip",
  "stringcheese-phonetic",
  "stringcheese-unicode",
@@ -844,6 +845,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-en"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-lang",
+ "stringcheese-phonetic",
+]
+
+[[package]]
 name = "stringcheese-index"
 version = "0.1.0"
 dependencies = [
@@ -851,6 +861,15 @@ dependencies = [
  "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-corpus",
+]
+
+[[package]]
+name = "stringcheese-lang"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-core",
+ "stringcheese-phonetic",
 ]
 
 [[package]]

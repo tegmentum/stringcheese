@@ -78,6 +78,24 @@ pub use stringcheese_phonetic as phonetic;
 /// the `stringcheese-manip` crate.
 pub use stringcheese_manip as manip;
 
+/// The language-pack infrastructure: the `Language` trait, the
+/// `LanguageProvider` discovery trait, the `Stemmer` / `Collator` /
+/// `LanguagePhoneticEncoder` plugin points, and the `Stopwords` and
+/// `SimpleTokenizer` helper types. Re-exported unchanged from the
+/// `stringcheese-lang` crate.
+///
+/// # Language packs are opt-in
+///
+/// The umbrella facade re-exports `stringcheese-lang` because *every*
+/// language pack builds against its trait surface — but it does **not**
+/// re-export any specific `stringcheese-<lang>` crate. Language packs
+/// (`stringcheese-en`, `stringcheese-de`, `stringcheese-fr`, …) are
+/// per-language, opt-in dependencies: callers who need English pull in
+/// `stringcheese-en` explicitly, callers who don't pay nothing (not a
+/// byte of stopword list, not an entry in the stemmer's rule tables)
+/// at compile or runtime.
+pub use stringcheese_lang as lang;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `stringcheese` crate's semantic version.

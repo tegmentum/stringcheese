@@ -22,6 +22,7 @@ std = [
     "stringcheese-cdc/std",
     "stringcheese-index/std",
     "stringcheese-align/std",
+    "stringcheese-lang/std",
 ]
 alloc = [
     "stringcheese-core/alloc",
@@ -32,6 +33,7 @@ alloc = [
     "stringcheese-cdc/alloc",
     "stringcheese-index/alloc",
     "stringcheese-align/alloc",
+    "stringcheese-lang/alloc",
 ]
 
 [dependencies]
@@ -43,6 +45,10 @@ stringcheese-phonetic = { workspace = true }
 stringcheese-cdc = { workspace = true }
 stringcheese-index = { workspace = true }
 stringcheese-align = { workspace = true }
+# Language-pack infrastructure. Per-language packs (`stringcheese-en`,
+# etc.) are opt-in and NOT re-exported by this facade — callers pick
+# languages by direct dependency.
+stringcheese-lang = { workspace = true }
 
 [lints]
 workspace = true

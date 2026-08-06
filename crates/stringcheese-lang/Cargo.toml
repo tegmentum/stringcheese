@@ -1,0 +1,49 @@
+[package]
+name = "stringcheese-lang"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Language-pack infrastructure for the StringCheese toolkit: the Language trait, Stemmer / Collator / LanguagePhoneticEncoder plugin points, and shared helper types (Stopwords, SimpleTokenizer) that the per-language stringcheese-<lang> crates plug into."
+categories = ["text-processing", "internationalization", "no-std"]
+keywords = ["language", "stemming", "stopwords", "tokenizer", "phonetic"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "stringcheese-core/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. Every trait
+# object surface (`Language::stem` returns `Cow<'_, str>`; `tokenize`
+# returns `Box<dyn Iterator>`; `phonetic_encoder` returns
+# `Option<&dyn LanguagePhoneticEncoder>` with String keys) depends on
+# heap-allocating types from `alloc`. Without this feature the crate
+# compiles down to the borrow-only helpers (`Stopwords`,
+# `SimpleTokenizer`) — enough to link against on embedded targets
+# that only want the case-insensitive stopword membership check.
+alloc = ["stringcheese-core/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+# `stringcheese-phonetic` is the sanctioned home of `PhoneticEncoder`
+# (and its concrete Soundex / NYSIIS / Double Metaphone encoders); the
+# language-pack contract exposes phonetic encoding via a type-erased
+# wrapper trait defined here, and stringcheese-<lang> crates adapt the
+# phonetic crate's encoders through it.
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

@@ -94,12 +94,23 @@ inverted index for metric-space and set-similarity nearest-neighbor
 queries. Metric-space structures enforce metric properties at
 construction.
 
-**Language packs** (planned) — `stringcheese-<language>` (e.g.,
-`stringcheese-en`, `stringcheese-de`, `stringcheese-ja`, …).
+**Language-pack infrastructure** — `stringcheese-lang`. The
+`Language` trait, `LanguageProvider` discovery trait, `Stemmer` /
+`Collator` / `LanguagePhoneticEncoder` plugin points, and shared
+helper types (`Stopwords`, `SimpleTokenizer`) that every
+`stringcheese-<lang>` pack builds against. Data-only — no per-language
+implementations live here.
+
+**Language packs** — `stringcheese-<language>` (e.g.,
+`stringcheese-en`, planned: `stringcheese-de`, `stringcheese-ja`, …).
 Data-driven implementations of stemming, stopword lists,
 language-specific phonetic encoders, tokenization rules, collation
 tailoring, and morphological analysis — one opt-in crate per
-supported language.
+supported language. The `stringcheese-en` pack ships in v0.1 with a
+~150-word stopword list, the Porter (1980) stemmer, the default
+whitespace-and-punctuation tokenizer, and a Soundex phonetic hookup.
+Additional language packs land as the algorithm-family coverage
+matures.
 
 **Component-model globalization** (planned) — `stringcheese-icu-*`
 WIT interfaces and data packs. Callers instantiate just the
@@ -164,7 +175,9 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-cdc` | Rolling-hash fingerprints + FastCDC content-defined chunking |
 | `stringcheese-index` | Metric-space and set-similarity indexes: BK-tree, VP-tree, q-gram inverted |
 | `stringcheese-bench` | Criterion benchmarks + allocation-counting harness |
-| `stringcheese-<lang>` | Language-specific implementations (planned; one opt-in crate per language) |
+| `stringcheese-lang` | Language-pack infrastructure: `Language` trait, `Stemmer` / `Collator` / `LanguagePhoneticEncoder` plugin points, `Stopwords` and `SimpleTokenizer` helpers |
+| `stringcheese-en` | English pack: ~150-word stopword list, Porter (1980) stemmer, simple tokenizer, Soundex phonetic hookup |
+| `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
 | `stringcheese-icu-*` | WIT interfaces + SCUD data packs for i18n (planned) |
 
 The scope boundary is a coherent commitment, not a fence against
