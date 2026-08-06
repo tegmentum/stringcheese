@@ -19,6 +19,7 @@ members = [
     "crates/comparand-index",
     "crates/comparand-align",
     "crates/comparand-minhash",
+    "crates/comparand-linkage",
 ]
 exclude = [
     "fuzz",
@@ -61,6 +62,7 @@ comparand-set-similarity = { version = "0.1.0", path = "crates/comparand-set-sim
 comparand-lcs = { version = "0.1.0", path = "crates/comparand-lcs", default-features = false }
 comparand-align = { version = "0.1.0", path = "crates/comparand-align", default-features = false }
 comparand-minhash = { version = "0.1.0", path = "crates/comparand-minhash", default-features = false }
+comparand-linkage = { version = "0.1.0", path = "crates/comparand-linkage", default-features = false }
 
 [profile.release]
 lto = "thin"
