@@ -13,13 +13,22 @@ keywords = ["string", "text", "manipulation", "no-std", "wasm"]
 [features]
 default = ["std"]
 # When enabled, the crate uses the standard library. Also implies `alloc`.
-std = ["alloc", "stringcheese-core/std", "stringcheese-unicode/std"]
+std = [
+    "alloc",
+    "stringcheese-core/std",
+    "stringcheese-unicode/std",
+    "stringcheese-compare/std",
+]
 # When enabled, the crate may use heap-allocating types from `alloc`.
 # Grapheme-aware inspect helpers, the owned `String`-returning case
 # transformations, and the `Trim` configured operation all require this
 # feature. Without it the crate exposes only the borrowing zero-alloc
 # subset (byte / scalar inspects and the trim free functions).
-alloc = ["stringcheese-core/alloc", "stringcheese-unicode/alloc"]
+alloc = [
+    "stringcheese-core/alloc",
+    "stringcheese-unicode/alloc",
+    "stringcheese-compare/alloc",
+]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -27,6 +36,10 @@ stringcheese-core = { workspace = true }
 # iteration and case folding — `stringcheese-manip` never depends on the
 # ICU / unicode-* crates directly, so all Unicode data lives in one place.
 stringcheese-unicode = { workspace = true }
+# `stringcheese-compare::search` provides the substring-search kernels;
+# `replace::replace_many` uses Aho-Corasick to run many needle→replacement
+# substitutions in a single pass over the input.
+stringcheese-compare = { workspace = true }
 
 [dev-dependencies]
 

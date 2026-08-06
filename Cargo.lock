@@ -858,6 +858,7 @@ name = "stringcheese-manip"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-compare",
  "stringcheese-core",
  "stringcheese-unicode",
 ]

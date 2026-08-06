@@ -119,40 +119,11 @@ extern crate alloc;
 
 pub mod case;
 pub mod inspect;
+pub mod join;
+pub mod normalize;
+pub mod replace;
+pub mod split;
 pub mod trim;
-
-/// Divide a string into pieces: by scalar, by pattern, by predicate,
-/// by Unicode boundary (word / sentence / grapheme).
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod split {}
-
-/// Combine pieces back: `Vec<&str>` join, iterator join,
-/// allocation-free join over a pre-sized buffer.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod join {}
-
-/// Substitute matches: single-shot, all-instances, pattern-callback,
-/// budget-limited.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod replace {}
-
-/// Canonicalize shape: collapse whitespace, normalize line endings,
-/// strip control characters, NFC/NFD/NFKC/NFKD (delegated to
-/// `stringcheese-unicode`).
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod normalize {}
 
 /// Pad to a target width: left, right, center; by scalar width or
 /// display width.
