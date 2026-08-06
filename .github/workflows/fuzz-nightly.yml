@@ -64,7 +64,7 @@ jobs:
           - ngram_count_agreement
           - metric_axioms_levenshtein
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cargo-fuzz requires a nightly toolchain (libfuzzer-sys needs the
       # -Zsanitizer flags). We deliberately do NOT pin to a specific nightly
