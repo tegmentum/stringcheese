@@ -19,7 +19,6 @@ use crate::bk_tree::BkTree;
 use crate::error::NotAMetricError;
 use crate::prefix_filter::length_filter;
 use crate::qgram_index::QgramIndex;
-use crate::sorted_neighborhood::SortedNeighborhoodBlocker;
 use crate::vp_tree::VpTree;
 
 /// A short byte-slice strategy over a small alphabet.
@@ -214,78 +213,6 @@ proptest! {
             depth <= bound,
             "bulk-built tree unexpectedly deep: n={n} depth={depth} bound={bound}"
         );
-    }
-
-    /// Coverage: with `window_size >= corpus.len()`, every unordered pair
-    /// of distinct positions must appear in the candidate set.
-    #[test]
-    fn sorted_neighborhood_coverage(
-        items in proptest::collection::vec(0u32..1000, 2..12),
-    ) {
-        let n = items.len();
-        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
-        let pairs = blocker.candidate_pairs(n);
-        for i in 0..n {
-            for j in (i + 1)..n {
-                prop_assert!(
-                    pairs.binary_search(&(i, j)).is_ok(),
-                    "full-window blocker missed pair ({i},{j})"
-                );
-            }
-        }
-        // And no unexpected extras.
-        prop_assert_eq!(pairs.len(), n * (n - 1) / 2);
-    }
-
-    /// Pair-count bound: `|candidate_pairs(w)| ≤ N · w` for every window.
-    #[test]
-    fn sorted_neighborhood_pair_count_bound(
-        items in proptest::collection::vec(0u32..1000, 1..20),
-        w in 0usize..8,
-    ) {
-        let n = items.len();
-        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
-        let pairs = blocker.candidate_pairs(w);
-        prop_assert!(
-            pairs.len() <= n.saturating_mul(w),
-            "candidate_pairs({w}) yielded {} > N*w = {}",
-            pairs.len(),
-            n * w
-        );
-    }
-
-    /// Window bound: `candidates_of(i, w)` returns at most `2 * w` items.
-    #[test]
-    fn sorted_neighborhood_candidates_of_bound(
-        items in proptest::collection::vec(0u32..1000, 1..20),
-        w in 0usize..8,
-    ) {
-        let n = items.len();
-        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
-        for i in 0..n {
-            let c = blocker.candidates_of(i, w);
-            prop_assert!(
-                c.len() <= 2usize.saturating_mul(w),
-                "candidates_of({i},{w}) returned {} > 2w",
-                c.len()
-            );
-            // And the item itself is never included.
-            prop_assert!(!c.contains(&i), "candidates_of included self");
-        }
-    }
-
-    /// Determinism: building the blocker twice from the same input must
-    /// yield identical candidate sets. This is worth checking as a
-    /// property because ties at a key mean the sort must be *stable* to
-    /// give reproducible output, which is easy to break silently.
-    #[test]
-    fn sorted_neighborhood_determinism(
-        items in proptest::collection::vec(0u32..8, 1..12),
-        w in 0usize..6,
-    ) {
-        let a = SortedNeighborhoodBlocker::new(items.clone(), |&x| x);
-        let b = SortedNeighborhoodBlocker::new(items, |&x| x);
-        prop_assert_eq!(a.candidate_pairs(w), b.candidate_pairs(w));
     }
 
     /// Length-filter soundness: the filter's output must be a *superset*

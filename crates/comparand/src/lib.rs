@@ -79,12 +79,6 @@ pub use comparand_align as align;
 /// re-exported unchanged from the `comparand-minhash` crate.
 pub use comparand_minhash as minhash;
 
-/// The probabilistic record-linkage subsystem: the Fellegi-Sunter
-/// (1969) classifier that combines per-field similarities into a
-/// match / non-match / possible-match decision at record scale,
-/// re-exported unchanged from the `comparand-linkage` crate.
-pub use comparand_linkage as linkage;
-
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.

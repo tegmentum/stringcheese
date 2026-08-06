@@ -28,13 +28,6 @@
 //!   generator, not a metric-space index: for a query with gram set `G`, it
 //!   returns items whose gram overlap with `G` could conceivably meet a
 //!   threshold without computing full similarities.
-//! * [`SortedNeighborhoodBlocker`] — the classic sorted-neighborhood
-//!   candidate generator: sort the corpus by a caller-supplied key (a
-//!   phonetic code, a prefix, a normalized birthdate) and slide a
-//!   fixed-size window to emit candidate pairs from within each window.
-//!   Doesn't need a metric — only that keys implement [`Ord`] — so it
-//!   composes cleanly with non-metric encodings that the tree-based
-//!   indexes cannot accept.
 //!
 //! Together with the small [`length_filter`] helper (a q-gram-friendly length
 //! prune based on the Jaccard length bound), these are the pieces most
@@ -80,13 +73,17 @@
 //! This mirrors the fallible-vs-panicking split already established in
 //! `comparand-hamming` for equal-length inputs.
 //!
-//! # Deferred structures
+//! # Related structures elsewhere
 //!
-//! `MinHash` and locality-sensitive hashing are intentionally out of scope
-//! for this crate: both are probabilistic and deserve their own crate with
-//! dedicated statistical tests. Sorted-neighborhood blocking, initially
-//! also deferred, is small enough to live here as
-//! [`SortedNeighborhoodBlocker`].
+//! * `MinHash` and locality-sensitive hashing live in the sibling
+//!   `comparand-minhash` crate — both are probabilistic and warrant their
+//!   own statistical tests.
+//! * **Sorted-neighborhood blocking** — extracted to the separate
+//!   `record-linkage` library. It is unambiguously an entity-resolution
+//!   technique (Hernández & Stolfo 1995 is a record-linkage paper); the
+//!   generic metric-space and set-similarity index structures here stay,
+//!   but candidate generation for record linkage lives with the
+//!   record-linkage decision layer.
 //!
 //! # Sequence type
 //!
@@ -124,8 +121,6 @@ pub mod prefix_filter;
 #[cfg(feature = "alloc")]
 pub mod qgram_index;
 #[cfg(feature = "alloc")]
-pub mod sorted_neighborhood;
-#[cfg(feature = "alloc")]
 pub mod vp_tree;
 
 #[cfg(all(test, feature = "alloc"))]
@@ -142,7 +137,5 @@ pub use error::NotAMetricError;
 pub use prefix_filter::length_filter;
 #[cfg(feature = "alloc")]
 pub use qgram_index::QgramIndex;
-#[cfg(feature = "alloc")]
-pub use sorted_neighborhood::SortedNeighborhoodBlocker;
 #[cfg(feature = "alloc")]
 pub use vp_tree::VpTree;

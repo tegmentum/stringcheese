@@ -488,19 +488,8 @@ Linkage, Entity Resolution, and Duplicate Detection*. Data-Centric Systems
 and Applications. Springer. ISBN 978-3-642-31163-5.
 DOI: https://doi.org/10.1007/978-3-642-31164-2
 
-Cited by: `comparand-index` (modern reference for blocking, indexing,
-and candidate-generation strategies), `comparand-set-similarity`
-(overview of similarity measures in the entity-resolution context).
-
-### Hernández & Stolfo (1995)
-
-Hernández, M. A., & Stolfo, S. J. (1995). "The merge/purge problem for
-large databases." In *Proceedings of the 1995 ACM SIGMOD International
-Conference on Management of Data*, pp. 127–138.
-DOI: https://doi.org/10.1145/223784.223807
-
-Cited by: `comparand-index` (sorted-neighborhood method; sliding-window
-blocking over a sort key).
+Cited by: `comparand-set-similarity` (overview of similarity measures
+in the entity-resolution context).
 
 ### Sarawagi & Kirpal (2004)
 

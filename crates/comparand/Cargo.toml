@@ -29,7 +29,6 @@ std = [
     "comparand-index/std",
     "comparand-align/std",
     "comparand-minhash/std",
-    "comparand-linkage/std",
 ]
 alloc = [
     "comparand-core/alloc",
@@ -47,7 +46,6 @@ alloc = [
     "comparand-index/alloc",
     "comparand-align/alloc",
     "comparand-minhash/alloc",
-    "comparand-linkage/alloc",
 ]
 
 [dependencies]
@@ -66,7 +64,6 @@ comparand-cdc = { workspace = true }
 comparand-index = { workspace = true }
 comparand-align = { workspace = true }
 comparand-minhash = { workspace = true }
-comparand-linkage = { workspace = true }
 
 [lints]
 workspace = true

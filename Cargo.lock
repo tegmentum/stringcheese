@@ -157,7 +157,6 @@ dependencies = [
  "comparand-jaro",
  "comparand-lcs",
  "comparand-levenshtein",
- "comparand-linkage",
  "comparand-minhash",
  "comparand-ngram",
  "comparand-phonetic",
@@ -262,16 +261,6 @@ version = "0.1.0"
 dependencies = [
  "comparand-core",
  "comparand-corpus",
- "proptest",
-]
-
-[[package]]
-name = "comparand-linkage"
-version = "0.1.0"
-dependencies = [
- "comparand-core",
- "comparand-corpus",
- "comparand-jaro",
  "proptest",
 ]
 

@@ -37,6 +37,41 @@ of known algorithms. The goal is to provide a coherent, semantically rigorous
 comparison framework where the meaning, properties, costs, and limitations
 of every comparison are explicit.
 
+## Scope
+
+Comparand's mission is **string comparison** — given two sequences,
+produce a distance, similarity, alignment, phonetic key, or match
+result whose semantics are precise, whose cost is inspectable, and
+whose correctness is testable.
+
+Two adjacent problem spaces are **deliberately out of scope** and live
+in separate downstream libraries:
+
+- **String manipulation** — tokenization, splitting, joining, general
+  string transformation beyond what a comparison requires as
+  preprocessing. Comparand's `comparand-unicode` preprocessing
+  pipeline is explicitly comparison-oriented (normalize before
+  comparing); general-purpose string manipulation belongs elsewhere.
+
+- **Record linkage** — combining per-field comparisons into whole-record
+  match/non-match decisions, blocking strategies, learned or
+  probabilistic classifiers that consume per-field scores. Comparand
+  supplies the per-field scores; deciding whether two records refer to
+  the same real-world entity is a downstream concern.
+  See [record-linkage](https://github.com/zacharywhitley/record-linkage)
+  for the sibling library that implements the Fellegi-Sunter classifier
+  and sorted-neighborhood blocking on top of Comparand.
+
+The scope boundary is a coherent commitment, not a fence against
+convenience. Sketches, small helpers, or "we already computed the
+number, we may as well combine them" utilities that drift into these
+adjacent spaces belong in the downstream libraries.
+
+Historically Comparand shipped a `comparand-linkage` crate and a
+`sorted_neighborhood` module in `comparand-index`; both were
+extracted to the sibling record-linkage repo when this scope decision
+crystallized. See the extraction commit for the migration record.
+
 ## Philosophy
 
 Most comparison algorithms have existed for decades.
