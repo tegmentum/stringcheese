@@ -9,16 +9,17 @@
 //!
 //! # Status
 //!
-//! **First wave shipped in v0.1.** Three modules — [`inspect`], [`trim`],
-//! and [`case`] — carry real implementations; every other module below is
-//! still a placeholder whose doc comment records the intended scope. Items
-//! land in follow-on releases, module-by-module.
+//! **Second wave shipped in v0.1.** Eleven modules — [`inspect`], [`trim`],
+//! [`case`], [`split`], [`join`], [`replace`], [`normalize`],
+//! [`mod@slice`], [`find`], [`pad`], and [`lines`] — carry real
+//! implementations. The remaining four modules ([`escape`], [`quote`],
+//! [`template`], [`pipeline`]) are still placeholders whose doc comments
+//! record the intended scope. Items land in follow-on releases,
+//! module-by-module.
 //!
 //! Depending on `stringcheese-manip` today is safe — the crate compiles
 //! and re-releases will only *add* items, never remove them at this
-//! pre-1.0 stage. Callers who need manipulation the shipped modules do not
-//! yet cover should reach for the standard library and re-evaluate as more
-//! modules populate.
+//! pre-1.0 stage.
 //!
 //! # Design commitments
 //!
@@ -69,21 +70,26 @@
 //! - [`normalize`] — canonicalize shape: collapse whitespace, normalize
 //!   line endings, strip control characters, NFC/NFD/NFKC/NFKD (delegated
 //!   to `stringcheese-unicode`).
-//! - [`pad`] — pad to a target width: left, right, center; by scalar
-//!   width or display width.
-//! - `slice` — extract a substring at the right boundary: bytes, scalars,
-//!   graphemes; safe against splitting a multi-scalar grapheme.
+//! - [`pad`] — *shipped.* Pad to a target width: left, right, center; by
+//!   scalar count or byte count. Display-width variants are scaffolded
+//!   pending upstream `stringcheese-unicode` display-width support.
+//! - [`mod@slice`] — *shipped.* Extract a substring at the right boundary:
+//!   bytes (returns `Option` on non-boundary), scalars, graphemes; plus
+//!   `take` / `drop` first-`n` / after-`n` helpers at every level.
 //!   (Module name shadows the primitive `slice` for rustdoc-linking
 //!   purposes; use `stringcheese_manip::slice::…` explicitly.)
-//! - [`find`] — locate matches: `find`, `find_all`, `contains`,
-//!   `starts_with`, `ends_with` — thin ergonomic wrappers over the
-//!   substring-search kernels in `stringcheese-compare::search`.
+//! - [`find`] — *shipped.* Locate matches: `find`, `find_all`, `rfind`,
+//!   `contains`, `starts_with`, `ends_with`, `count_matches`, plus the
+//!   multi-pattern `find_any` — thin ergonomic wrappers that delegate to
+//!   the substring-search kernels in `stringcheese-compare::search`.
 //! - [`escape`] — encode for a target syntax: HTML, JSON, shell,
 //!   percent-encoding, C-string.
 //! - [`quote`] — wrap in delimiters: single, double, backtick, custom;
 //!   with escaping to make the result parseable.
-//! - [`lines`] — line-oriented operations: iterate lines, non-empty
-//!   lines, prefix / suffix lines, trim per line.
+//! - [`lines`] — *shipped.* Line-oriented operations: iterate lines
+//!   (with or without terminators), non-empty lines, prefix / suffix
+//!   lines, trim per line, plus `dedent` and `indent` for Python-style
+//!   block-level whitespace shaping.
 //! - [`template`] — placeholder substitution: `{name}` interpolation
 //!   from a map, positional `{0}` args, escape rules for literal
 //!   braces.
@@ -117,38 +123,20 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+// Modules shipped with real implementations (11 of 15). Empty-brace stubs
+// remain below for modules that still ship as scaffolds; their doc
+// comments record the intended scope for readers of `docs/DESIGN.md`.
 pub mod case;
+pub mod find;
 pub mod inspect;
 pub mod join;
+pub mod lines;
 pub mod normalize;
+pub mod pad;
 pub mod replace;
+pub mod slice;
 pub mod split;
 pub mod trim;
-
-/// Pad to a target width: left, right, center; by scalar width or
-/// display width.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod pad {}
-
-/// Extract a substring at the right boundary: bytes, scalars, graphemes;
-/// safe against splitting a multi-scalar grapheme.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod slice {}
-
-/// Locate matches: `find`, `find_all`, `contains`, `starts_with`,
-/// `ends_with` — thin ergonomic wrappers over the substring-search
-/// kernels in `stringcheese-compare::search`.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod find {}
 
 /// Encode for a target syntax: HTML, JSON, shell, percent-encoding,
 /// C-string.
@@ -165,14 +153,6 @@ pub mod escape {}
 ///
 /// Scaffold only — no items shipped yet.
 pub mod quote {}
-
-/// Line-oriented operations: iterate lines, non-empty lines, prefix /
-/// suffix lines, trim per line.
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod lines {}
 
 /// Placeholder substitution: `{name}` interpolation from a map,
 /// positional `{0}` args, escape rules for literal braces.

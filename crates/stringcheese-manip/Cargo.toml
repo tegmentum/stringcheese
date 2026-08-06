@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Unicode-aware and allocation-conscious; three modules ship in v0.1 (inspect, trim, case), remaining modules land in subsequent releases."
+description = "String manipulation for the StringCheese toolkit: inspect, trim, case, split, join, replace, normalize, pad, slice, find, escape, quote, lines, template. Unicode-aware and allocation-conscious; 11 of 15 modules ship in v0.1 (escape, quote, template, pipeline remain scaffold and land in subsequent releases)."
 categories = ["text-processing", "no-std"]
 keywords = ["string", "text", "manipulation", "no-std", "wasm"]
 
@@ -36,9 +36,12 @@ stringcheese-core = { workspace = true }
 # iteration and case folding — `stringcheese-manip` never depends on the
 # ICU / unicode-* crates directly, so all Unicode data lives in one place.
 stringcheese-unicode = { workspace = true }
-# `stringcheese-compare::search` provides the substring-search kernels;
-# `replace::replace_many` uses Aho-Corasick to run many needle→replacement
-# substitutions in a single pass over the input.
+# `stringcheese-compare::search` is the sanctioned delegation target for
+# substring-search kernels (KMP, Aho-Corasick, ...) — `stringcheese-manip`
+# routes `find`, `find_all`, `find_any`, and `replace::replace_many`
+# through those algorithms rather than reimplementing them (Aho-Corasick
+# in particular lets `replace_many` run many needle→replacement
+# substitutions in one linear pass).
 stringcheese-compare = { workspace = true }
 
 [dev-dependencies]
