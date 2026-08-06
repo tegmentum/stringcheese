@@ -3,18 +3,21 @@ resolver = "3"
 members = [
     "crates/comparand",
     "crates/comparand-core",
-    "crates/comparand-unicode",
-    "crates/comparand-phonetic",
     "crates/comparand-search",
     "crates/comparand-cdc",
     "crates/comparand-index",
     "crates/comparand-corpus",
-    "crates/comparand-bench",
     "crates/comparand-levenshtein",
     "crates/comparand-hamming",
     "crates/comparand-jaro",
     "crates/comparand-damerau",
     "crates/comparand-ngram",
+    "crates/comparand-unicode",
+]
+exclude = [
+    "crates/comparand-phonetic",
+    "crates/comparand-bench",
+    "fuzz",
 ]
 
 [workspace.package]

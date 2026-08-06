@@ -45,6 +45,13 @@ pub use comparand_damerau as damerau;
 /// re-exported unchanged from the `comparand-ngram` crate.
 pub use comparand_ngram as ngram;
 
+/// The Unicode preprocessing subsystem: NFC/NFD/NFKC/NFKD normalization,
+/// full Unicode case folding, grapheme-cluster segmentation with an
+/// `IndexableSequence` bridge, diacritic stripping, and a composable
+/// `PreprocessingPipeline` builder, re-exported unchanged from the
+/// `comparand-unicode` crate.
+pub use comparand_unicode as unicode;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `comparand` crate's semantic version.
