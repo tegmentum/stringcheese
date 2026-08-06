@@ -19,7 +19,9 @@
 //! * an *inside* subtree containing items at distance `≤ threshold` from the
 //!   vantage;
 //! * an *outside* subtree containing items at distance `> threshold` from
-//!   the vantage.
+//!   the vantage (or `≥ threshold` for trees produced by
+//!   [`VpTree::from_corpus`] — the pruning derivations below cover both
+//!   cases).
 //!
 //! [`VpTree::insert`] descends the tree, computing the distance from the new
 //! item to each vantage-point along the way and following whichever side of
@@ -28,8 +30,26 @@
 //! threshold at the previous level is set to the distance we just computed.
 //! This is a naive incremental construction: it is correct but does not
 //! attempt to rebalance, so on adversarial insertion orders the tree may
-//! degenerate into a path. Bulk construction with median-based thresholds
-//! is a natural extension and lands as future work.
+//! degenerate into a path.
+//!
+//! [`VpTree::from_corpus`] (and its fallible cousin
+//! [`VpTree::try_from_corpus`]) build a balanced tree from a full corpus in
+//! one shot. At each recursive level the constructor picks the first item
+//! as the vantage, computes its distance to every other item at that
+//! level, partitions the items *by position* around the median (found in
+//! expected linear time via [`slice::select_nth_unstable_by_key`]), and
+//! recurses on each half. Because the split is by position rather than by
+//! strict threshold, ties at the median do not unbalance the tree — inside
+//! always receives exactly `n/2` items — and the depth stays `O(log n)`
+//! even on highly repetitive corpora. The tradeoff is a slightly relaxed
+//! invariant that outside items satisfy `d(x, v) ≥ threshold` (instead of
+//! the strict `>` that incremental insertion produces); the pruning
+//! derivations below use `≥` on the outside side either way, so the
+//! [`VpTree::find_within`] and [`VpTree::find_k_nearest`] traversal is
+//! unchanged and both construction strategies return the same result
+//! sets.
+//!
+//! [`slice::select_nth_unstable_by_key`]: https://doc.rust-lang.org/std/primitive.slice.html#method.select_nth_unstable_by_key
 //!
 //! # How range queries prune
 //!
@@ -208,13 +228,106 @@ where
         &self.metric
     }
 
+    /// Returns the maximum depth of the tree, in nodes, counting the root
+    /// itself as depth `1`. An empty tree has depth `0`. Intended for tests
+    /// and diagnostics that want to observe how balanced the constructed
+    /// tree is.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn max_depth(&self) -> usize {
+        fn depth<T, D: Ord>(node: &Node<T, D>) -> usize {
+            let l = node.inside.as_deref().map_or(0, depth);
+            let r = node.outside.as_deref().map_or(0, depth);
+            1 + l.max(r)
+        }
+        self.root.as_ref().map_or(0, depth)
+    }
+
+    /// Builds a balanced VP-tree from a corpus in one shot.
+    ///
+    /// At each recursive level the first item is chosen as the vantage,
+    /// distances from the vantage to every other item at that level are
+    /// computed, and the *median* of those distances is picked as the
+    /// threshold via [`slice::select_nth_unstable_by_key`] (expected linear
+    /// time). Items with distance `≤ threshold` recurse into the inside
+    /// subtree; items with distance `> threshold` recurse into the outside
+    /// subtree — the same partition invariant that
+    /// [`VpTree::insert`] maintains, so [`VpTree::find_within`] and
+    /// [`VpTree::find_k_nearest`] work identically against both.
+    ///
+    /// Query results are guaranteed to match the incrementally-built tree's
+    /// results as sets. Physical order of items in each result is not
+    /// stable across construction strategies — sort at the call site if a
+    /// specific ordering is required.
+    ///
+    /// # Vantage-point selection
+    ///
+    /// The constructor picks the *first* remaining item at each level as the
+    /// vantage. This is the simplest correct choice; more sophisticated
+    /// strategies — random sampling, farthest-from-parent — are documented
+    /// in the literature (Yianilos '93) and can improve pruning in
+    /// clustered data, but are not implemented here.
+    ///
+    /// # Complexity
+    ///
+    /// * *Time.* `O(n log² n)` on average: at each of the `O(log n)`
+    ///   recursion levels the constructor computes `O(n)` distances and
+    ///   partitions in expected `O(n)`; the `log n` factor comes from the
+    ///   recursion depth on a balanced tree.
+    /// * *Space.* `O(n)` for the tree plus `O(n)` transient allocations for
+    ///   the per-level distance buffer.
+    ///
+    /// # Balance and pathological inputs
+    ///
+    /// Ties at the median (multiple items sharing the median distance from
+    /// the vantage) all land on the inside side to preserve the `d ≤ t`
+    /// invariant. On a corpus where every item has the same distance from
+    /// every vantage the tree still degenerates into a path — correctness
+    /// is unaffected, but average-depth guarantees are lost.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `metric.properties()` does not satisfy
+    /// [`MetricProperties::is_metric()`]. Use
+    /// [`VpTree::try_from_corpus`] for a fallible version.
+    ///
+    /// [`MetricProperties::is_metric()`]: comparand_core::MetricProperties::is_metric
+    /// [`slice::select_nth_unstable_by_key`]: https://doc.rust-lang.org/std/primitive.slice.html#method.select_nth_unstable_by_key
+    #[must_use]
+    pub fn from_corpus(metric: M, items: Vec<Vec<T>>) -> Self {
+        match Self::try_from_corpus(metric, items) {
+            Ok(t) => t,
+            Err(e) => panic!("VpTree requires a true metric: {e}"),
+        }
+    }
+
+    /// Fallible sibling of [`VpTree::from_corpus`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotAMetricError`] carrying the observed
+    /// [`MetricProperties`] when `metric.properties().is_metric()` is
+    /// `false`. The corpus is not consumed on error.
+    ///
+    /// [`MetricProperties`]: comparand_core::MetricProperties
+    pub fn try_from_corpus(metric: M, items: Vec<Vec<T>>) -> Result<Self, NotAMetricError> {
+        let props = metric.properties();
+        if !props.is_metric() {
+            return Err(NotAMetricError::new(props));
+        }
+        let len = items.len();
+        let root = build_bulk(&metric, items);
+        Ok(Self { metric, root, len })
+    }
+
     /// Inserts `item` into the tree.
     ///
     /// This is a naive incremental construction: the descent follows the
     /// current threshold at each node without rebalancing. Adversarial
     /// insertion orders can produce a degenerate path; the correctness of
     /// range and k-NN queries is unaffected but the query cost approaches
-    /// `O(n)`.
+    /// `O(n)`. For balanced construction from a known corpus use
+    /// [`VpTree::from_corpus`].
     pub fn insert(&mut self, item: Vec<T>) {
         let Some(root) = self.root.as_mut() else {
             self.root = Some(Node::new(item));
@@ -310,6 +423,110 @@ impl<T, D: Ord> Ord for HeapEntry<T, D> {
         // candidate.
         self.distance.cmp(&other.distance)
     }
+}
+
+/// Recursive median-partition builder backing [`VpTree::from_corpus`].
+///
+/// Picks the first remaining item as the vantage, computes distances from
+/// it to every other item, then splits *by position* around the median via
+/// [`slice::select_nth_unstable_by_key`] (expected linear time). Items at
+/// sorted positions `[0, mid)` recurse into the inside subtree; items at
+/// sorted positions `[mid, n)` recurse into the outside subtree.
+///
+/// # Splitting by position, not by threshold
+///
+/// The naive alternative — pick `threshold = median` and route items by
+/// `d ≤ threshold` vs `d > threshold` — is unbalanced whenever multiple
+/// items share the median distance from the vantage, because every tied
+/// item is forced onto one side to preserve the strict invariant. Small
+/// alphabets on integer metrics produce exactly this pathology.
+///
+/// Splitting by position instead lets ties fall across the boundary
+/// naturally: inside always gets exactly `mid = n/2` items and outside
+/// gets the rest, regardless of how many ties sit at the median. The
+/// stored `threshold` is set to `annotated[mid].distance` (the smallest
+/// distance in the outside partition), which
+/// [`slice::select_nth_unstable_by_key`] guarantees is `≥` every distance
+/// in the inside partition. The relaxed invariant this preserves is
+///
+/// * inside items have `d(x, v) ≤ threshold`;
+/// * outside items have `d(x, v) ≥ threshold`;
+///
+/// which is exactly what [`find_within_at`] and [`k_nearest_at`] need for
+/// their pruning bounds — the derivations in the module docs work
+/// unchanged with `≥` in place of `>` on the outside side.
+///
+/// [`slice::select_nth_unstable_by_key`]: https://doc.rust-lang.org/std/primitive.slice.html#method.select_nth_unstable_by_key
+fn build_bulk<T, M>(metric: &M, items: Vec<Vec<T>>) -> Option<Node<T, M::Output>>
+where
+    T: Clone,
+    M: DistanceMetric<[T]>,
+    M::Output: Ord + Copy,
+{
+    if items.is_empty() {
+        return None;
+    }
+    let mut iter = items.into_iter();
+    // Safe: we just checked non-emptiness above.
+    let vantage = iter.next().expect("non-empty by prior check");
+    let rest: Vec<Vec<T>> = iter.collect();
+    if rest.is_empty() {
+        return Some(Node::new(vantage));
+    }
+
+    // Annotate every remaining item with its distance from the vantage.
+    let mut annotated: Vec<(Vec<T>, M::Output)> = rest
+        .into_iter()
+        .map(|item| {
+            let d = metric.distance(&vantage, &item).into_inner();
+            (item, d)
+        })
+        .collect();
+
+    // Partition around the mid position via select_nth (expected O(n)).
+    // Post-condition: annotated[..mid] all have distance ≤ annotated[mid],
+    // and annotated[mid+1..] all have distance ≥ annotated[mid].
+    let n = annotated.len();
+    let mid = n / 2;
+    if mid == 0 {
+        // n == 1: only one non-vantage item. Put it in the outside
+        // subtree, using its own distance as the threshold. Placement
+        // side is arbitrary from a correctness standpoint — pruning
+        // works either way — outside is used purely for a consistent
+        // choice.
+        let (only_item, only_d) = annotated.pop().expect("n == 1");
+        return Some(Node {
+            vantage,
+            threshold: Some(only_d),
+            inside: None,
+            outside: Some(Box::new(Node::new(only_item))),
+        });
+    }
+    annotated.select_nth_unstable_by_key(mid, |(_, d)| *d);
+    // `annotated[mid].1` is the smallest distance in the outside
+    // partition and an upper bound on every distance in the inside
+    // partition — exactly the threshold we want to store.
+    let threshold = annotated[mid].1;
+
+    // Split at position `mid`. `Vec::split_off(mid)` moves positions
+    // [mid, n) into a new vector and leaves [0, mid) in the original;
+    // this is O(n - mid) and needs no temporary allocation for the tail.
+    let outside_items: Vec<Vec<T>> = annotated
+        .split_off(mid)
+        .into_iter()
+        .map(|(item, _)| item)
+        .collect();
+    let inside_items: Vec<Vec<T>> = annotated.into_iter().map(|(item, _)| item).collect();
+
+    let inside = build_bulk(metric, inside_items).map(Box::new);
+    let outside = build_bulk(metric, outside_items).map(Box::new);
+
+    Some(Node {
+        vantage,
+        threshold: Some(threshold),
+        inside,
+        outside,
+    })
 }
 
 fn insert_into<T, M>(metric: &M, node: &mut Node<T, M::Output>, item: Vec<T>)

@@ -19,6 +19,7 @@ use crate::bk_tree::BkTree;
 use crate::error::NotAMetricError;
 use crate::prefix_filter::length_filter;
 use crate::qgram_index::QgramIndex;
+use crate::sorted_neighborhood::SortedNeighborhoodBlocker;
 use crate::vp_tree::VpTree;
 
 /// A short byte-slice strategy over a small alphabet.
@@ -29,6 +30,14 @@ fn arb_bytes() -> impl Strategy<Value = Vec<u8>> {
 /// A collection of short byte slices, giving us a small corpus per test.
 fn arb_corpus() -> impl Strategy<Value = Vec<Vec<u8>>> {
     proptest::collection::vec(arb_bytes(), 1..12)
+}
+
+/// A larger corpus drawn from a slightly wider alphabet — used by the
+/// depth-bound test where too many ties at the median would push the
+/// bulk-built tree onto a degenerate path (a legitimate but uninteresting
+/// case; the test's job is to check that *typical* inputs stay balanced).
+fn arb_balanced_corpus() -> impl Strategy<Value = Vec<Vec<u8>>> {
+    proptest::collection::vec(proptest::collection::vec(b'a'..=b'h', 2..10), 4..48)
 }
 
 /// Naive baseline: every corpus item within `r` of `query` under Levenshtein.
@@ -116,6 +125,167 @@ proptest! {
         let got_d: Vec<u32> = got.iter().map(|(_, d)| *d).collect();
         let expected_d: Vec<u32> = expected.iter().map(|(_, d)| *d).collect();
         prop_assert_eq!(got_d, expected_d);
+    }
+
+    /// The bulk-built VP-tree must return the same range-query results as
+    /// the incrementally-built VP-tree over the same corpus. Both should
+    /// also equal the naive linear scan; if they agree on every input,
+    /// we have real confidence both construction paths are correct.
+    #[test]
+    fn vp_tree_bulk_build_equivalence_range(
+        corpus in arb_corpus(),
+        query in arb_bytes(),
+        r in 0u32..=6,
+    ) {
+        // Incremental tree.
+        let mut incremental = VpTree::new(Levenshtein);
+        for item in &corpus {
+            incremental.insert(item.clone());
+        }
+        // Bulk-built tree.
+        let bulk = VpTree::from_corpus(Levenshtein, corpus.clone());
+
+        let mut got_incr = incremental.find_within(&query, r);
+        got_incr.sort();
+        let mut got_bulk = bulk.find_within(&query, r);
+        got_bulk.sort();
+        let expected = naive_within(&corpus, &query, r);
+
+        prop_assert_eq!(&got_incr, &expected, "incremental disagreed with naive");
+        prop_assert_eq!(&got_bulk, &expected, "bulk disagreed with naive");
+        prop_assert_eq!(&got_bulk, &got_incr, "bulk disagreed with incremental");
+    }
+
+    /// The bulk-built VP-tree must also produce the same k-NN
+    /// distance-sequence as the incrementally-built tree (and as the
+    /// naive top-k). Item identity is only checked up to distance because
+    /// ties are legitimately exchangeable across construction strategies.
+    #[test]
+    fn vp_tree_bulk_build_equivalence_k_nearest(
+        corpus in arb_corpus(),
+        query in arb_bytes(),
+        k in 0usize..=6,
+    ) {
+        let mut incremental = VpTree::new(Levenshtein);
+        for item in &corpus {
+            incremental.insert(item.clone());
+        }
+        let bulk = VpTree::from_corpus(Levenshtein, corpus.clone());
+
+        let got_incr: Vec<u32> = incremental
+            .find_k_nearest(&query, k)
+            .into_iter()
+            .map(|(_, d)| d)
+            .collect();
+        let got_bulk: Vec<u32> = bulk
+            .find_k_nearest(&query, k)
+            .into_iter()
+            .map(|(_, d)| d)
+            .collect();
+        let expected: Vec<u32> = naive_k_nearest(&corpus, &query, k)
+            .into_iter()
+            .map(|(_, d)| d)
+            .collect();
+
+        prop_assert_eq!(&got_incr, &expected, "incremental k-NN disagreed with naive");
+        prop_assert_eq!(&got_bulk, &expected, "bulk k-NN disagreed with naive");
+    }
+
+    /// The bulk-built VP-tree's depth should be close to `log2(N)` — the
+    /// whole point of median-partition construction over incremental
+    /// insertion. The bound is `ceil(log2(N)) + 2`:
+    ///   - `+1` because `max_depth` counts nodes, not edges (root is 1);
+    ///   - `+1` slack for odd sizes where the split is off-by-one (inside
+    ///     gets `n/2`, outside gets `n - n/2 = n/2 + 1`).
+    ///
+    /// The position-based partition (see [`build_bulk`] in
+    /// [`vp_tree`][crate::vp_tree]) ensures ties at the median do not
+    /// unbalance the tree, so no additional slack for ties is needed.
+    #[test]
+    fn vp_tree_bulk_build_balanced(corpus in arb_balanced_corpus()) {
+        let n = corpus.len();
+        prop_assume!(n >= 2);
+        let bulk = VpTree::from_corpus(Levenshtein, corpus);
+
+        let depth = bulk.max_depth();
+        let ceil_log2 = (usize::BITS - (n - 1).leading_zeros()) as usize;
+        let bound = ceil_log2 + 2;
+        prop_assert!(
+            depth <= bound,
+            "bulk-built tree unexpectedly deep: n={n} depth={depth} bound={bound}"
+        );
+    }
+
+    /// Coverage: with `window_size >= corpus.len()`, every unordered pair
+    /// of distinct positions must appear in the candidate set.
+    #[test]
+    fn sorted_neighborhood_coverage(
+        items in proptest::collection::vec(0u32..1000, 2..12),
+    ) {
+        let n = items.len();
+        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
+        let pairs = blocker.candidate_pairs(n);
+        for i in 0..n {
+            for j in (i + 1)..n {
+                prop_assert!(
+                    pairs.binary_search(&(i, j)).is_ok(),
+                    "full-window blocker missed pair ({i},{j})"
+                );
+            }
+        }
+        // And no unexpected extras.
+        prop_assert_eq!(pairs.len(), n * (n - 1) / 2);
+    }
+
+    /// Pair-count bound: `|candidate_pairs(w)| ≤ N · w` for every window.
+    #[test]
+    fn sorted_neighborhood_pair_count_bound(
+        items in proptest::collection::vec(0u32..1000, 1..20),
+        w in 0usize..8,
+    ) {
+        let n = items.len();
+        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
+        let pairs = blocker.candidate_pairs(w);
+        prop_assert!(
+            pairs.len() <= n.saturating_mul(w),
+            "candidate_pairs({w}) yielded {} > N*w = {}",
+            pairs.len(),
+            n * w
+        );
+    }
+
+    /// Window bound: `candidates_of(i, w)` returns at most `2 * w` items.
+    #[test]
+    fn sorted_neighborhood_candidates_of_bound(
+        items in proptest::collection::vec(0u32..1000, 1..20),
+        w in 0usize..8,
+    ) {
+        let n = items.len();
+        let blocker = SortedNeighborhoodBlocker::new(items, |&x| x);
+        for i in 0..n {
+            let c = blocker.candidates_of(i, w);
+            prop_assert!(
+                c.len() <= 2usize.saturating_mul(w),
+                "candidates_of({i},{w}) returned {} > 2w",
+                c.len()
+            );
+            // And the item itself is never included.
+            prop_assert!(!c.contains(&i), "candidates_of included self");
+        }
+    }
+
+    /// Determinism: building the blocker twice from the same input must
+    /// yield identical candidate sets. This is worth checking as a
+    /// property because ties at a key mean the sort must be *stable* to
+    /// give reproducible output, which is easy to break silently.
+    #[test]
+    fn sorted_neighborhood_determinism(
+        items in proptest::collection::vec(0u32..8, 1..12),
+        w in 0usize..6,
+    ) {
+        let a = SortedNeighborhoodBlocker::new(items.clone(), |&x| x);
+        let b = SortedNeighborhoodBlocker::new(items, |&x| x);
+        prop_assert_eq!(a.candidate_pairs(w), b.candidate_pairs(w));
     }
 
     /// Length-filter soundness: the filter's output must be a *superset*
@@ -212,6 +382,22 @@ fn try_new_vp_tree_rejects_semimetric() {
     let err = VpTree::<u8, Osa>::try_new(Osa).unwrap_err();
     let expected = NotAMetricError::new(comparand_core::MetricProperties::SEMIMETRIC);
     assert_eq!(err, expected);
+}
+
+#[test]
+fn try_from_corpus_vp_tree_rejects_semimetric() {
+    // Same policy as `try_new`: bulk construction over a semimetric
+    // returns `NotAMetricError` instead of building a tree whose pruning
+    // would be unsound.
+    let err = VpTree::<u8, Osa>::try_from_corpus(Osa, Vec::new()).unwrap_err();
+    let expected = NotAMetricError::new(comparand_core::MetricProperties::SEMIMETRIC);
+    assert_eq!(err, expected);
+}
+
+#[test]
+#[should_panic(expected = "VpTree requires a true metric")]
+fn from_corpus_vp_tree_panics_on_semimetric() {
+    let _tree: VpTree<u8, Osa> = VpTree::from_corpus(Osa, Vec::new());
 }
 
 #[test]

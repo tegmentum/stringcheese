@@ -20,11 +20,21 @@
 //!   a different partitioning strategy: each node chooses a vantage point and
 //!   splits its remaining items by whether they lie closer to or farther from
 //!   the vantage than a threshold. Answers both range and *k-nearest*
-//!   queries. Also requires a true metric.
+//!   queries. Also requires a true metric. Supports both incremental
+//!   construction (via [`VpTree::insert`]) and balanced bulk construction
+//!   from a full corpus (via [`VpTree::from_corpus`]) with median-threshold
+//!   partitioning.
 //! * [`QgramIndex`] — a q-gram inverted index. A set-similarity candidate
 //!   generator, not a metric-space index: for a query with gram set `G`, it
 //!   returns items whose gram overlap with `G` could conceivably meet a
 //!   threshold without computing full similarities.
+//! * [`SortedNeighborhoodBlocker`] — the classic sorted-neighborhood
+//!   candidate generator: sort the corpus by a caller-supplied key (a
+//!   phonetic code, a prefix, a normalized birthdate) and slide a
+//!   fixed-size window to emit candidate pairs from within each window.
+//!   Doesn't need a metric — only that keys implement [`Ord`] — so it
+//!   composes cleanly with non-metric encodings that the tree-based
+//!   indexes cannot accept.
 //!
 //! Together with the small [`length_filter`] helper (a q-gram-friendly length
 //! prune based on the Jaccard length bound), these are the pieces most
@@ -72,11 +82,11 @@
 //!
 //! # Deferred structures
 //!
-//! `MinHash`, locality-sensitive hashing, and sorted-neighborhood helpers
-//! are intentionally out of scope for this crate. `MinHash` and LSH are
-//! probabilistic and deserve their own crate with dedicated statistical
-//! tests. Sorted-neighborhood is adjacent to indexing but simpler and will
-//! land as a smaller helper crate.
+//! `MinHash` and locality-sensitive hashing are intentionally out of scope
+//! for this crate: both are probabilistic and deserve their own crate with
+//! dedicated statistical tests. Sorted-neighborhood blocking, initially
+//! also deferred, is small enough to live here as
+//! [`SortedNeighborhoodBlocker`].
 //!
 //! # Sequence type
 //!
@@ -114,6 +124,8 @@ pub mod prefix_filter;
 #[cfg(feature = "alloc")]
 pub mod qgram_index;
 #[cfg(feature = "alloc")]
+pub mod sorted_neighborhood;
+#[cfg(feature = "alloc")]
 pub mod vp_tree;
 
 #[cfg(all(test, feature = "alloc"))]
@@ -130,5 +142,7 @@ pub use error::NotAMetricError;
 pub use prefix_filter::length_filter;
 #[cfg(feature = "alloc")]
 pub use qgram_index::QgramIndex;
+#[cfg(feature = "alloc")]
+pub use sorted_neighborhood::SortedNeighborhoodBlocker;
 #[cfg(feature = "alloc")]
 pub use vp_tree::VpTree;
