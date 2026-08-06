@@ -40,6 +40,11 @@ pub use comparand_jaro as jaro;
 /// `comparand-damerau` crate.
 pub use comparand_damerau as damerau;
 
+/// The Longest Common Subsequence subsystem: LCS length (as `Score<u32>`)
+/// and the derived LCS distance metric (`|a| + |b| - 2 · lcs(a, b)`),
+/// re-exported unchanged from the `comparand-lcs` crate.
+pub use comparand_lcs as lcs;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.

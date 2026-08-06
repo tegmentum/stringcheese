@@ -16,6 +16,7 @@ members = [
     "crates/comparand-phonetic",
     "crates/comparand-set-similarity",
     "crates/comparand-bench",
+    "crates/comparand-lcs",
 ]
 exclude = [
     "fuzz",
@@ -55,6 +56,7 @@ comparand-jaro = { version = "0.1.0", path = "crates/comparand-jaro", default-fe
 comparand-damerau = { version = "0.1.0", path = "crates/comparand-damerau", default-features = false }
 comparand-ngram = { version = "0.1.0", path = "crates/comparand-ngram", default-features = false }
 comparand-set-similarity = { version = "0.1.0", path = "crates/comparand-set-similarity", default-features = false }
+comparand-lcs = { version = "0.1.0", path = "crates/comparand-lcs", default-features = false }
 
 [profile.release]
 lto = "thin"
