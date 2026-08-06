@@ -11,6 +11,86 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-manip`: 11 more modules land as real implementations.**
+  Second wave fills in `split`, `join`, `replace`, `normalize`, `slice`,
+  `find`, `pad`, `lines`, `escape`, `quote`, and `template`. Only
+  `pipeline` (the transformation IR) remains a scaffold. 14 of 15
+  modules now ship. Every module names the boundary each function
+  works at (bytes / USVs / graphemes / display width), delegates to
+  `stringcheese-unicode` for Unicode-aware work and to
+  `stringcheese-compare::search` for substring-search. See the crate's
+  module map for the full surface.
+
+- **`stringcheese-lang` — language pack infrastructure.** New crate
+  defining the `Language` trait (`code` / `name` / `stopwords` /
+  `is_stopword` / `stem` / `tokenize` / `phonetic_encoder` /
+  `collator`), plus companion traits (`Stemmer`, `Collator`,
+  `LanguageProvider`) and shared helper types (`Stopwords`,
+  `SimpleTokenizer`, `LanguagePhoneticEncoder`,
+  `Soundex`/`Nysiis`/`DoubleMetaphone` adapters). `no_std + alloc`
+  compatible. Enables opt-in per-language packs.
+
+- **`stringcheese-en` — English language pack.** First reference
+  language pack. Ships the full 5-step Porter (1980) stemmer,
+  ~150 stopwords, whitespace-and-punctuation tokenizer, Soundex as
+  phonetic encoder. Public `ENGLISH` constant so callers write
+  `stringcheese_en::ENGLISH.stem("caresses")` without construction
+  ceremony. Porter cross-verified against 65 reference pairs from
+  the original paper.
+
+- **`stringcheese-compare`: Ristad-Yianilos (1998) learned string-edit
+  distance.** Memoryless stochastic transducer over source/target
+  alphabets, trained from labeled pairs via EM in log space (log-sum-exp
+  throughout for numerical stability). `LearnedEditModel` +
+  `LearnedEdit` (implements `DistanceMetric`) + `RistadYianilosEstimator`
+  (builder-pattern EM with configurable iterations and convergence
+  threshold). New `AlgorithmFamily::RistadYianilos` variant in
+  `stringcheese-core`. Semimetric class — the model is symmetric only
+  if the trained insert/delete/substitute costs are symmetric.
+  `no_std + alloc` compatible for the query surface; training is
+  std-gated (needs `f64::ln`/`exp`). 33 tests total (unit + property +
+  golden).
+
+- **`stringcheese-compare::levenshtein::simd` — SIMD-dispatched Myers
+  kernel.** Opt-in `simd` feature swaps the Levenshtein kernel for
+  Myers (1999) bit-parallel bit-vector formulation on hosts where it
+  wins. Runtime dispatch picks AVX2 → SSE2 → NEON → scalar Myers →
+  falls back to rolling-rows on non-viable input (too short, or
+  unicode-heavy). Scalar Myers alone delivers ~1.9-12× speedup for
+  m ≤ 64; wide-block true-SIMD kernels behind the same dispatch is
+  documented follow-up work. `#![forbid(unsafe_code)]` softened to
+  `#![deny]` in `stringcheese-compare` with an inline exception
+  comment pointing at the SIMD sub-tree (every `unsafe fn` / block
+  in the sub-tree carries a `SAFETY:` comment naming its CPU-feature
+  precondition). 20 SIMD-specific tests (differential vs oracle +
+  arch wrapper agreement).
+
+- **`docs/design/wit-i18n.md` — SCUD + WIT i18n design doc.** ~5,300
+  word design for the umbrella's ICU-alternative direction. Covers
+  the six capability WIT interfaces (case / collation / plural /
+  number / datetime / break) with a ~80-line illustrative WIT for
+  `stringcheese-icu-case`; the SCUD compressed data-pack binary
+  format (seven compression primitives — RangeDelta, AdaptivePages,
+  PackedIntegers, SequencePool, StringPool, LoudsTrie,
+  FiniteStateTable — plus outer Brotli/Zstd; loader API sketch);
+  runtime discovery / fallback / composition / versioning; language
+  pack integration; CLDR licensing threat model; six-phase
+  implementation plan. Design only — no implementation touched.
+
+- **Wasm binary-size CI gate.** New `wasm-size` GitHub Actions job
+  runs on every PR: builds each crate's minimal-surface release
+  wasm through a shared `wasm-size-probes` cdylib wrapper, runs
+  `wasm-opt -Oz`, compares against per-crate thresholds in
+  `.wasm-size-limits.toml` (default ±5 %, ±20 % for
+  `stringcheese-core` whose 724 B baseline sits inside wasm-opt
+  noise). `scripts/measure-wasm-size.sh` is the contributor-facing
+  local reproducer. Baseline documented in
+  `docs/wasm-binary-size.md` with per-crate size + twiggy top-N
+  breakdowns. Not addressed by this gate: `stringcheese-unicode`
+  weighs 213 KB (icu_casemap + unicode-normalization data);
+  documented as instrumentation-only and a future size-shrink
+  opportunity.
+
 - **`stringcheese-compare` crate.** Consolidates the nine sibling
   comparison crates (`stringcheese-levenshtein`, `stringcheese-hamming`,
   `stringcheese-jaro`, `stringcheese-damerau`, `stringcheese-lcs`,
