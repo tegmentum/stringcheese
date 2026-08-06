@@ -58,6 +58,13 @@ pub use comparand_search as search;
 /// `comparand-cdc` crate.
 pub use comparand_cdc as cdc;
 
+/// The index-structures subsystem: BK-tree and VP-tree for metric-space
+/// range and k-nearest queries (both enforce `is_metric()` at
+/// construction), plus a q-gram inverted index for set-similarity
+/// candidate generation, re-exported unchanged from the
+/// `comparand-index` crate.
+pub use comparand_index as index;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.
