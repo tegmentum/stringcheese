@@ -1,0 +1,145 @@
+// Comparand — WebAssembly Component Model interface.
+//
+// This file is the load-bearing contract between Comparand's Rust host
+// implementation (../rust-host/) and any non-Rust caller — a browser page
+// using jco, a Wasmtime embedding, a WASI runtime, or another Wasm
+// component. Every function here has a corresponding Guest-trait impl in
+// ../rust-host/src/lib.rs; adding a function requires editing both.
+//
+// The design brief for this layer lives in
+// ../../docs/design/wasm-and-wit-interface.md — read it before changing
+// the shape of anything below.
+
+package comparand:core@0.1.0;
+
+/// Distance metrics — measures where lower means more similar. Every
+/// distance exposed here is a non-negative `u32` at the byte level;
+/// normalised distances in `[0.0, 1.0]` are exposed as their similarity
+/// complement in the `similarity` interface for API uniformity.
+///
+/// Sequence representation across the WIT boundary is `list<u8>` — the
+/// same byte-oriented shape the underlying Rust kernels operate on. Callers
+/// that need scalar or grapheme semantics do the segmentation on their side
+/// and pass the resulting bytes. This is deliberate: WIT `string` implies
+/// UTF-8 validation on every call, which is wasted work when the caller
+/// already has bytes.
+interface distance {
+    /// The result of a distance computation with an early-termination
+    /// cutoff. `within(d)` carries the exact distance (necessarily
+    /// `<= cutoff`); `exceeded(k)` carries the cutoff itself and signals
+    /// that the true distance is strictly greater than `k`. Callers use
+    /// this variant to avoid paying full-DP cost when they only need a
+    /// yes/no answer up to a threshold.
+    variant bounded-distance {
+        within(u32),
+        exceeded(u32),
+    }
+
+    /// Levenshtein edit distance (unit-cost, byte-level). Substitutions,
+    /// insertions, and deletions each cost 1; transpositions cost 2 under
+    /// this metric — the Damerau family lives in its own function.
+    /// Wagner–Fischer dynamic programming; see `comparand-levenshtein`.
+    levenshtein: func(a: list<u8>, b: list<u8>) -> u32;
+
+    /// Levenshtein with an early-termination cutoff. Returns `within(d)`
+    /// when the true distance `d <= cutoff`, otherwise `exceeded(cutoff)`.
+    /// Ukkonen's banded kernel under the hood.
+    levenshtein-within: func(a: list<u8>, b: list<u8>, cutoff: u32) -> bounded-distance;
+
+    /// Hamming distance for equal-length inputs. Returns
+    /// `err(diagnostic)` with a length-mismatch message when the two
+    /// lists differ in length; the Rust kernel's typed
+    /// `LengthMismatch` error is flattened to `string` at the boundary.
+    hamming: func(a: list<u8>, b: list<u8>) -> result<u32, string>;
+
+    /// Optimal String Alignment distance (restricted Damerau). Counts
+    /// transpositions of adjacent symbols as a single edit but forbids
+    /// re-editing an already-transposed pair, which makes OSA a
+    /// semimetric rather than a true metric. See `comparand-damerau`.
+    osa: func(a: list<u8>, b: list<u8>) -> u32;
+
+    /// Longest common subsequence distance, defined as
+    /// `|a| + |b| - 2 * lcs(a, b)`. A true metric derived from LCS
+    /// length. See `comparand-lcs`.
+    lcs-distance: func(a: list<u8>, b: list<u8>) -> u32;
+}
+
+/// Similarity metrics — measures where higher means more similar. Every
+/// function here returns a bounded `f64` in `[0.0, 1.0]`; the underlying
+/// Rust kernels return `NormalizedSimilarity`, whose invariant is
+/// preserved by construction.
+///
+/// Byte-oriented (`list<u8>`) throughout, matching the `distance`
+/// interface's rationale.
+interface similarity {
+    /// Jaro similarity (Jaro 1989). Returns 1.0 on identical inputs,
+    /// 0.0 on inputs with no matching characters within the match window.
+    jaro: func(a: list<u8>, b: list<u8>) -> f64;
+
+    /// Jaro–Winkler classic (Winkler 1990): prefix length 4, scaling
+    /// 0.1, no boost threshold. Boosts Jaro's score for pairs sharing a
+    /// common prefix.
+    jaro-winkler: func(a: list<u8>, b: list<u8>) -> f64;
+
+    /// Dice / Sørensen coefficient over character bigrams (`n = 2`, no
+    /// padding). `2 * |A ∩ B| / (|A| + |B|)` on the multisets of
+    /// adjacent-byte pairs.
+    dice-bigrams: func(a: list<u8>, b: list<u8>) -> f64;
+
+    /// Jaccard similarity over character bigrams (`n = 2`, no padding).
+    /// `|A ∩ B| / |A ∪ B|` on the sets of adjacent-byte pairs.
+    jaccard-bigrams: func(a: list<u8>, b: list<u8>) -> f64;
+}
+
+/// Substring search — finding a byte pattern in a byte haystack. All
+/// positions are 0-indexed byte offsets.
+///
+/// The single-shot functions here hide the "prepare pattern, then
+/// search" split of the underlying Rust algorithms; each call rebuilds
+/// the pattern automaton. Callers doing many searches against the same
+/// pattern will want the prepared-pattern resource in a future version
+/// of this interface (see README "Path forward").
+interface search {
+    /// Find the first occurrence of `pattern` in `haystack`. Returns
+    /// `none` if the pattern does not occur. Uses KMP under the hood.
+    find-first: func(pattern: list<u8>, haystack: list<u8>) -> option<u32>;
+
+    /// Find every occurrence of `pattern` in `haystack`. Positions are
+    /// returned in ascending order and include overlapping matches
+    /// (KMP semantics).
+    find-all: func(pattern: list<u8>, haystack: list<u8>) -> list<u32>;
+}
+
+/// Phonetic encoding — reducing a name to a phonetic key. Callers
+/// compare two names by encoding both and comparing the keys with plain
+/// string equality.
+///
+/// Input is WIT `string` (validated UTF-8) rather than `list<u8>`
+/// because phonetic encoders are semantically defined over characters,
+/// not bytes. The Rust kernels accept `&str`, so no re-encoding happens
+/// at the boundary.
+interface phonetic {
+    /// Soundex encoding (NARA 1918 canonical variant). Produces a
+    /// four-character key: an uppercase initial letter followed by three
+    /// digits.
+    soundex: func(name: string) -> string;
+
+    /// NYSIIS encoding (Taft 1970), truncated to six characters — the
+    /// convention adopted by most NYSIIS implementations.
+    nysiis: func(name: string) -> string;
+
+    /// Double Metaphone (Philips 1999), returning only the primary key.
+    /// Callers needing the alternate key belong to a richer interface
+    /// than this seed layer aims to expose.
+    double-metaphone-primary: func(name: string) -> string;
+}
+
+/// The Comparand component world. Exports the four interfaces above and
+/// nothing else — no imports from the host, no I/O, no clocks. The
+/// resulting `.wasm` component is a pure library.
+world comparand-core {
+    export distance;
+    export similarity;
+    export search;
+    export phonetic;
+}

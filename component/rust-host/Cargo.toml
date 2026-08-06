@@ -1,0 +1,95 @@
+[workspace]
+# Standalone-crate sentinel — component/rust-host/ is deliberately NOT a
+# member of the outer Comparand workspace at ../../Cargo.toml. Two
+# reasons that reinforce each other:
+#
+#   * `cargo-component` wants to own the build settings for the crate
+#     that produces the component binary (target triple, [profile.*]
+#     tuning, [package.metadata.component] block), and mixing that with
+#     the main workspace's members list would drag the component
+#     toolchain assumptions into every `cargo build` from the repo root.
+#   * The outer workspace's `wasm` CI job iterates a fixed feature-set
+#     matrix over every workspace member (see docs/wasm-build-recipes.md).
+#     Adding this crate to that matrix would multiply the CI cost
+#     without buying additional coverage — the component build has its
+#     own verification loop (`cargo component build --release`).
+#
+# The main root's `members = [...]` list is explicit rather than a glob,
+# so the crate wouldn't be picked up implicitly even without this
+# sentinel. The empty `[workspace]` table is the belt-and-braces
+# companion that guarantees `cargo` invoked from inside
+# `component/rust-host/` resolves against a fresh, isolated
+# `Cargo.lock` — matching the pattern used by `fuzz/Cargo.toml` and
+# `bench-adapters/rust/Cargo.toml`.
+
+[package]
+name = "comparand-component-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <mail@zacharywhitley.com>"]
+repository = "https://github.com/zacharywhitley/comparand"
+description = "WebAssembly Component Model host implementation of the comparand:core WIT interface."
+publish = false
+
+[lib]
+# `cdylib` is what `cargo component build` turns into a component
+# `.wasm`. `rlib` is retained so `cargo check` / `cargo build` on the
+# native host still produce something linkable — useful for verifying
+# the wit-bindgen macro expansion and the Guest impls compile without
+# needing the wasm toolchain on hand.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The wit-bindgen macro generates the interface trait definitions from
+# the WIT file at build time. Pinned to 0.46 rather than latest (0.60
+# as of 2026-08); 0.46 is what the current cargo-component 0.21.1
+# resolves through and is the version cached in the workspace's cargo
+# registry, keeping the offline build reproducible.
+#
+# `default-features = false` drops the bundled `async` support and the
+# `bitflags` re-export — neither is used by this interface. `realloc`
+# stays on because it is the canonical allocator hook the generated
+# code calls when the component receives lists across the boundary;
+# `macros` is required for the `wit_bindgen::generate!` macro that
+# expands the WIT interface into Guest traits.
+wit-bindgen = { version = "0.46", default-features = false, features = ["macros", "realloc"] }
+
+# Comparand algorithm crates via path into the sibling main workspace.
+# Only the crates that back a WIT-exposed function are pulled in — this
+# is what keeps the component's `.wasm` size scoped. Every one is
+# `default-features = false` with an explicit `["std"]` so a future
+# `--no-default-features` mode of this host crate can trim to `alloc`-
+# only if the size budget in
+# docs/design/wasm-and-wit-interface.md ever demands it.
+comparand-core          = { path = "../../crates/comparand-core",          default-features = false, features = ["std"] }
+comparand-levenshtein   = { path = "../../crates/comparand-levenshtein",   default-features = false, features = ["std"] }
+comparand-hamming       = { path = "../../crates/comparand-hamming",       default-features = false, features = ["std"] }
+comparand-damerau       = { path = "../../crates/comparand-damerau",       default-features = false, features = ["std"] }
+comparand-lcs           = { path = "../../crates/comparand-lcs",           default-features = false, features = ["std"] }
+comparand-jaro          = { path = "../../crates/comparand-jaro",          default-features = false, features = ["std"] }
+comparand-ngram         = { path = "../../crates/comparand-ngram",         default-features = false, features = ["std"] }
+comparand-set-similarity = { path = "../../crates/comparand-set-similarity", default-features = false, features = ["std"] }
+comparand-search        = { path = "../../crates/comparand-search",        default-features = false, features = ["std"] }
+comparand-phonetic      = { path = "../../crates/comparand-phonetic",      default-features = false, features = ["std"] }
+
+# cargo-component metadata. Points at the WIT interface and the world
+# to compile against; the tool auto-generates the bindings crate under
+# `bindings/` inside `target/` at build time.
+[package.metadata.component]
+package = "comparand:core"
+
+[package.metadata.component.target]
+path = "../wit"
+world = "comparand-core"
+
+# Release profile tuned for the component `.wasm` — matches the outer
+# workspace's release settings and adds Wasm-appropriate size / stripping
+# knobs that are safe defaults for a component consumed by third parties.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+strip = "debuginfo"
+panic = "abort"

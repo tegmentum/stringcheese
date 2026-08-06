@@ -1,0 +1,9 @@
+# Standard Rust build output.
+target/
+
+# `cargo component build` writes a redundant copy of the wit-bindgen
+# output here on every build. This crate uses the `wit_bindgen::generate!`
+# macro directly in `src/lib.rs` instead, so this file is not consumed
+# by anything in the crate; keep it out of version control so a stale
+# generator revision cannot pollute a fresh checkout.
+src/bindings.rs
