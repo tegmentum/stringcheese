@@ -148,6 +148,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "comparand"
 version = "0.1.0"
 dependencies = [
+ "comparand-align",
  "comparand-cdc",
  "comparand-core",
  "comparand-damerau",
@@ -161,6 +162,15 @@ dependencies = [
  "comparand-search",
  "comparand-set-similarity",
  "comparand-unicode",
+]
+
+[[package]]
+name = "comparand-align"
+version = "0.1.0"
+dependencies = [
+ "comparand-core",
+ "comparand-corpus",
+ "proptest",
 ]
 
 [[package]]

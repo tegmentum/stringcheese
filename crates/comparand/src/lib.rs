@@ -65,6 +65,13 @@ pub use comparand_cdc as cdc;
 /// `comparand-index` crate.
 pub use comparand_index as index;
 
+/// The alignment subsystem: Needleman-Wunsch (global) and Smith-Waterman
+/// (local) pairwise sequence alignment with linear and affine gap
+/// penalties (full Gotoh 1982 three-matrix formulation for affine),
+/// plus edit-script reconstruction, re-exported unchanged from the
+/// `comparand-align` crate.
+pub use comparand_align as align;
+
 /// The n-gram representation layer: character, byte, and token n-gram
 /// generators plus set / multiset / weighted-vector representations,
 /// re-exported unchanged from the `comparand-ngram` crate.

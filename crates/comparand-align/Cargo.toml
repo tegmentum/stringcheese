@@ -1,0 +1,30 @@
+[package]
+name = "comparand-align"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Global (Needleman-Wunsch) and local (Smith-Waterman) sequence alignment with linear and affine gap penalties for the Comparand toolkit."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["alignment", "needleman-wunsch", "smith-waterman", "sequence"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Also implies `alloc`.
+std = ["alloc", "comparand-core/std"]
+# When enabled, the alignment kernels, the workspace, and the edit-script
+# reconstruction are exposed. The `scoring` module (ScoringScheme trait,
+# LinearGap, AffineGap) is available even without alloc.
+alloc = ["comparand-core/alloc"]
+
+[dependencies]
+comparand-core = { workspace = true }
+
+[dev-dependencies]
+comparand-corpus = { workspace = true, features = ["alloc"] }
+proptest = "1"
+
+[lints]
+workspace = true

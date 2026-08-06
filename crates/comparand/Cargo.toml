@@ -27,6 +27,7 @@ std = [
     "comparand-search/std",
     "comparand-cdc/std",
     "comparand-index/std",
+    "comparand-align/std",
 ]
 alloc = [
     "comparand-core/alloc",
@@ -42,6 +43,7 @@ alloc = [
     "comparand-search/alloc",
     "comparand-cdc/alloc",
     "comparand-index/alloc",
+    "comparand-align/alloc",
 ]
 
 [dependencies]
@@ -58,6 +60,7 @@ comparand-lcs = { workspace = true }
 comparand-search = { workspace = true }
 comparand-cdc = { workspace = true }
 comparand-index = { workspace = true }
+comparand-align = { workspace = true }
 
 [lints]
 workspace = true

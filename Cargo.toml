@@ -17,6 +17,7 @@ members = [
     "crates/comparand-search",
     "crates/comparand-cdc",
     "crates/comparand-index",
+    "crates/comparand-align",
 ]
 exclude = [
     "fuzz",
@@ -57,6 +58,7 @@ comparand-damerau = { version = "0.1.0", path = "crates/comparand-damerau", defa
 comparand-ngram = { version = "0.1.0", path = "crates/comparand-ngram", default-features = false }
 comparand-set-similarity = { version = "0.1.0", path = "crates/comparand-set-similarity", default-features = false }
 comparand-lcs = { version = "0.1.0", path = "crates/comparand-lcs", default-features = false }
+comparand-align = { version = "0.1.0", path = "crates/comparand-align", default-features = false }
 
 [profile.release]
 lto = "thin"
