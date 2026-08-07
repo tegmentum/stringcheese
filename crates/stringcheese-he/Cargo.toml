@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-he"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Hebrew language pack for the StringCheese toolkit: ~130-word stopword list, light suffix-and-prefix stemmer (definite article, coordinating-particle prefixes, plural / possessive / past-tense suffixes), niqqud / cantillation / final-form normalizer, simplified ISO 259 style ASCII transliteration phonetic hookup, and a maqaf-aware tokenizer. Implements stringcheese-lang::Language. Second right-to-left-script pack after Arabic — different Semitic script, same logical-UTF-8-order processing model."
+categories = ["text-processing", "internationalization"]
+keywords = ["hebrew", "stemmer", "iso-259", "niqqud", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The light
+# stemmer builds owned `String` output, `Language::tokenize` hands back
+# a `Box<dyn Iterator>`, the normalizer allocates, and the simplified
+# ISO 259 transliterator returns an owned `String` key — all
+# `alloc`-only. Without this feature the crate compiles down to the
+# stopword slice and the module constants alone (enough to link
+# against on embedded targets that only want the stopword table).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
