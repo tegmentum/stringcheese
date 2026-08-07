@@ -355,6 +355,16 @@ impl<'a> Iterator for RawWords<'a> {
 /// returns `(base, Some(suffix))` with the two tokens the tokenizer
 /// should emit.
 fn split_word(cfg: ContractionTokenizer, word: &str) -> (&str, Option<&str>) {
+    // Idempotence guard: a raw word with two or more apostrophes cannot
+    // split cleanly — after peeling one suffix, the base still holds an
+    // apostrophe, and re-tokenizing the joined output would split it
+    // again. Every recognized contraction (`don't`, `I'll`, `won't`,
+    // ...) carries exactly one apostrophe, so treat multi-apostrophe
+    // input as atomic and preserve the tokenizer's idempotence contract.
+    if word.chars().filter(|&c| is_apostrophe(c)).count() >= 2 {
+        return (word, None);
+    }
+
     // Special forms (case-insensitive full-word match) fire first so
     // "won't" doesn't fall through to the generic `-n't` rule and yield
     // `("wo", "n't")`.
