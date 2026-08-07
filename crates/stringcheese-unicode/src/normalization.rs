@@ -166,6 +166,10 @@ impl core::fmt::Display for Normalization {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `ToString` is in the std prelude but not the core+alloc prelude;
+    // spell it out so the `--no-default-features --features alloc`
+    // test build compiles.
+    use alloc::string::ToString;
 
     #[test]
     fn nfc_composes_combining_sequence() {

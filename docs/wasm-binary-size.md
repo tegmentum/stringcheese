@@ -160,7 +160,7 @@ authoritative numbers are the byte values.
 | `stringcheese-core`         | library   |  0.79 KB |    724 B  |      724 | 20 %  | Types & traits only. Sub-1 KB baseline: `tolerance_pct = 20` because ±5 % is under the wasm-opt noise floor. |
 | `stringcheese-corpus`       | library   |  20.1 KB |   14.5 KB |   14 836 |  5 %  | Exhaustive-generator machinery and difference-classification enum.            |
 | `stringcheese-compare`      | library   |  24.1 KB |   17.4 KB |   17 839 |  5 %  | Probe touches Levenshtein, OSA, Jaro, Jaro-Winkler, Hamming.                  |
-| `stringcheese-unicode`      | library   |   226 KB |    208 KB |  213 054 |  5 %  | **Largest.** Dominated by ICU casemap / normalization tables (see below).     |
+| `stringcheese-unicode`      | library   |   204 KB |    185 KB |  189 567 |  5 %  | **Largest.** Measures the minimum-useful surface — full default (with `case-fold` + `compiled-case-data`) is ~213 KB, see below. |
 | `stringcheese-phonetic`     | library   |  31.4 KB |   23.0 KB |   23 523 |  5 %  | Probe touches Soundex, NYSIIS, Double Metaphone.                              |
 | `stringcheese-cdc`          | library   |  26.5 KB |   21.0 KB |   21 511 |  5 %  | FastCDC + four rolling-hash fingerprints (Rabin, polynomial, Gear, Buzhash). |
 | `stringcheese-index`        | library   |  43.6 KB |   30.6 KB |   31 375 |  5 %  | BK-tree + VP-tree + q-gram index, exercised with a probe-local metric.        |
@@ -170,20 +170,52 @@ authoritative numbers are the byte values.
 
 ### Non-obvious observations
 
-* **`stringcheese-unicode` is 213 KB opt.** All of it is Unicode
-  data — `twiggy top` on the optimized wasm shows the top ten
-  entries are `data[N]` segments totalling ~160 KB. This is the
-  price of the `icu_casemap` `compiled_data` feature and
-  `unicode-normalization`'s NFC/NFD/NFKC/NFKD lookup tables. Two
-  cheaper paths exist but neither is taken today: switching
-  `icu_casemap` to a runtime data provider (adds an API surface for
-  downstream callers) or replacing `unicode-normalization` with a
-  narrower table (loses NFKC/NFKD).
+* **`stringcheese-unicode` is 190 KB opt at the gated baseline, ~213 KB
+  at full defaults.** All of it is Unicode data — `twiggy top` on the
+  optimized wasm shows the top five entries are `data[N]` segments
+  totalling ~130 KB from `unicode-normalization`'s NFC/NFD/NFKC/NFKD
+  lookup tables. The two configurations differ by the ~23 KB
+  contribution of `icu_casemap`'s baked `compiled_data`, which the
+  gate measures WITHOUT (see the feature discussion in the crate's
+  `lib.rs`). The gate tracks the smaller number because that is what a
+  size-conscious wasm caller actually pays; the fuller default is a
+  documented ceiling (see below).
+
+  Two feature flags on `stringcheese-unicode` let downstream callers
+  tune this footprint:
+
+  - `case-fold` (default: on for backwards compat) enables the
+    `case_folding` module and pulls in `icu_casemap`. Turning it off
+    drops `icu_casemap` and its ~30 transitive ICU4X data crates from
+    the compile graph entirely.
+  - `compiled-case-data` (default: on) bakes the ICU tables into the
+    binary. Turning it off (while leaving `case-fold` on) makes only
+    the `_with_mapper` API surface available — the caller supplies a
+    `DataProvider` at runtime.
+
+  The gate's probe uses `--no-default-features --features std`, which
+  disables both flags. In-workspace consumers (`stringcheese-manip`,
+  the facade crate, ...) get the same trimmed surface because their
+  own dependency lines set `default-features = false` on
+  `stringcheese-unicode`; only external users who write
+  `stringcheese-unicode = "0.1"` pick up the full-default 213 KB
+  configuration.
+
+  Further shrink beyond this is upstream work.
+  `unicode-normalization` v0.1.25 does not expose feature flags to
+  trim the compat (NFKC/NFKD) tables, and LTO cannot strip them
+  because `Decompositions::next()`'s match on `DecompositionType`
+  keeps both arms reachable. Splitting the tables would take a patch
+  to that crate (or a fork).
 * **`stringcheese-manip` (71 KB) inherits from `stringcheese-unicode`.**
-  The `case` module is the only shipping submodule that pulls the
-  ICU surface; the other stubbed modules (trim, inspect) are small.
-  When future manip modules land that do not need case folding, the
-  per-module delta will be visible in the gate.
+  The `case` module delegates only to `str::to_lowercase` /
+  `to_uppercase` and pulls grapheme iteration from
+  `stringcheese-unicode`; the ICU case-mapping surface is not
+  reached from any manip entry point, so LTO already strips it.
+  Manip's dep line is `default-features = false` on
+  `stringcheese-unicode`, so the `case-fold` and `compiled-case-data`
+  features stay off transitively — the ICU crates are dropped from
+  the manip build's dep graph entirely.
 * **The `stringcheese` facade (18 KB) is smaller than
   `stringcheese-compare` alone (17.8 KB) plus the other subcrates
   the facade re-exports.** LTO folds their shared machinery
@@ -217,7 +249,7 @@ Default is `tolerance_pct = 5`. Rationale:
   move a small binary by ~10-20 B).
 * At 5 %, a 100 KB baseline fires at +5 KB growth. That is a real
   code / data addition, not noise.
-* At 5 %, the 213 KB unicode baseline fires at +10.6 KB growth. That
+* At 5 %, the 190 KB unicode baseline fires at +9.5 KB growth. That
   is roughly one new NFC-adjacent Unicode table — a meaningful
   regression that a reviewer should see.
 

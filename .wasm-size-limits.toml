@@ -60,11 +60,20 @@ tolerance_pct = 5
 name = "stringcheese-unicode"
 kind = "library"
 probe_feature = "probe-stringcheese-unicode"
-# 213 KB is dominated by ICU casemap / normalization tables (see
-# `docs/wasm-binary-size.md`, "What twiggy shows"). The number is
-# expected to move only when the ICU data revision changes or a new
-# normalization form gains a table.
-optimized_bytes = 213054
+# 190 KB reflects the minimum-useful wasm surface: `--features std`
+# alone, which excludes both `case-fold` and `compiled-case-data`.
+# That is the configuration a size-conscious wasm caller actually
+# ships; a caller who wants the full default surface (case folding
+# with baked ICU data) pays roughly 213 KB. See
+# `docs/wasm-binary-size.md` for the composition breakdown and the
+# rationale for measuring the minimum rather than the maximum.
+#
+# The residual 190 KB is dominated by `unicode-normalization`'s
+# NFC/NFD/NFKC/NFKD tables — that crate does not yet expose feature
+# flags to trim the compat (NFKC/NFKD) tables, and LTO cannot strip
+# them because `Decompositions::next()`'s match on `DecompositionType`
+# keeps both arms reachable. Further shrink is upstream work.
+optimized_bytes = 189567
 tolerance_pct = 5
 
 [[crate]]

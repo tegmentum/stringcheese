@@ -32,10 +32,9 @@
 //!   Æ` (single scalar, not a combining sequence), and untouched
 //!   Cyrillic / CJK text.
 
-use crate::{
-    case_fold, case_fold_turkic, graphemes::GraphemeSequence, nfc, nfd, nfkc, nfkd,
-    strip_diacritics,
-};
+#[cfg(feature = "compiled-case-data")]
+use crate::{case_fold, case_fold_turkic};
+use crate::{graphemes::GraphemeSequence, nfc, nfd, nfkc, nfkd, strip_diacritics};
 
 /// Local mirror of the `GoldenSource` variants relevant to this crate,
 /// kept here to avoid a cross-crate coupling for tests alone.
@@ -273,6 +272,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn golden_case_folding_cases() {
         for f in CASE_FOLD_CASES {

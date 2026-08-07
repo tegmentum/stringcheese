@@ -4,6 +4,7 @@
 //! left-to-right to an input string:
 //!
 //! ```
+//! # #[cfg(feature = "compiled-case-data")] fn ex() {
 //! # use stringcheese_unicode::{PreprocessingPipeline, Normalization};
 //! let pipeline = PreprocessingPipeline::new()
 //!     .normalize(Normalization::Nfkc)
@@ -12,6 +13,7 @@
 //!
 //! assert_eq!(pipeline.apply("STRAßE"), "strasse");
 //! assert_eq!(pipeline.apply("Café"), "cafe");
+//! # }
 //! ```
 //!
 //! This is a *partial* realization of the design document's
@@ -46,6 +48,7 @@
 //! # Explainability
 //!
 //! ```
+//! # #[cfg(feature = "compiled-case-data")] fn ex() {
 //! # use stringcheese_unicode::{PreprocessingPipeline, Normalization};
 //! let p = PreprocessingPipeline::new()
 //!     .normalize(Normalization::Nfc)
@@ -54,9 +57,12 @@
 //!     p.describe(),
 //!     "PreprocessingPipeline: [Normalize(NFC), CaseFold]"
 //! );
+//! # }
 //! ```
 
-use crate::{case_folding::case_fold, diacritics::strip_diacritics, normalization::Normalization};
+#[cfg(feature = "compiled-case-data")]
+use crate::case_folding::case_fold;
+use crate::{diacritics::strip_diacritics, normalization::Normalization};
 use alloc::{
     string::{String, ToString},
     vec::Vec,
@@ -74,6 +80,17 @@ pub enum PreprocessingStep {
     /// [`Normalization`].
     Normalize(Normalization),
     /// Full Unicode case folding. See [`crate::case_fold`].
+    ///
+    /// Gated on the `compiled-case-data` feature (enabled by default).
+    /// A build that has opted out of the compiled ICU tables cannot
+    /// construct this variant — pipelines assembled with the shipping
+    /// [`PreprocessingPipeline::case_fold`] builder are similarly
+    /// unavailable in that configuration. Callers who want case folding
+    /// in a `compiled-case-data`-disabled build should apply
+    /// [`crate::case_folding::case_fold_with_mapper`] directly, passing
+    /// a [`CaseMapper`](crate::case_folding::CaseMapper) built from
+    /// their own data provider.
+    #[cfg(feature = "compiled-case-data")]
     CaseFold,
     /// Diacritic stripping. See [`crate::strip_diacritics`].
     StripDiacritics,
@@ -91,6 +108,7 @@ impl PreprocessingStep {
                 s.push(')');
                 s
             }
+            #[cfg(feature = "compiled-case-data")]
             Self::CaseFold => String::from("CaseFold"),
             Self::StripDiacritics => String::from("StripDiacritics"),
         }
@@ -102,6 +120,7 @@ impl PreprocessingStep {
     pub fn apply(self, input: &str) -> String {
         match self {
             Self::Normalize(n) => n.apply(input),
+            #[cfg(feature = "compiled-case-data")]
             Self::CaseFold => case_fold(input),
             Self::StripDiacritics => strip_diacritics(input),
         }
@@ -119,11 +138,13 @@ impl core::fmt::Display for PreprocessingStep {
 /// Values are built with a fluent builder API:
 ///
 /// ```
+/// # #[cfg(feature = "compiled-case-data")] fn ex() {
 /// # use stringcheese_unicode::{PreprocessingPipeline, Normalization};
 /// let pipeline = PreprocessingPipeline::new()
 ///     .normalize(Normalization::Nfkc)
 ///     .case_fold()
 ///     .strip_diacritics();
+/// # }
 /// ```
 ///
 /// The pipeline is a value: build once, reuse across many comparisons.
@@ -148,6 +169,12 @@ impl PreprocessingPipeline {
     }
 
     /// Appends a full-case-folding stage.
+    ///
+    /// Gated on the `compiled-case-data` feature (on by default). A
+    /// build that has opted out of the baked ICU tables must apply case
+    /// folding outside the pipeline via
+    /// [`crate::case_folding::case_fold_with_mapper`].
+    #[cfg(feature = "compiled-case-data")]
     #[must_use]
     pub fn case_fold(mut self) -> Self {
         self.steps.push(PreprocessingStep::CaseFold);
@@ -244,12 +271,14 @@ mod tests {
         assert_eq!(p.len(), 0);
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn single_stage_case_fold() {
         let p = PreprocessingPipeline::new().case_fold();
         assert_eq!(p.apply("STRAßE"), "strasse");
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn nfkc_then_case_fold_composes() {
         let p = PreprocessingPipeline::new()
@@ -260,6 +289,7 @@ mod tests {
         assert_eq!(p.apply("Aﬃliate"), "affiliate");
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn strip_diacritics_composes() {
         let p = PreprocessingPipeline::new().case_fold().strip_diacritics();
@@ -267,6 +297,7 @@ mod tests {
         assert_eq!(p.apply("Naïve"), "naive");
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn describe_is_readable() {
         let p = PreprocessingPipeline::new()
@@ -280,6 +311,7 @@ mod tests {
         assert_eq!(p.to_string(), p.describe());
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn steps_and_len_agree() {
         let p = PreprocessingPipeline::new().case_fold().strip_diacritics();
@@ -290,15 +322,18 @@ mod tests {
 
     #[test]
     fn preprocessing_step_display_matches_label() {
-        for step in [
+        let steps: alloc::vec::Vec<PreprocessingStep> = alloc::vec![
             PreprocessingStep::Normalize(Normalization::Nfkc),
+            #[cfg(feature = "compiled-case-data")]
             PreprocessingStep::CaseFold,
             PreprocessingStep::StripDiacritics,
-        ] {
+        ];
+        for step in steps {
             assert_eq!(step.to_string(), step.as_label());
         }
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn with_step_appends() {
         let p = PreprocessingPipeline::new()
@@ -313,8 +348,27 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "compiled-case-data"))]
+    #[test]
+    fn with_step_appends_without_case_fold() {
+        // Without `compiled-case-data` the `CaseFold` variant does not
+        // exist; verify the builder still round-trips the variants
+        // that do.
+        let p = PreprocessingPipeline::new()
+            .with_step(PreprocessingStep::Normalize(Normalization::Nfd))
+            .with_step(PreprocessingStep::StripDiacritics);
+        assert_eq!(
+            p.steps(),
+            &[
+                PreprocessingStep::Normalize(Normalization::Nfd),
+                PreprocessingStep::StripDiacritics,
+            ]
+        );
+    }
+
     // Order sensitivity — the design's explicit warning: NFKC-then-fold
     // is not the same as fold-then-NFKC.
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn nfkc_first_versus_fold_first_can_differ() {
         // Fullwidth Latin capital A (U+FF21) — an NFKC-compatible
@@ -367,6 +421,7 @@ mod tests {
         assert_ne!(fold_first.describe(), nfkc_first.describe());
     }
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn nfkc_first_vs_fold_first_distinguishing_input() {
         // A truly distinguishing example needs a character whose NFKC

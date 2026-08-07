@@ -11,7 +11,12 @@ categories = ["algorithms", "text-processing", "internationalization"]
 keywords = ["comparison", "unicode", "normalization", "grapheme"]
 
 [features]
-default = ["std"]
+# The default set preserves the crate's full pre-split surface — a
+# casual caller who writes `stringcheese-unicode = "0.1"` still gets
+# `case_fold`, `simple_case_fold`, `case_fold_turkic`, the full
+# [`PreprocessingPipeline`] surface, and the baked-in ICU data all
+# working out of the box. Backwards-compat matters.
+default = ["std", "case-fold", "compiled-case-data"]
 # When enabled, the crate uses the standard library. Also implies `alloc`.
 std = [
     "alloc",
@@ -25,6 +30,30 @@ std = [
 # crate compiles as an empty no-alloc surface for embedded builds that
 # only need to link against the substrate crates.
 alloc = ["stringcheese-core/alloc"]
+# Enables the [`case_folding`] module and its `icu_casemap` dependency.
+# Without this feature the module (and every `pub use` at the crate
+# root that comes from it) is omitted entirely, dropping `icu_casemap`
+# and its transitive ICU4X data crates from the build. Size-conscious
+# wasm callers who only need normalization + graphemes + diacritic
+# stripping can disable this to shave roughly 110 KB off the
+# `wasm-opt -Oz` binary.
+case-fold = ["dep:icu_casemap"]
+# Bakes the Unicode case-mapping tables into the binary via
+# `icu_casemap/compiled_data`, so the zero-arg convenience
+# entry points (`case_fold`, `simple_case_fold`, `case_fold_turkic`)
+# and the [`PreprocessingStep::CaseFold`] pipeline variant work with
+# no runtime data-provider setup. This is the historical behavior and
+# is on by default.
+#
+# When disabled (but `case-fold` is still enabled), the crate exposes
+# only the `_with_mapper` variants that take a caller-supplied
+# [`icu_casemap::CaseMapper`]; the caller is then responsible for
+# constructing the mapper from an `icu_provider::DataProvider` (from a
+# file, a network fetch, or an embedded `include_bytes!` of the ICU
+# data blob). This trades convenience for a substantially smaller
+# binary — the compiled ICU tables account for roughly half of the
+# crate's default `wasm-opt -Oz` footprint.
+compiled-case-data = ["case-fold", "icu_casemap/compiled_data"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -40,9 +69,11 @@ unicode-normalization = { version = "0.1", default-features = false }
 unicode-segmentation = { version = "1", default-features = false, features = ["no_std"] }
 # `icu_casemap` — full Unicode case folding (including multi-character
 #     expansions such as ß → ss that simple per-char folding cannot express).
-#     `compiled_data` bakes the Unicode tables into the binary so
-#     `CaseMapper::new()` works without a runtime data provider.
-icu_casemap = { version = "1", default-features = false, features = ["compiled_data"] }
+#     Optional and gated on the `case-fold` feature so a size-conscious
+#     build can drop the crate — and its ~30 transitive ICU4X crates —
+#     entirely. `compiled_data` is toggled by the `compiled-case-data`
+#     feature; see the feature table above.
+icu_casemap = { version = "1", default-features = false, optional = true }
 
 [dev-dependencies]
 

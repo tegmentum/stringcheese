@@ -39,12 +39,42 @@
 //!
 //! # `no_std`
 //!
-//! - `default` — pulls in `std` for convenience.
-//! - `no_std + alloc` — the entire public surface is available. All
-//!   Unicode-preprocessing operations return an owned `String` or
-//!   `Vec` and therefore require `alloc`.
+//! - `default` — pulls in `std`, the `case-fold` module, and the baked
+//!   `compiled-case-data` for convenience.
+//! - `no_std + alloc` — normalization, diacritic stripping, grapheme
+//!   segmentation, and the preprocessing pipeline are available. Case
+//!   folding and the `case_folding` module are additionally gated on
+//!   the `case-fold` feature.
 //! - `no_std` alone (no `alloc`) — the crate exposes an empty surface.
 //!   Consumers that need Unicode preprocessing must enable `alloc`.
+//!
+//! # Feature flags — the wasm-size axis
+//!
+//! In addition to the standard `std` / `alloc` split, this crate
+//! exposes two features that gate the ICU case-mapping surface. Both
+//! are on by default so a casual caller sees the full API; disable
+//! them for wasm-size-critical builds.
+//!
+//! - `case-fold` (default: on) — enables the [`case_folding`] module
+//!   and pulls in `icu_casemap`. Turning it off drops `icu_casemap`
+//!   and its ~30 transitive ICU4X data crates entirely, saving roughly
+//!   110 KB in a `wasm-opt -Oz` build. Callers who only need
+//!   normalization, diacritic stripping, and grapheme iteration can
+//!   set `default-features = false, features = ["std"]` (or
+//!   `["alloc"]`) and pay none of the case-fold surface cost.
+//! - `compiled-case-data` (default: on) — bakes the ICU case-mapping
+//!   tables into the binary so [`case_fold`], [`simple_case_fold`],
+//!   [`case_fold_turkic`], and the [`PreprocessingStep::CaseFold`]
+//!   pipeline variant work with no runtime setup. Turning it off (while
+//!   leaving `case-fold` on) trims another ~110 KB and requires the
+//!   caller to construct a [`case_folding::CaseMapper`] from a runtime
+//!   `DataProvider` and use the `_with_mapper` variants
+//!   ([`case_folding::case_fold_with_mapper`], etc.).
+//!
+//! The wasm-size gate documented in `docs/wasm-binary-size.md` measures
+//! the `--no-default-features --features std` configuration — the
+//! smallest useful surface — so the tracked baseline reflects what a
+//! size-conscious wasm caller actually pays.
 //!
 //! # Dependency footprint
 //!
@@ -76,7 +106,7 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", feature = "case-fold"))]
 pub mod case_folding;
 #[cfg(feature = "alloc")]
 pub mod diacritics;
@@ -96,8 +126,12 @@ mod property_tests;
 // Re-export the public surface at the crate root so consumers can write
 // `use stringcheese_unicode::PreprocessingPipeline` rather than reaching
 // into modules.
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", feature = "compiled-case-data"))]
 pub use case_folding::{case_fold, case_fold_turkic, simple_case_fold};
+#[cfg(all(feature = "alloc", feature = "case-fold"))]
+pub use case_folding::{
+    case_fold_turkic_with_mapper, case_fold_with_mapper, simple_case_fold_with_mapper,
+};
 #[cfg(feature = "alloc")]
 pub use diacritics::strip_diacritics;
 #[cfg(feature = "alloc")]

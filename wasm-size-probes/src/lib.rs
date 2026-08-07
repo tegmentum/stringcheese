@@ -156,12 +156,20 @@ pub extern "C" fn probe_stringcheese_compare() -> usize {
 }
 
 // -----------------------------------------------------------------
-// stringcheese-unicode (normalization, case folding, graphemes).
+// stringcheese-unicode (normalization, graphemes, diacritics).
+//
+// Note: `case_fold` is behind the `case-fold` + `compiled-case-data`
+// features, which this probe deliberately does NOT enable. Baking the
+// ICU case-mapping tables into the binary costs roughly 110 KB in a
+// `wasm-opt -Oz` build and only wasm callers who opt in should pay
+// that. The size-limit baseline this probe drives therefore reflects
+// the minimum useful surface (normalization + graphemes + diacritic
+// stripping) — see `docs/wasm-binary-size.md`.
 // -----------------------------------------------------------------
 #[cfg(feature = "probe-stringcheese-unicode")]
 #[unsafe(no_mangle)]
 pub extern "C" fn probe_stringcheese_unicode() -> usize {
-    use stringcheese_unicode::{case_fold, graphemes, nfc, nfd, nfkc, nfkd, strip_diacritics};
+    use stringcheese_unicode::{graphemes, nfc, nfd, nfkc, nfkd, strip_diacritics};
 
     let s = black_box("Café");
     let mut acc: usize = 0;
@@ -169,9 +177,17 @@ pub extern "C" fn probe_stringcheese_unicode() -> usize {
     acc ^= nfd(s).len();
     acc ^= nfkc(s).len();
     acc ^= nfkd(s).len();
-    acc ^= case_fold(s).len();
     acc ^= strip_diacritics(s).len();
     acc ^= graphemes(s).count();
+    // Optional: enable the `unicode-with-compiled-case-data` probe
+    // feature (see `Cargo.toml`) to additionally reach `case_fold` and
+    // measure the fuller-default configuration. Not part of the gated
+    // baseline — see `docs/wasm-binary-size.md` for the rationale.
+    #[cfg(feature = "unicode-with-compiled-case-data")]
+    {
+        use stringcheese_unicode::case_fold;
+        acc ^= case_fold(s).len();
+    }
     black_box(acc)
 }
 

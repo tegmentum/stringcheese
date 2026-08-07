@@ -29,8 +29,9 @@
 //! blocks, Greek, Cyrillic, Han, and combining marks) so the properties
 //! are exercised across the interesting parts of Unicode.
 
+#[cfg(feature = "compiled-case-data")]
+use crate::case_folding::case_fold;
 use crate::{
-    case_folding::case_fold,
     diacritics::strip_diacritics,
     graphemes::GraphemeSequence,
     normalization::Normalization,
@@ -125,6 +126,7 @@ proptest! {
 
     // Case folding idempotence.
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn case_fold_is_idempotent(s in general_unicode()) {
         let once = case_fold(&s);
@@ -154,6 +156,7 @@ proptest! {
     // Pipeline stability: applying a fold pipeline twice is the same
     // as applying it once (because case_fold is idempotent).
 
+    #[cfg(feature = "compiled-case-data")]
     #[test]
     fn fold_pipeline_is_idempotent(s in general_unicode()) {
         let p = PreprocessingPipeline::new().case_fold();
@@ -191,6 +194,7 @@ proptest! {
 // stages; these tests demonstrate that the pipeline preserves the
 // distinction visibly.
 
+#[cfg(feature = "compiled-case-data")]
 #[test]
 fn pipeline_order_is_visible_in_describe() {
     let a = PreprocessingPipeline::new()
@@ -203,6 +207,7 @@ fn pipeline_order_is_visible_in_describe() {
     assert_ne!(a.steps(), b.steps());
 }
 
+#[cfg(feature = "compiled-case-data")]
 #[test]
 fn pipeline_order_can_change_intermediate_representation() {
     // Full-width Latin capital "Ａ" (U+FF21) — NFKC decomposes it to

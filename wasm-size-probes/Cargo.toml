@@ -67,6 +67,14 @@ probe-stringcheese-core     = []
 probe-stringcheese-corpus   = ["dep:stringcheese-corpus"]
 probe-stringcheese-compare  = ["dep:stringcheese-compare"]
 probe-stringcheese-unicode  = ["dep:stringcheese-unicode"]
+# Experimental variant for local measurement: enables the compiled ICU
+# case-mapping tables so a probe that also references `case_fold` can
+# measure the full-features cost. Not gated by CI; use locally only.
+unicode-with-compiled-case-data = [
+    "probe-stringcheese-unicode",
+    "stringcheese-unicode/case-fold",
+    "stringcheese-unicode/compiled-case-data",
+]
 probe-stringcheese-phonetic = ["dep:stringcheese-phonetic"]
 probe-stringcheese-cdc      = ["dep:stringcheese-cdc"]
 probe-stringcheese-index    = ["dep:stringcheese-index"]
@@ -93,6 +101,15 @@ stringcheese          = { path = "../crates/stringcheese",          optional = t
 stringcheese-core     = { path = "../crates/stringcheese-core",     default-features = false, features = ["std"] }
 stringcheese-corpus   = { path = "../crates/stringcheese-corpus",   optional = true, default-features = false, features = ["std"] }
 stringcheese-compare  = { path = "../crates/stringcheese-compare",  optional = true, default-features = false, features = ["std"] }
+# NOTE: `stringcheese-unicode` is measured with `--features std` alone
+# — NOT with the crate's own defaults (which additionally include
+# `case-fold` and `compiled-case-data`). This is deliberate: the
+# tracked wasm-size baseline reflects the *minimum useful* surface a
+# size-conscious wasm caller ships (normalization + graphemes +
+# diacritics), NOT the drop-in default that bakes ~110 KB of ICU
+# case-mapping tables into the binary. See
+# `docs/wasm-binary-size.md` for the rationale and for the size
+# ceiling numbers of the fuller default configuration.
 stringcheese-unicode  = { path = "../crates/stringcheese-unicode",  optional = true, default-features = false, features = ["std"] }
 stringcheese-phonetic = { path = "../crates/stringcheese-phonetic", optional = true, default-features = false, features = ["std"] }
 stringcheese-cdc      = { path = "../crates/stringcheese-cdc",      optional = true, default-features = false, features = ["std"] }
