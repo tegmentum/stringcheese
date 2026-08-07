@@ -96,7 +96,14 @@
 //!   crate's root.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid` because the `stringcheese_lang::
+// register_language!` invocation below expands to a `linkme`-backed
+// static whose implementation is `unsafe`-tagged (safe in practice
+// — that's linkme's whole design — but flagged by the
+// `unsafe_code` lint). The macro emits an explicit
+// `#[allow(unsafe_code)]` at the sole registration site; the rest
+// of this crate is still lint-enforced no-`unsafe`.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -192,6 +199,15 @@ mod pack {
 
 #[cfg(feature = "alloc")]
 pub use pack::{FRENCH, French};
+
+// Opt this pack into the shared `stringcheese_lang::registry` — a
+// distributed slice populated at link time so callers picking a
+// language by BCP-47 code at runtime
+// (`stringcheese_lang::registry::language("fr")`) find French without
+// naming the crate. See `stringcheese_lang::registry` for the design
+// and trade-offs.
+#[cfg(feature = "alloc")]
+stringcheese_lang::register_language!(FRENCH);
 
 /// Metadata about this release.
 pub mod meta {

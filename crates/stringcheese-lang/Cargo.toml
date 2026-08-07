@@ -32,9 +32,32 @@ stringcheese-core = { workspace = true }
 # wrapper trait defined here, and stringcheese-<lang> crates adapt the
 # phonetic crate's encoders through it.
 stringcheese-phonetic = { workspace = true }
+# `linkme` powers the language-pack `registry` — a distributed slice
+# each `stringcheese-<lang>` pack opts into via the exported
+# `register_language!` macro. Chosen over `inventory` because it is
+# `no_std`-compatible (matches this crate's `no_std + alloc` target),
+# collects at link time with zero runtime constructor cost (no `ctor`
+# / `Lazy` init-order dance), and re-exports cleanly under a private
+# path so downstream packs need no direct `linkme` dependency of
+# their own.
+linkme = "0.3"
 
 [dev-dependencies]
-
+# The three shipped language packs are pulled in as dev-deps so
+# `tests/registry_integration.rs` can prove all three self-register
+# into the distributed slice at link time. The pack crates are the
+# integration test's only reason to be in the dev graph — they are
+# NOT runtime dependencies of stringcheese-lang, and pulling them in
+# outside `[dev-dependencies]` would break the "callers pay only for
+# the languages they want" commitment recorded in the crate docs.
+#
+# `default-features = true` (i.e. `std`, which pulls in `alloc`) is
+# required for the integration test — the pack constants
+# (`ENGLISH`, `GERMAN`, `FRENCH`) and the `Language` trait's
+# `stem` / `tokenize` methods live behind the `alloc` gate.
+stringcheese-en = { workspace = true, default-features = true }
+stringcheese-de = { workspace = true, default-features = true }
+stringcheese-fr = { workspace = true, default-features = true }
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
 # `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so

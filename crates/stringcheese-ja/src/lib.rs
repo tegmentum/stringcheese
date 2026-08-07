@@ -197,6 +197,12 @@ mod pack {
 #[cfg(feature = "alloc")]
 pub use pack::{JAPANESE, Japanese};
 
+// Register into `stringcheese-lang::registry` so callers who look up
+// languages dynamically (`registry::language("ja")`) find this pack.
+// alloc-gated because the pack constant itself is alloc-gated.
+#[cfg(feature = "alloc")]
+stringcheese_lang::register_language!(JAPANESE);
+
 /// Metadata about this release.
 pub mod meta {
     /// The `stringcheese-ja` crate's semantic version.

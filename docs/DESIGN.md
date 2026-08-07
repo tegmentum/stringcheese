@@ -96,10 +96,15 @@ construction.
 
 **Language-pack infrastructure** — `stringcheese-lang`. The
 `Language` trait, `LanguageProvider` discovery trait, `Stemmer` /
-`Collator` / `LanguagePhoneticEncoder` plugin points, and shared
-helper types (`Stopwords`, `SimpleTokenizer`) that every
-`stringcheese-<lang>` pack builds against. Data-only — no per-language
-implementations live here.
+`Collator` / `LanguagePhoneticEncoder` plugin points, shared helper
+types (`Stopwords`, `SimpleTokenizer`), and a static `registry`
+(linkme `distributed_slice`) each `stringcheese-<lang>` pack opts
+into via `register_language!`. Data-only — no per-language
+implementations live here. Callers picking a language at runtime
+(user locale, config file, `Accept-Language` header) reach for
+`registry::language(code)`; callers who name the pack at compile
+time keep using the pack's `ENGLISH` / `GERMAN` / `FRENCH`
+constant. Full BCP-47 fallback (`"pt-BR" → "pt"`) is a v0.2 follow-up.
 
 **Language packs** — `stringcheese-<language>` (e.g.,
 `stringcheese-en`, planned: `stringcheese-de`, `stringcheese-ja`, …).
@@ -175,11 +180,11 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-cdc` | Rolling-hash fingerprints + FastCDC content-defined chunking |
 | `stringcheese-index` | Metric-space and set-similarity indexes: BK-tree, VP-tree, q-gram inverted |
 | `stringcheese-bench` | Criterion benchmarks + allocation-counting harness |
-| `stringcheese-lang` | Language-pack infrastructure: `Language` trait, `Stemmer` / `Collator` / `LanguagePhoneticEncoder` plugin points, `Stopwords` and `SimpleTokenizer` helpers |
-| `stringcheese-en` | English pack: ~150-word stopword list, Porter (1980) stemmer, simple tokenizer, Soundex phonetic hookup |
-| `stringcheese-de` | German pack: ~200-word stopword list, Snowball German stemmer, simple tokenizer, Kölner Phonetik (Postel 1969) hookup |
-| `stringcheese-fr` | French pack: ~200-word stopword list, Snowball French stemmer, elision-aware tokenizer, PHONEX phonetic hookup |
-| `stringcheese-ja` | Japanese pack: ~120-word stopword list, character-type-based (dictionary-free) tokenizer, Kunrei-shiki (ISO 3602) romanization phonetic hookup, minimal polite/plural stemmer. First non-Latin-script pack — full morphological tokenization deferred (needs kuromoji-scale dictionary outside the wasm-first / offline-first envelope). |
+| `stringcheese-lang` | Language-pack infrastructure: `Language` trait, `Stemmer` / `Collator` / `LanguagePhoneticEncoder` plugin points, `Stopwords` and `SimpleTokenizer` helpers, plus a static `registry` (linkme distributed slice) each pack self-registers into via `register_language!` |
+| `stringcheese-en` | English pack: ~150-word stopword list, Porter (1980) stemmer, simple tokenizer, Soundex phonetic hookup; self-registers into `stringcheese-lang::registry` as `"en"` |
+| `stringcheese-de` | German pack: ~200-word stopword list, Snowball German stemmer, simple tokenizer, Kölner Phonetik (Postel 1969) hookup; self-registers into `stringcheese-lang::registry` as `"de"` |
+| `stringcheese-fr` | French pack: ~200-word stopword list, Snowball French stemmer, elision-aware tokenizer, PHONEX phonetic hookup; self-registers into `stringcheese-lang::registry` as `"fr"` |
+| `stringcheese-ja` | Japanese pack: ~120-word stopword list, character-type-based (dictionary-free) tokenizer, Kunrei-shiki (ISO 3602) romanization phonetic hookup, minimal polite/plural stemmer. First non-Latin-script pack — full morphological tokenization deferred (needs kuromoji-scale dictionary outside the wasm-first / offline-first envelope). Self-registers into `stringcheese-lang::registry` as `"ja"`. |
 | `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
 | `stringcheese-tokenizer` | Tokenizer/segmenter trait crate + built-in tokenizers (whitespace, delimiter, identifier, grapheme, n-gram). Foundation for downstream subword algorithm crates and model packs. See [docs/design/tokenizers.md](./design/tokenizers.md). |
 | `stringcheese-tokenizer-bpe` | Data-neutral Byte-Pair Encoding (Sennrich, Haddow, Birch 2016) algorithm crate — caller supplies merge table and vocabulary. Substrate for the planned `stringcheese-tokenizer-tiktoken` and `-huggingface` model packs. |

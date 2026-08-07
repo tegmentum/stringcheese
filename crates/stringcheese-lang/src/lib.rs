@@ -63,11 +63,37 @@
 //! assert_eq!(ENGLISH.stem("running"), "run");
 //! ```
 //!
+//! # Runtime language selection
+//!
+//! When the language isn't known at compile time — a user's locale
+//! preference, a config file's `"lang": "de"`, a BCP-47 `Accept-Language`
+//! header — reach for [`registry`] instead of naming the pack constant
+//! directly:
+//!
+//! ```ignore
+//! use stringcheese_lang::registry;
+//!
+//! let code = std::env::var("LANG").unwrap_or_else(|_| "en".into());
+//! let lang = registry::language(&code)
+//!     .expect("a supported language pack must be linked in");
+//! let stem = lang.stem("caresses");
+//! ```
+//!
+//! The registry is populated at link time by every language pack in
+//! the dependency graph — packs opt in by invoking
+//! [`register_language!`] once. Direct construction
+//! (`stringcheese_en::ENGLISH.stem(word)`) stays the pleasant path
+//! when the language is fixed; the registry is the answer when it
+//! isn't. See the [`registry`] module docs for the trade-off.
+//!
 //! # Module map
 //!
 //! - [`language`] — the [`Language`] trait itself, plus the
 //!   [`LanguageProvider`] discovery trait for callers who want to look
 //!   a language up by BCP-47 code at runtime.
+//! - [`registry`] — the static distributed-slice registry
+//!   (`language(code)`, `languages()`) every pack opts into via
+//!   [`register_language!`]. Populated at link time; no runtime init.
 //! - [`stemmer`] — the [`Stemmer`] plugin trait a pack can compose.
 //! - [`collator`] — the [`Collator`] plugin trait for locale-aware
 //!   sort orders.
@@ -82,7 +108,14 @@
 //!   default tokenizer.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// `deny` rather than `forbid` because the `registry` module's
+// `linkme::distributed_slice` expansion emits `#[unsafe(link_section
+// = "...")]` and an `unsafe { ... }` typecheck block on each static
+// (see linkme-impl). Those are the only permitted unsafe sites in
+// this crate; every one carries an explicit
+// `#[allow(unsafe_code)]` right above it, and the rest of the crate
+// still fires the lint as an error.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -92,6 +125,20 @@ pub mod collator;
 pub mod language;
 #[cfg(feature = "alloc")]
 pub mod phonetic;
+// `registry` and the `register_language!` macro rely on `linkme`'s
+// `#[distributed_slice]`, whose expansion is only defined for a
+// fixed set of target OSes (Linux, macOS, iOS, tvOS, Android,
+// Fuchsia, illumos, FreeBSD, OpenBSD, PSP, Windows, UEFI, `none`) —
+// wasm is not on that list, and the linkme proc-macro compile-errors
+// with "distributed_slice is not implemented for this platform" if
+// asked to expand there. Gating the module on
+// `not(target_family = "wasm")` keeps the crate building on wasm
+// targets (the `alloc + wasm` build still has `Language`, `Stopwords`,
+// etc.); downstream callers that want the registry compile natively
+// and get the full API. The `register_language!` macro carries the
+// same gate on its emitted `static`.
+#[cfg(all(feature = "alloc", not(target_family = "wasm")))]
+pub mod registry;
 #[cfg(feature = "alloc")]
 pub mod stemmer;
 pub mod stopwords;
@@ -109,6 +156,83 @@ pub use phonetic::LanguagePhoneticEncoder;
 pub use stemmer::Stemmer;
 pub use stopwords::Stopwords;
 pub use tokenizer::SimpleTokenizer;
+
+/// Implementation-detail re-exports used by this crate's
+/// exported macros. Not part of the public API — do not depend on any
+/// path under `__private` directly.
+#[doc(hidden)]
+pub mod __private {
+    pub use linkme;
+}
+
+/// Register a language pack into the [`registry::LANGUAGES`]
+/// distributed slice.
+///
+/// Expands to a `static` marked with
+/// `#[linkme::distributed_slice(LANGUAGES)]` that holds a
+/// `&'static dyn Language` coerced from `&$lang`. The linker gathers
+/// every such `static` in the final binary into the
+/// [`registry::LANGUAGES`] slice; there is no runtime constructor
+/// pass and no init-order dependency.
+///
+/// The macro consults `$crate::__private::linkme` for the linkme
+/// re-export, so downstream packs never need `linkme` as a direct
+/// dependency of their own.
+///
+/// Invoke this **at most once per crate** — the emitted `static`
+/// uses a fixed name (`__STRINGCHEESE_LANGUAGE_REGISTRATION`) so a
+/// second invocation in the same module would be a name collision.
+///
+/// # Platform
+///
+/// The macro's emitted `static` is gated on
+/// `not(target_family = "wasm")`; on wasm targets the invocation
+/// expands to nothing (linkme's `#[distributed_slice]` has no wasm
+/// branch, and [`registry`] itself is not compiled there). The
+/// invocation is still safe to write unconditionally.
+///
+/// # Example
+///
+/// ```ignore
+/// // In stringcheese-en/src/lib.rs:
+/// stringcheese_lang::register_language!(ENGLISH);
+///
+/// // Or with an explicit coercion, equivalent:
+/// stringcheese_lang::register_language!(&ENGLISH as &dyn Language);
+/// ```
+///
+/// The macro definition lives here at the crate root (rather than
+/// inside [`registry`]) so that `#[macro_export]` keeps it visible
+/// on wasm, where the registry module is cfg-out. The emitted
+/// static carries its own wasm gate, so the macro is a no-op there.
+#[cfg(feature = "alloc")]
+#[macro_export]
+macro_rules! register_language {
+    ($lang:expr) => {
+        // The `#[cfg(not(target_family = "wasm"))]` gate mirrors the
+        // one on `stringcheese_lang::registry` itself — linkme's
+        // `#[distributed_slice(...)]` expansion is undefined on
+        // wasm, and the registry module isn't compiled there. On
+        // wasm the macro expands to nothing; downstream packs can
+        // still invoke it unconditionally without wasm-specific
+        // gating of their own.
+        //
+        // `#[allow(unsafe_code)]` is emitted with the static because
+        // linkme's element expansion contains an `unsafe fn`
+        // typecheck helper — legitimate `unsafe` in linkme's own
+        // implementation, but flagged by the `unsafe_code` lint at
+        // the invocation site. Downstream packs can therefore keep
+        // their crate-wide `deny(unsafe_code)` intact and still
+        // invoke this macro.
+        #[cfg(not(target_family = "wasm"))]
+        #[allow(unsafe_code)]
+        #[$crate::__private::linkme::distributed_slice($crate::registry::LANGUAGES)]
+        #[linkme(crate = $crate::__private::linkme)]
+        #[doc(hidden)]
+        static __STRINGCHEESE_LANGUAGE_REGISTRATION: &'static (dyn $crate::Language + 'static) =
+            &$lang;
+    };
+}
 
 /// Metadata about this release.
 pub mod meta {
