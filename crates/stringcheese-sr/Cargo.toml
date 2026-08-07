@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-sr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Serbian language pack for the StringCheese toolkit: dual-script (Cyrillic Vukovica + Latin Gaj) stopword lists (~200 entries), bijective Vukovica <-> Gaj's-Latin transliteration, Snowball-family Serbian stemmer that normalizes to Latin internally, whitespace-and-punctuation tokenizer that treats both scripts as word characters, and a `to_latin`-backed phonetic hookup. Implements stringcheese-lang::Language."
+categories = ["text-processing", "internationalization"]
+keywords = ["serbian", "stemmer", "snowball", "stopwords", "cyrillic"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The Snowball
+# stemmer builds owned `String` output, `Language::tokenize` hands back
+# a `Box<dyn Iterator>`, the script transliteration returns owned
+# `String` output, and the phonetic encoder returns an owned `String`
+# key — all `alloc`-only. Without this feature the crate compiles down
+# to the stopword slices and the module constants alone (enough to
+# link against on embedded targets that only want the tables).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
