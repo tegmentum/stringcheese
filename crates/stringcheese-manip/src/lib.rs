@@ -9,14 +9,12 @@
 //!
 //! # Status
 //!
-//! **Second wave shipped in v0.1.** Fourteen of the fifteen modules —
-//! [`inspect`], [`trim`], [`case`], [`split`], [`join`], [`replace`],
-//! [`normalize`], [`mod@slice`], [`find`], [`pad`], [`lines`], [`escape`],
-//! [`quote`], and [`template`] — carry real implementations. The only
-//! remaining placeholder is [`pipeline`] (the transformation IR); its doc
-//! comment records the intended scope. `pipeline` lands in a follow-on
-//! wave once the shipping modules have settled and their operations can
-//! be lifted into the IR without churn.
+//! **All 15 modules now ship real implementations in v0.1.** The full
+//! roster — [`inspect`], [`trim`], [`case`], [`split`], [`join`],
+//! [`replace`], [`normalize`], [`mod@slice`], [`find`], [`pad`], [`lines`],
+//! [`escape`], [`quote`], [`template`], and [`pipeline`] — carries the
+//! surface described below; the earlier scaffold placeholder for
+//! [`pipeline`] was filled in the wave that closed out the v0.1 charter.
 //!
 //! Depending on `stringcheese-manip` today is safe — the crate compiles
 //! and re-releases will only *add* items, never remove them at this
@@ -45,9 +43,8 @@
 //!
 //! # Module map
 //!
-//! Modules marked *shipped* below carry real implementations in v0.1;
-//! the remainder are placeholders whose doc comment records the scope.
-//! See `docs/DESIGN.md` for the full charter.
+//! Every module below carries a real implementation in v0.1; see
+//! `docs/DESIGN.md` for the full charter.
 //!
 //! - [`inspect`] — *shipped.* Read-only interrogation: is-empty, byte /
 //!   scalar / grapheme count, first / last character, first / last
@@ -101,10 +98,15 @@
 //!   writing directly to a `Write`. Not a general templating engine (no
 //!   conditionals, loops, or filters); reach for `askama` / `handlebars`
 //!   / `tera` for that.
-//! - [`pipeline`] — `TextPipeline`, a transformation IR that stages
-//!   multiple operations for one-pass application. Operations expose
-//!   their memory footprint and are combinable into a single fused
-//!   transform.
+//! - [`pipeline`] — *shipped.* [`pipeline::TextPipeline`], a
+//!   transformation IR that stages multiple [`pipeline::Operation`]s
+//!   for one-pass application over a ping-pong buffer pair. Concrete
+//!   operations wrap the shipping modules ([`pipeline::Trim`],
+//!   [`pipeline::Normalize`], [`pipeline::CaseFold`],
+//!   [`pipeline::CollapseWhitespace`], [`pipeline::Remove`],
+//!   [`pipeline::Replace`], [`pipeline::Escape`], [`pipeline::Truncate`]);
+//!   each carries a `name()` for introspection and budget-limited ops
+//!   short-circuit the pipeline when their limit is reached.
 //!
 //! # Not in this crate
 //!
@@ -131,9 +133,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-// Modules shipped with real implementations (14 of 15). The only remaining
-// scaffold is `pipeline` (the transformation IR), whose doc comment records
-// the intended scope for readers of `docs/DESIGN.md`.
+// All 15 modules ship real implementations. The pipeline module is
+// alloc-gated because it stores `Box<dyn Operation>` stages in a
+// heap-allocated `Vec`.
 pub mod case;
 pub mod escape;
 pub mod find;
@@ -142,26 +144,13 @@ pub mod join;
 pub mod lines;
 pub mod normalize;
 pub mod pad;
+pub mod pipeline;
 pub mod quote;
 pub mod replace;
 pub mod slice;
 pub mod split;
 pub mod template;
 pub mod trim;
-
-/// Declarative transformation pipeline — `TextPipeline` IR that
-/// stages multiple operations for one-pass application.
-///
-/// Operations (`Trim`, `Normalize`, `CaseFold`, `CollapseWhitespace`,
-/// `Remove`, `Replace`, ...) expose their memory footprint and are
-/// combinable into a single fused transform. The IR is inspectable
-/// (each stage's `Debug` names the operation) and re-orderable
-/// (independent stages can be swapped without changing the result).
-///
-/// # Status
-///
-/// Scaffold only — no items shipped yet.
-pub mod pipeline {}
 
 /// Metadata about this release.
 pub mod meta {
