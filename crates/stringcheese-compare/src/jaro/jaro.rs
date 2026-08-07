@@ -160,6 +160,36 @@ impl Jaro {
     ) -> NormalizedSimilarity {
         NormalizedSimilarity::new_unchecked(jaro_similarity_with_workspace(left, right, ws))
     }
+
+    /// Byte-slice specialization that opts into the SIMD Jaro backend
+    /// when the `simd` feature is enabled and the input pair meets the
+    /// backend's viability criterion
+    /// ([`crate::jaro::simd::is_byte_amenable_for_jaro`]).
+    ///
+    /// The workspace is only consulted for the scalar fallback path —
+    /// the SIMD backend allocates its own packed matched-position
+    /// bitmaps on the fly — so callers who always hit the SIMD path
+    /// pay no workspace-touch cost. Unicode-scalar callers (`&[char]`)
+    /// go through [`similarity_with_workspace`](Self::similarity_with_workspace)
+    /// and stay on the generic kernel; the SIMD backend is byte-oriented
+    /// because its window scan assumes fixed-width symbols that fit in
+    /// a byte lane.
+    #[inline]
+    #[must_use]
+    pub fn similarity_bytes_with_workspace(
+        self,
+        left: &[u8],
+        right: &[u8],
+        ws: &mut JaroWorkspace,
+    ) -> Similarity<f64> {
+        #[cfg(feature = "simd")]
+        {
+            if crate::jaro::simd::is_byte_amenable_for_jaro(left, right) {
+                return Similarity::new(crate::jaro::simd::similarity(left, right));
+            }
+        }
+        Similarity::new(jaro_similarity_with_workspace(left, right, ws))
+    }
 }
 
 impl<T: Eq> SimilarityMetric<[T]> for Jaro {

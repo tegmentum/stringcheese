@@ -74,6 +74,12 @@
 pub mod jaro;
 #[cfg(feature = "alloc")]
 pub mod jaro_winkler;
+/// Optional SIMD-accelerated byte-slice Jaro backend. Compiled only under
+/// `--features simd`; see the [`simd`] module docs for the dispatch
+/// architecture and the documented unsafe-code exception the module
+/// carries.
+#[cfg(feature = "simd")]
+pub mod simd;
 #[cfg(feature = "alloc")]
 pub mod workspace;
 
@@ -83,6 +89,10 @@ mod golden;
 #[cfg(all(test, feature = "alloc"))]
 #[cfg(not(target_family = "wasm"))]
 mod property_tests;
+
+#[cfg(all(test, feature = "simd"))]
+#[cfg(not(target_family = "wasm"))]
+mod simd_property_tests;
 
 #[cfg(feature = "alloc")]
 pub use jaro::Jaro;

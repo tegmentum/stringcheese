@@ -82,11 +82,14 @@ const MYERS_MIN_LEN: usize = 32;
 /// The current criterion is a length threshold: both inputs are
 /// byte-oriented by construction (the caller is on the `&[u8]` API entry
 /// point), and the shorter side must be at least `MYERS_MIN_LEN` (32)
-/// bytes long for the algorithmic win to outweigh the Peq build.
+/// bytes long for the algorithmic win to outweigh the Peq build. The
+/// underlying comparison is delegated to
+/// [`crate::simd_dispatch::is_byte_amenable`] so every SIMD sub-tree in
+/// this crate shares the same viability shape.
 #[inline]
 #[must_use]
 pub fn is_byte_amenable_for_myers(a: &[u8], b: &[u8]) -> bool {
-    a.len().min(b.len()) >= MYERS_MIN_LEN
+    crate::simd_dispatch::is_byte_amenable(a, b, MYERS_MIN_LEN)
 }
 
 /// Runtime-dispatching Levenshtein distance for byte-slice inputs.

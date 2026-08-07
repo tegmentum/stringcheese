@@ -86,6 +86,12 @@ pub mod minhash;
 pub mod ngram;
 pub mod search;
 pub mod set_similarity;
+/// Shared helpers used by every byte-slice SIMD sub-tree (`levenshtein::simd`,
+/// `jaro::simd`, `damerau::osa::simd`). Compiled only under `--features simd`;
+/// see the module docs for the shape of the helper and the reasoning for
+/// keeping the per-arch dispatchers per-module.
+#[cfg(feature = "simd")]
+pub mod simd_dispatch;
 
 // -----------------------------------------------------------------------
 // Convenience re-exports — matches what each source crate's `lib.rs`

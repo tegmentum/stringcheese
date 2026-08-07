@@ -37,6 +37,7 @@ use stringcheese_compare::damerau::{
         banded::distance_banded_with_workspace as osa_banded,
         full_matrix::distance_full_matrix as osa_full_matrix,
         rolling_rows::distance_rolling_rows_with_workspace as osa_rolling_rows,
+        simd::{self as osa_simd, scalar as osa_simd_scalar},
     },
 };
 use stringcheese_core::DistanceMetric;
@@ -210,6 +211,44 @@ fn bench_damerau_handle_no_workspace(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_osa_simd_scalar(c: &mut Criterion) {
+    // Scalar SIMD-shaped byte-slice OSA kernel. Same numeric result as
+    // the rolling-rows kernel; the interest is measuring the effect of
+    // the self-contained three-row buffer allocation and the SIMD-shape
+    // loop structure vs. the workspace-backed generic form.
+    let mut group = c.benchmark_group("osa/simd_scalar");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher.iter(|| {
+                    osa_simd_scalar::distance(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_osa_simd_dispatched(c: &mut Criterion) {
+    // Runtime-dispatched entry point. The overhead of the CPU-feature
+    // check is what this group measures vs. `osa/simd_scalar` — it
+    // should be negligible for any input above the OSA_MIN_LEN threshold.
+    let mut group = c.benchmark_group("osa/simd_dispatched");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher
+                    .iter(|| osa_simd::distance(black_box(a.as_slice()), black_box(b.as_slice())));
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_osa_full_matrix,
@@ -217,6 +256,8 @@ criterion_group!(
     bench_osa_banded_permissive,
     bench_osa_banded_tight,
     bench_osa_handle_no_workspace,
+    bench_osa_simd_scalar,
+    bench_osa_simd_dispatched,
     bench_damerau_full_matrix,
     bench_damerau_production,
     bench_damerau_handle_no_workspace,

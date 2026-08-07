@@ -20,7 +20,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use stringcheese_bench::inputs::{identical_pair, random_ascii, similar_pair};
-use stringcheese_compare::jaro::{Jaro, JaroWinkler};
+use stringcheese_compare::jaro::{
+    Jaro, JaroWinkler,
+    simd::{self as jaro_simd, scalar as jaro_simd_scalar},
+};
 use stringcheese_core::SimilarityMetric;
 
 const LENGTHS: &[usize] = &[8, 32, 128, 512, 2048];
@@ -94,10 +97,51 @@ fn bench_jaro_winkler_with_threshold(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_jaro_simd_scalar(c: &mut Criterion) {
+    // Scalar SIMD-shaped byte-slice Jaro kernel. Same numeric result as
+    // the generic Jaro; the interest here is measuring whether the
+    // packed-bitmap + linearized-window shape wins on modern desktop
+    // CPUs at the length regimes above the amenability threshold.
+    let mut group = c.benchmark_group("jaro/simd_scalar");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher.iter(|| {
+                    jaro_simd_scalar::similarity(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_jaro_simd_dispatched(c: &mut Criterion) {
+    // Runtime-dispatched entry point. The overhead of the CPU-feature
+    // check is what this group measures vs. `jaro/simd_scalar` — it
+    // should be negligible for any input above the JARO_MIN_LEN threshold.
+    let mut group = c.benchmark_group("jaro/simd_dispatched");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        for &kind in &["random", "similar", "identical"] {
+            let (a, b) = build_pair(len, kind);
+            group.bench_with_input(BenchmarkId::new(kind, len), &(a, b), |bencher, (a, b)| {
+                bencher.iter(|| {
+                    jaro_simd::similarity(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_jaro,
     bench_jaro_winkler_classic,
     bench_jaro_winkler_with_threshold,
+    bench_jaro_simd_scalar,
+    bench_jaro_simd_dispatched,
 );
 criterion_main!(benches);

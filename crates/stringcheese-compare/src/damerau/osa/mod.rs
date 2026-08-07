@@ -38,6 +38,15 @@ pub mod banded;
 pub mod full_matrix;
 pub mod rolling_rows;
 
+/// Optional SIMD-accelerated byte-slice OSA backend. Compiled only under
+/// `--features simd`; see the [`simd`] module docs for the dispatch
+/// architecture and the documented unsafe-code exception the module
+/// carries. Full unrestricted Damerau-Levenshtein (`crate::damerau::damerau`)
+/// stays scalar — its HashMap-backed algorithm does not vectorize under
+/// the Myers bit-parallel pattern.
+#[cfg(feature = "simd")]
+pub mod simd;
+
 pub use banded::distance_banded_with_workspace;
 pub use full_matrix::distance_full_matrix;
 pub use rolling_rows::distance_rolling_rows_with_workspace;

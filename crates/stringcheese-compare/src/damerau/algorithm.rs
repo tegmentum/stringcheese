@@ -145,6 +145,35 @@ impl Osa {
     ) -> BoundedDistance<u32> {
         distance_banded_with_workspace(left, right, cutoff, ws)
     }
+
+    /// Byte-slice specialization that opts into the SIMD OSA backend when
+    /// the `simd` feature is enabled and the input pair meets the
+    /// backend's viability criterion
+    /// ([`crate::damerau::osa::simd::is_byte_amenable_for_osa`]).
+    ///
+    /// The workspace is only consulted for the scalar fallback path —
+    /// the SIMD backend allocates its own three-row rolling buffer on
+    /// the fly — so callers who always hit the SIMD path pay no
+    /// workspace-touch cost. Unicode-scalar callers (`&[char]`) go
+    /// through [`distance_with_workspace`](Self::distance_with_workspace)
+    /// and stay on the generic rolling-rows kernel; the SIMD backend is
+    /// byte-oriented because the (future) bit-parallel form assumes
+    /// symbols that fit in a byte lane.
+    #[inline]
+    pub fn distance_bytes_with_workspace(
+        self,
+        left: &[u8],
+        right: &[u8],
+        ws: &mut OsaWorkspace,
+    ) -> Distance<u32> {
+        #[cfg(feature = "simd")]
+        {
+            if crate::damerau::osa::simd::is_byte_amenable_for_osa(left, right) {
+                return Distance::new(crate::damerau::osa::simd::distance(left, right));
+            }
+        }
+        distance_rolling_rows_with_workspace(left, right, ws)
+    }
 }
 
 impl<T: Eq> DistanceMetric<[T]> for Osa {

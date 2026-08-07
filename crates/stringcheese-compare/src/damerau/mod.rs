@@ -147,6 +147,14 @@ mod golden;
 #[cfg(not(target_family = "wasm"))]
 mod property_tests;
 
+/// SIMD-specific differential property tests for the OSA backend. Gated
+/// on `simd` and on non-wasm hosts (the `proptest` dep is not
+/// wasm-friendly, matching the pattern used by the sibling
+/// [`property_tests`] module).
+#[cfg(all(test, feature = "simd"))]
+#[cfg(not(target_family = "wasm"))]
+mod simd_property_tests;
+
 #[cfg(feature = "alloc")]
 pub use algorithm::{Damerau, Osa};
 #[cfg(feature = "std")]
