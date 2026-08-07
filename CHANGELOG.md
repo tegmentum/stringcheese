@@ -11,6 +11,129 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-vi` — Vietnamese language pack.** New workspace crate.
+  ~181 single-syllable stopwords (Vietnamese orthography writes each
+  syllable as a whitespace-separated word; multi-syllable compounds like
+  `chúng tôi` are covered by their component syllables). `VietnameseNormalizer`
+  builder with three opt-in flags: NFC canonicalization (default via
+  `unicode-normalization::is_nfc` fast-path returning `Cow::Borrowed`),
+  `with_strip_tone_marks(bool)` (remove grave/acute/hook/tilde/dot-below
+  but **preserve letter modifiers** `ă â đ ê ô ơ ư`), `with_strip_all_diacritics(bool)`
+  (fold everything to ASCII including `đ → d`). **Linguistic distinction**:
+  tone marks are suprasegmental (pitch); letter modifiers change the
+  segmental phoneme (`a`/`ă`/`â` are different vowels, `d`/`đ` are different
+  consonants). NFC default because the web overwhelmingly delivers Vietnamese
+  in NFC and every input method (Telex, VNI, VIQR) produces NFC output.
+  Identity stemmer (Vietnamese is analytic — no inflection). PHONEX-vi
+  encoder (`"phonex-vi"`) with digraph rewrites `ng → N`, `nh → N`,
+  `ph → F`, `kh → K`, `tr → T`, `ch → X`, `qu → K`, `gi → Y`, `gh → G`.
+  22 PHONEX pairs + 33 normalizer pairs (7 NFC + 17 tone-strip + 15 full-strip).
+
+- **`stringcheese-he` — Hebrew language pack.** New workspace crate.
+  **Second RTL pack** (after Arabic). ~130 stopwords in Hebrew script.
+  `HebrewNormalizer` builder with four opt-in flags: `with_strip_niqqud`
+  (default true, removes vowel points U+05B0..=U+05BC/U+05BE/U+05BF/etc.),
+  `with_strip_cantillation` (default true, removes te'amim U+0591..=U+05AF),
+  `with_final_form_folding` (default false — final letters ך/ם/ן/ף/ץ
+  are semantically meaningful position markers), `with_strip_hebrew_punctuation`
+  (default false, maqaf/geresh/gershayim). Light suffix-stripping stemmer:
+  7 single-letter prefixes (`ה ו ב כ ל מ ש`) + common suffixes (`-ים`,
+  `-ות`, `-ה`, possessives, past-tense endings). **Aggressive** — no
+  lexicon awareness, so `בית` (starts with `ב`) and `כתבתי` (starts
+  with `כ`) can over-strip; documented. Simplified ISO 259 transliteration
+  encoder (`"iso-259-he"`) — single-character ASCII bijective mapping.
+  22 base + 5 finals covered by dedicated coverage assertions. Root-and-
+  pattern morphological analysis, verb-binyan awareness, Yiddish (`yi`),
+  Ladino (`lad`), Biblical-vs-Modern-Hebrew tuning deferred.
+
+- **`stringcheese-sk` — Slovak language pack.** New workspace crate.
+  Sibling to Czech; ~90% morphology overlap with distinct function-word
+  inventory and Slovak-specific letters `ä ĺ ľ ŕ ô` (drops Czech's
+  `ř ě ů`). ~237 stopwords. Light stemmer — no canonical Snowball Slovak.
+  Divergences from Czech: infinitive `-ť` not `-t` (`-ovať`/`-ať`/`-iť`/
+  `-ieť`/`-núť`); Slovak present-tense paradigm `-ujem`/`-uješ`/`-uje`
+  vs Czech's `-uji`/`-uješ`; past-tense plural is `-ovali` only (no
+  gender split like Czech's `-ovali`/`-ovaly`); masculine instrumental
+  `-om` not `-em`; RV vowel set adds `ä`/`ô`/`ĺ`/`ŕ`, drops `ě`/`ů`.
+  PHONEX-sk encoder (`"phonex-sk"`) with Slovak-tuned folds: `ľ → L`
+  (Slovak-only palatal), `ĺ → L`/`ŕ → R` (Slovak-only long syllabics),
+  `ä → E` (open-front /æ/ closer to `e` phonetically), `ô → O` (diphthong
+  marker). 40 stemmer pairs + 17 PHONEX pairs. 83 tests total.
+
+- **`stringcheese-bg` — Bulgarian language pack.** New workspace crate.
+  **Third Cyrillic pack** (after Russian and Ukrainian). ~236 stopwords.
+  Snowball Bulgarian stemmer (Nakov 2003) with **definite-article
+  stripping as the signature first step** — Bulgarian's article is a
+  postposed suffix (`-ият`/`-ия` masc long-adj, `-ата`/`-ото` fem/neut
+  long-adj, `-ите` plural long-adj, `-ът`/`-ят` masc noun, `-та` fem
+  noun, `-то` neut noun, `-те` plural noun), not a separate word like
+  English "the". `книгата → книг` and `човекът → човек` collapse to the
+  bare forms. Then plural markers (`-ове`/`-еве`), verb/l-participle
+  endings, and final bare-vowel strip in R1 (`а е и о у я ю ъ` —
+  **`ъ` is a vowel /ɤ/ in Bulgarian**, not a hard-sign glyph as in
+  Russian). GOST 7.79-B transliteration tailored to Bulgarian phonology:
+  **`щ → sht`** (Bulgarian /ʃt/ cluster; Russian's `щ` is long /ʃː/
+  rendered `shh`), **`ъ → a`** (Bulgarian's full vowel), `х → h`,
+  `ц → ts` per convention. Adapter `"gost-7.79-b-bg"`. 33 Snowball
+  pairs (12 exercising the article suffixes) + 22 transliteration pairs
+  (all 30 letters covered).
+
+- **`stringcheese-zh` — Chinese language pack (minimal).** New workspace
+  crate. **Character-based tokenizer only** — no dictionary, no jieba-style
+  word segmentation. Documented design commitment matching the Japanese
+  pack's ethos: dictionary-driven segmentation is out of the offline-first
+  / wasm-friendly envelope. Every CJK character becomes its own token
+  (matches BERT's Chinese preprocessing philosophy: `你好` → `["你","好"]`,
+  `中文hello123` → `["中","文","hello","123"]` — Han split, Latin/digit
+  runs stay together). ~93 stopwords (single-character function words:
+  的, 了, 在, 是, ...). Identity stemmer (Chinese is fully analytic —
+  no inflection). **Pinyin encoder** (`"pinyin-zh"`) with a curated
+  ~1092-character subset covering ~85%+ running-text coverage; unknown
+  Han encodes as `?`. Simplified Chinese target; Traditional characters
+  tokenize the same but stopword/pinyin lookups miss (`stringcheese-zh-hant`
+  sibling deferred). 22 tokenizer pairs + 25 pinyin pairs. Dictionary-based
+  `stringcheese-zh-jieba`, Simplified↔Traditional converter, Cantonese
+  Jyutping, Wade-Giles/Yale/Tongyong/Bopomofo, tone-preserving pinyin
+  deferred.
+
+- **Slavic-Metaphone wiring in `ru`/`uk`/`sr` language packs.** Wires
+  the wave-9 `stringcheese-phonetic::SlavicMetaphone` encoder into the
+  three existing Slavic packs as an opt-in alternate. New `slavic-metaphone`
+  feature (default off) per pack; new `RussianPhoneticChoice` /
+  `UkrainianPhoneticChoice` / `SerbianPhoneticChoice` enum field;
+  new `with_slavic_metaphone_encoder()` / `with_default_encoder()` const
+  constructors; new sibling constants `RUSSIAN_WITH_SLAVIC_METAPHONE`,
+  `UKRAINIAN_WITH_SLAVIC_METAPHONE`, `SERBIAN_WITH_SLAVIC_METAPHONE`.
+  **Default behavior preserved** — `RUSSIAN`, `UKRAINIAN`, `SERBIAN`
+  constants still return their existing transliteration encoders.
+  Cross-pack equivalence test: 7 pairs (Chekhov, Petar, Ivan, Nikola,
+  Milan, Volkov, Bratislava) × 6 equalities each = 42 assertions verify
+  all three pack encoders agree across Cyrillic and Latin spellings.
+  Uniform adapter name `"slavic-metaphone-2026"` across packs for
+  cross-pack introspection. Pack types are no longer strictly zero-sized
+  (small enum field added) but stay `Copy`/`Clone`/`Debug`/`Default`/
+  `PartialEq`/`Eq`/`Hash` via derive-with-`#[default]`.
+
+- **`stringcheese-tokenizer-bpe`: HuggingFace Normalizers and
+  TemplateProcessing.** The wave-9-flagged "highest-impact next unlock"
+  for tokenizer.json byte-parity. **Normalizer support**: NFC, NFD,
+  NFKC, NFKD (via `unicode-normalization`), Lowercase, `Replace{String
+  pattern}`, `Strip{left,right}`, `Prepend`, `Sequence` composition.
+  New `normalizer` module exposes `Normalizer` enum + `normalize(text,
+  normalizer) -> String`. New `hf-normalizer` sub-feature that
+  `hf-tokenizer` now implies (JSON callers get NFC/NFD out of the box).
+  Pipeline composition: normalizer runs BEFORE pre-tokenizer (HF's
+  semantic order). Deferred: `Bert`, `Nmt`, `Precompiled` (SentencePiece),
+  `Replace{Regex pattern}`. **TemplateProcessing support**: recognizes
+  the post-processor variant with `single`/`pair` templates and
+  `special_tokens` map. `encode_with_special(text, add_special_tokens)`
+  provides opt-out. Llama-family tokenizers with `<|begin_of_text|>` /
+  `<|eot_id|>` BOS/EOS injection now work end-to-end. Deferred:
+  `BertProcessing`, `RobertaProcessing`, `ByteLevel` post-processor,
+  `Sequence` multi-processor. Synthetic Llama-3-shape config test
+  verifies `encode("hello") == [128000, 7]` with `special_mask [true,
+  false]`; `encode_with_special(_, false) == [7]`. 36 new tests.
+
 - **`stringcheese-pl` — Polish language pack.** New workspace crate.
   ~282 stopwords (`być / mieć / móc / chcieć` paradigms + full pronoun /
   preposition / conjunction inventory; carries both ASCII-typed and
