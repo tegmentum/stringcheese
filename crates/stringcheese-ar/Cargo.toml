@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-ar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Arabic language pack for the StringCheese toolkit: ~150-word stopword list, Larkey ALP light10 stemmer (Larkey, Ballesteros, Connell 2002), diacritic / alef / yeh / teh-marbuta normalizer, Buckwalter transliteration phonetic hookup, and a whitespace-based simple tokenizer. Implements stringcheese-lang::Language. First right-to-left-script pack."
+categories = ["text-processing", "internationalization"]
+keywords = ["arabic", "stemmer", "buckwalter", "larkey", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The Larkey
+# light10 stemmer builds owned `String` output, `Language::tokenize`
+# hands back a `Box<dyn Iterator>`, the normalizer allocates, and the
+# Buckwalter transliterator returns an owned `String` key — all
+# `alloc`-only. Without this feature the crate compiles down to the
+# stopword slice and the module constants alone (enough to link
+# against on embedded targets that only want the stopword table).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
