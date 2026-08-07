@@ -8,7 +8,7 @@
 //! slice directly for the leaving byte), but the SIMD tree lives inside
 //! the parent module so its cfg naturally inherits the same gate.
 //!
-//! # The rolling recurrence is strictly sequential
+//! # The rolling recurrence is sequential — but a 64-byte block is not
 //!
 //! Buzhash's per-byte update is
 //!
@@ -18,22 +18,50 @@
 //!       ^ T[byte]
 //! ```
 //!
-//! Each step depends on the previous state, so there is no natural
-//! per-byte SIMD parallelism at the update level. The backends here
-//! therefore consume the byte slice sequentially inside a
-//! `#[target_feature]` context and rely on the compiler to
-//! auto-vectorize the load/rotate/xor sequence with whatever the
-//! enabled ISA can express — the same shape [`crate::fingerprint::gear::simd`]
-//! uses. Buzhash's rotate operations are naturally SIMD-friendly for
-//! `u64x2` on every arch (SSE2 has no direct `_mm_rol_epi64` but the
-//! shift+OR pattern is one intrinsic each), so a hand-written v128 lift
-//! is tractable and documented as follow-up work.
+//! Folding the two table terms into a single per-index contribution
 //!
-//! The **byte-identical contract** is what this initial cut preserves:
-//! every backend returns the same `u64` digest a scalar
-//! [`RollingHash::roll`][crate::fingerprint::RollingHash::roll]
-//! loop over the same input would produce. The differential tests
-//! below anchor every backend to that reference.
+//! ```text
+//! contrib_i = T[bytes[i]] ^ (if i >= window then T[bytes[i-window]].rotate_left(window mod 64) else 0)
+//! ```
+//!
+//! makes each step `state = state.rotate_left(1) ^ contrib_i`. Unrolled
+//! over `k` bytes, the recurrence collapses to the closed form
+//!
+//! ```text
+//! state_k = state_0.rotate_left(k)
+//!         ^ Σ_{i=0..k}  contrib_i.rotate_left(k-1-i)
+//! ```
+//!
+//! At `k = 64` — the `u64` rotate cycle length — `state_0.rotate_left(64)`
+//! reduces to `state_0` unchanged. Each 64-byte block therefore folds
+//! into the running state as a simple XOR:
+//!
+//! ```text
+//! state_after_block = state_before_block ^ blockhash
+//! blockhash = Σ_{i=0..64} contrib_i.rotate_left(63 - i)
+//! ```
+//!
+//! The block sum has a natural Horner-form SIMD shape — for the
+//! AVX2 4-lane kernel, groups of 4 bytes:
+//!
+//! ```text
+//! acc = acc.rotate_left(4) ^ [ ROL(c[4k+0], 3), ROL(c[4k+1], 2),
+//!                              ROL(c[4k+2], 1), ROL(c[4k+3], 0) ]
+//! ```
+//!
+//! and for the NEON / wasm-SIMD 2-lane kernels, groups of 2 bytes:
+//!
+//! ```text
+//! acc = acc.rotate_left(2) ^ [ ROL(c[2k+0], 1), ROL(c[2k+1], 0) ]
+//! ```
+//!
+//! XOR-reducing the two/four `u64` lanes at the end reproduces the
+//! block sum bit-for-bit. Below 64 bytes the kernel defers to the
+//! scalar loop (there is no prior state to preserve through a 64-bit
+//! rotate cycle), and any `len % 64` tail after the last full block is
+//! consumed by the same scalar recurrence — both share the
+//! `state = state.rotate_left(1) ^ contrib_i` core that anchors the
+//! differential contract.
 //!
 //! # Public surface
 //!
@@ -41,7 +69,38 @@
 //!   a fresh `Buzhash::new(window)` with `bytes` byte-by-byte and
 //!   returns the final `digest()`.
 //!
-//! # Backends and `unsafe` policy
+//! # Backends
+//!
+//! * `scalar` — portable single-`u64` Buzhash loop. Always compiled;
+//!   the reference against which every arch-specific backend is
+//!   differentially tested.
+//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`. Real block-
+//!   reformulation kernel over four `u64` lanes: `_mm256_loadu_si256`
+//!   for the per-block contribution loads, per-lane variable rotate
+//!   via `_mm256_sllv_epi64` + `_mm256_srlv_epi64` + `_mm256_or_si256`,
+//!   constant 4-bit rotate for the Horner advance, and `_mm256_xor_si256`
+//!   for the fold. 16 iterations per 64-byte block.
+//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`. Deliberately
+//!   scalar under `target_feature(sse2)`; see that module's docs for
+//!   why (no gather; no per-lane variable shift below AVX2). AVX2 is
+//!   the wide x86 branch the dispatcher prefers.
+//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`. Real
+//!   block-reformulation kernel over two `u64` lanes: `vld1q_u64` for
+//!   the block-contribution loads, per-lane variable rotate via
+//!   `vshlq_u64` (positive and negative counts for left / logical-right)
+//!   OR-combined with `vorrq_u64`, constant 2-bit rotate for the
+//!   Horner advance, and `veorq_u64` for the fold. 32 iterations per
+//!   64-byte block.
+//! * `wasm_simd128` — wasm SIMD128-gated, compiled only when the
+//!   `simd128` target-feature is enabled at build time. Real block-
+//!   reformulation kernel over two `u64` lanes: the per-lane pre-rotate
+//!   `[1, 0]` is factored out into a scalar-side `g0.rotate_left(1)`
+//!   pack (wasm's `u64x2_shl` applies a single scalar shift uniformly
+//!   to both lanes), and the Horner advance / fold use `u64x2_shl(_, 2)`
+//!   / `u64x2_shr(_, 62)` / `v128_or` / `v128_xor`. 32 iterations per
+//!   64-byte block.
+//!
+//! # `unsafe` policy
 //!
 //! Layout and `unsafe` policy mirror [`crate::fingerprint::gear::simd`];
 //! see the docs there for the shared trade-off and the invariant every
@@ -184,6 +243,32 @@ mod tests {
                     digest_of_slice(window, &input),
                     scalar_reference(window, &input),
                     "size={size} window={window}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dispatcher_matches_scalar_reference_at_word_bits_boundary() {
+        // (c') `WORD_BITS`-adjacent input sizes — Buzhash's block
+        //     reformulation exploits the identity `ROL(x, 64) == x` on a
+        //     `u64` rotate, so 63 / 64 / 65-byte inputs are the exact
+        //     lengths that straddle the block boundary. Every backend
+        //     must agree with the scalar reference on all three, for
+        //     every window that could put a full block into the
+        //     windowed phase.
+        for &window in &[1usize, 4, 8, 16, 32, 63, 64, 65, 100] {
+            for &size in &[63usize, 64, 65] {
+                let input: alloc::vec::Vec<u8> = (0..size)
+                    .map(|i| {
+                        let m = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                        (m >> 24) as u8
+                    })
+                    .collect();
+                assert_eq!(
+                    digest_of_slice(window, &input),
+                    scalar_reference(window, &input),
+                    "at word-bits boundary size={size} window={window}"
                 );
             }
         }
