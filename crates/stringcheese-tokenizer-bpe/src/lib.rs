@@ -94,6 +94,20 @@ pub mod byte_level;
 #[cfg(feature = "std")]
 pub(crate) mod pre_tokenizer;
 
+// Unicode normalization layer (NFC / NFD / NFKC / NFKD, plus a small
+// grab-bag of composable transforms — see the module docs). Gated on
+// the `hf-normalizer` sub-feature because the `unicode-normalization`
+// crate is a couple of hundred KB of static tables that not every
+// caller needs.
+#[cfg(feature = "hf-normalizer")]
+pub mod normalizer;
+
+// Post-processing layer (`TemplateProcessing` for BOS/EOS injection;
+// see the module docs). Lives in `alloc` — the encoding shape we
+// splice against is `alloc`-only anyway.
+#[cfg(feature = "alloc")]
+pub mod post_processor;
+
 // Hugging Face `tokenizer.json` parser and adapter. The full module
 // docs (support matrix, error taxonomy, deferred features) live in
 // `src/hf.rs`; here we only gate compilation on the crate feature.

@@ -345,6 +345,17 @@ pub struct BpeTokenizer {
     special_tokens: BTreeMap<String, TokenId>,
     pre_tokenizer_pattern: Option<PreTokenizerRegex>,
     decoder: Decoder,
+    /// Optional Unicode normalization step run *before* pre-tokenization
+    /// and the merge loop. See [`crate::normalizer`] for the semantics
+    /// and the support matrix. Held as a raw [`String`] intermediate on
+    /// every encode when set, so callers who don't wire one up pay
+    /// nothing.
+    #[cfg(feature = "hf-normalizer")]
+    normalizer: Option<crate::normalizer::Normalizer>,
+    /// Optional post-processing step applied to the produced
+    /// [`Encoding`] before it leaves [`Self::encode`]. See
+    /// [`crate::post_processor`] for the shape.
+    post_processor: crate::post_processor::PostProcessor,
 }
 
 impl BpeTokenizer {
@@ -357,6 +368,9 @@ impl BpeTokenizer {
             special_tokens: BTreeMap::new(),
             pre_tokenizer_pattern: None,
             decoder: Decoder::Passthrough,
+            #[cfg(feature = "hf-normalizer")]
+            normalizer: None,
+            post_processor: crate::post_processor::PostProcessor::None,
         }
     }
 
@@ -392,6 +406,93 @@ impl BpeTokenizer {
     pub fn with_decoder(mut self, decoder: Decoder) -> Self {
         self.decoder = decoder;
         self
+    }
+
+    /// Attaches (or replaces) the Unicode normalizer.
+    ///
+    /// The normalizer runs on the raw input string *before* the
+    /// pre-tokenizer, matching HF `tokenizers-rs`' pipeline order:
+    /// `normalize -> pre-tokenize -> BPE -> post-process`. Offsets
+    /// reported on the resulting [`Encoding`] are into the
+    /// *normalized* text, not the caller's original — recovering
+    /// original-input offsets would require the on-the-side
+    /// `NormalizedString` bookkeeping that this crate does not ship.
+    ///
+    /// Available under the `hf-normalizer` Cargo feature (which is
+    /// enabled by default when `hf-tokenizer` is on).
+    #[cfg(feature = "hf-normalizer")]
+    #[must_use]
+    pub fn with_normalizer(mut self, normalizer: crate::normalizer::Normalizer) -> Self {
+        self.normalizer = Some(normalizer);
+        self
+    }
+
+    /// Attaches (or replaces) the post-processor.
+    ///
+    /// The post-processor runs on the finished [`Encoding`] before
+    /// [`Self::encode`] returns it. See
+    /// [`crate::post_processor::PostProcessor`] for the shape.
+    #[must_use]
+    pub fn with_post_processor(
+        mut self,
+        post_processor: crate::post_processor::PostProcessor,
+    ) -> Self {
+        self.post_processor = post_processor;
+        self
+    }
+
+    /// Read-only access to the configured normalizer, if any.
+    #[cfg(feature = "hf-normalizer")]
+    #[must_use]
+    pub fn normalizer(&self) -> Option<&crate::normalizer::Normalizer> {
+        self.normalizer.as_ref()
+    }
+
+    /// Read-only access to the configured post-processor.
+    #[must_use]
+    pub fn post_processor(&self) -> &crate::post_processor::PostProcessor {
+        &self.post_processor
+    }
+
+    /// Encode `text` while explicitly controlling whether the
+    /// post-processor injects special tokens.
+    ///
+    /// Behaves identically to [`Tokenizer::encode`](Self::encode) —
+    /// including running the normalizer, pre-tokenizer, and BPE loop —
+    /// but bypasses the post-processor's special-token splice when
+    /// `add_special_tokens == false`. This matches HF's
+    /// `Tokenizer::encode(input, add_special_tokens)` two-arg form,
+    /// which callers reach for when they want the raw BPE output
+    /// without the wrapping BOS/EOS.
+    pub fn encode_with_special(
+        &self,
+        text: &str,
+        add_special_tokens: bool,
+    ) -> Result<Encoding<TokenId>, TokenizerError> {
+        let normalized = self.normalize_text(text);
+        let text_ref: &str = normalized.as_ref();
+        let pieces = self.encode_pieces(text_ref)?;
+        let mut enc = Encoding::new();
+        enc.ids.reserve(pieces.len());
+        enc.offsets.reserve(pieces.len());
+        enc.special_mask.reserve(pieces.len());
+        for (id, range, special) in pieces {
+            enc.ids.push(id);
+            enc.offsets.push(range);
+            enc.special_mask.push(special);
+        }
+        Ok(self.post_processor.apply(&enc, add_special_tokens))
+    }
+
+    /// Apply the configured normalizer to `text`, or pass it through
+    /// unchanged. Kept as a helper so the encode paths share one
+    /// well-documented call site.
+    fn normalize_text<'a>(&self, text: &'a str) -> alloc::borrow::Cow<'a, str> {
+        #[cfg(feature = "hf-normalizer")]
+        if let Some(n) = &self.normalizer {
+            return alloc::borrow::Cow::Owned(crate::normalizer::normalize(text, n));
+        }
+        alloc::borrow::Cow::Borrowed(text)
     }
 
     /// Read-only access to the merge table.
@@ -761,17 +862,7 @@ impl Tokenizer for BpeTokenizer {
     type Token = TokenId;
 
     fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
-        let pieces = self.encode_pieces(text)?;
-        let mut enc = Encoding::new();
-        enc.ids.reserve(pieces.len());
-        enc.offsets.reserve(pieces.len());
-        enc.special_mask.reserve(pieces.len());
-        for (id, range, special) in pieces {
-            enc.ids.push(id);
-            enc.offsets.push(range);
-            enc.special_mask.push(special);
-        }
-        Ok(enc)
+        self.encode_with_special(text, true)
     }
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
@@ -809,7 +900,24 @@ impl Tokenizer for BpeTokenizer {
     }
 
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
-        Ok(self.encode_pieces(text)?.len())
+        // `count` mirrors `encode`'s full pipeline (normalize +
+        // post-process included) so `count(text) == encode(text)?.len()`
+        // for every configuration. The normaliser allocates a `String`
+        // when set — the same cost `encode` pays.
+        let normalized = self.normalize_text(text);
+        let base = self.encode_pieces(normalized.as_ref())?.len();
+        // Post-processor may inject or drop tokens.
+        Ok(match &self.post_processor {
+            crate::post_processor::PostProcessor::None => base,
+            crate::post_processor::PostProcessor::TemplateProcessing(_) => {
+                // Cheapest correct answer: run the splice against a
+                // synthetic encoding of the right length and count the
+                // ids field.
+                let mut synth: Encoding<TokenId> = Encoding::new();
+                synth.ids.resize(base, 0);
+                self.post_processor.apply(&synth, true).ids.len()
+            }
+        })
     }
 }
 

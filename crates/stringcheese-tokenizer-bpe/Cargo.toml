@@ -26,8 +26,20 @@ alloc = ["stringcheese-core/alloc", "stringcheese-tokenizer/alloc"]
 # `std` because the JSON parser (`serde_json`) and the regex-based
 # pre-tokenizer both require the standard library. Callers on
 # `no_std` targets need only omit the feature; the rest of the crate
-# is unaffected.
-hf-tokenizer = ["std", "dep:serde", "dep:serde_json"]
+# is unaffected. Enabling this feature also pulls in the
+# `hf-normalizer` sub-feature so `tokenizer.json` blobs with an
+# NFC/NFD/NFKC/NFKD normalizer round-trip end-to-end (the extra
+# dependency is `unicode-normalization`, a couple of hundred KB of
+# static tables).
+hf-tokenizer = ["std", "dep:serde", "dep:serde_json", "hf-normalizer"]
+# Standalone knob for the Unicode-normalization layer used by both
+# the HF `tokenizer.json` `normalizer` block and any caller that
+# wants to hand the produced `BpeTokenizer` an NFC / NFD / NFKC /
+# NFKD normalizer directly. Split out so a caller can build only the
+# HF JSON parser without also compiling in `unicode-normalization` —
+# `hf-tokenizer` still implies this on by default, matching the
+# expected "I want a full tokenizer.json loader" story.
+hf-normalizer = ["std", "dep:unicode-normalization"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -51,6 +63,14 @@ fancy-regex = { version = "0.14", default-features = false, features = ["std", "
 # the surrounding module.
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
 serde_json = { version = "1", default-features = false, features = ["std"], optional = true }
+
+# Unicode normalisation forms (NFC / NFD / NFKC / NFKD) for the
+# `normalizer` slot in Hugging Face `tokenizer.json` blobs — see
+# `src/normalizer.rs`. Gated behind the `hf-normalizer` feature (which
+# `hf-tokenizer` enables by default) so callers on `no_std` targets or
+# who only want the raw BPE algorithm do not pay for the crate's
+# static tables.
+unicode-normalization = { version = "0.1", default-features = false, features = ["std"], optional = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
