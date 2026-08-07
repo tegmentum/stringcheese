@@ -11,7 +11,130 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
-- **`stringcheese-manip`: 11 more modules land as real implementations.**
+- **`stringcheese-manip`: `pipeline` module ships — all 15 modules real.**
+  `TextPipeline` stages `Operation` trait objects into an ordered
+  transformation IR that applies each in one pass over a ping-pong
+  buffer pair (two heap allocations regardless of stage count;
+  `apply_into` writes the final stage direct into the caller's
+  buffer with no post-hoc copy). Concrete operations wrap the shipping
+  modules — `Trim`, `Normalize`, `CaseFold`, `CollapseWhitespace`,
+  `Remove`, `Replace`, `Escape`, `Truncate`. Operations expose
+  `name()` for introspection; budget-limited ops (`Truncate`)
+  short-circuit. `Truncate` is byte-budget with scalar-aligned cut
+  (never splits a UTF-8 scalar). Adds 59 unit + 8 property + 15
+  doctests.
+
+- **`stringcheese-de` — German language pack.** New workspace crate.
+  ~245 stopwords (drawn from Snowball's German stoplist), Snowball
+  German stemmer (full 6-step spec: R1/R2 regions, u/i-between-two-vowels
+  isolation, standard and rare-suffix cascades, undouble, un-accent),
+  Kölner Phonetik encoder (Postel 1969) with Wikipedia's H-in-next-letter
+  interpretation for the C rule. Public `GERMAN` constant. Snowball
+  cross-verified against 46 hand-traced reference pairs; Kölner Phonetik
+  against 15 well-known German surnames. `Freiheit → freiheit` (stem
+  unchanged because R2 is past `-heit`) is explicitly tested — matches
+  the spec, not a bug. Compound-noun splitting deferred (needs a
+  dictionary).
+
+- **`stringcheese-fr` — French language pack.** New workspace crate.
+  246 stopwords (both apostrophe-suffixed and stripped clitic forms),
+  Snowball French stemmer (full 6-step spec: R1/R2/RV with the
+  `par`/`col`/`tap` exception, 15 rule groups with cascading
+  precede-by rules, verb suffix passes 2a/2b with ment-family
+  dispatch, script/residual cleanup, undouble, un-accent), PHONEX
+  phonetic encoder (Soundex-shaped 4-character key with French-tuned
+  preprocessing — accent folding, `PH → F`, `GN → N`, `CH → X`,
+  `QU → K`, `Y → I`, `W → V`, `Ç → S`), elision-aware tokenizer
+  (splits `l'`, `d'`, `qu'`, `jusqu'`, `lorsqu'`, `puisqu'`,
+  `quoiqu'` case-insensitively; preserves `aujourd'hui` as one token;
+  handles ASCII `'` and typographic `\u{2019}`). Public `FRENCH`
+  constant. Snowball cross-verified against 46 pairs; PHONEX against
+  22 pairs. Snowball French intentionally not universally idempotent
+  (per spec, `dangereux → danger → dang`); property tests verify
+  convergence in ≤5 iterations. Full-corpus verification, Métaphone
+  Français alternative, soft-C/soft-G detection deferred.
+
+- **`stringcheese-en`: Porter2 (Snowball 2001) stemmer companion.**
+  Adds the revised Porter2 stemmer as `PORTER2_STEMMER` alongside the
+  existing `PORTER_STEMMER` (Porter 1980). Both remain available.
+  Public `ENGLISH_PORTER2` constant; new `English::with_porter()` and
+  `English::with_porter2()` const constructors. The `ENGLISH`
+  constant continues to use Porter 1980 for backwards compatibility.
+  Full 5+ step spec with exception table (`skies → ski`, `sky → sky`,
+  `dying → die`, `lying → lie`, `tying → tie`, `vying → vye`,
+  `idly`, `gently`, `ugly`, `early`, `only`, `singly`, `news`,
+  `atlas`, `cosmos`, `bias`, `andes`, `inning`, `outing`, `canning`,
+  `herring`, `earring`, `evening`, `proceed`, `exceed`, `succeed`).
+  R1/R2 markers, special prefix handling (`gener-`, `commun-`,
+  `arsen-`), Y-vowel prelude, short-syllable predicate, double
+  predicate. Cross-verified against **498 Snowball reference pairs**
+  from the canonical `voc.txt` / `output.txt`.
+
+- **`stringcheese-compare`: SIMD dispatch for Jaro and OSA.** Extends
+  the SIMD dispatch pattern established for Levenshtein to
+  `stringcheese_compare::jaro::simd` and
+  `stringcheese_compare::damerau::osa::simd`. Both provide
+  `similarity_bytes_with_workspace` / `distance_bytes_with_workspace`
+  entry points that check the `simd` feature + byte-amenability and
+  dispatch to AVX2 / SSE2 / NEON / scalar fallback. Arch-specific
+  backends currently delegate to the scalar SIMD-shape for
+  correctness scaffolding; wide-block true vector intrinsics are
+  documented follow-up work. Full unrestricted Damerau-Levenshtein
+  stays scalar (its HashMap-backed algorithm doesn't fit the Myers
+  pattern). Hoisted `is_byte_amenable` into a shared
+  `simd_dispatch` module used by all three SIMD sub-trees.
+  Differential and property tests confirm bit-for-bit agreement with
+  the existing scalar kernels; a proptest-caught bug in the Jaro
+  SIMD scan's slice bounds (start > len_b when i > len_b + window)
+  was fixed and pinned as a regression.
+
+- **Python bench adapter.** `bench-adapters/python/` — pytest-benchmark
+  head-to-head comparing StringCheese (loaded via `wasmtime-py` as the
+  component-model `.wasm`) against `python-Levenshtein`, `jellyfish`,
+  `rapidfuzz`. Establishes the non-Rust adapter pattern for future
+  language adapters. wasmtime-py 41.0.0's `wasmtime.component` surface
+  handles the nested exports and `result<T, E>` returns cleanly.
+  Verified end-to-end with an actual benchmark run — StringCheese-via-
+  wasm shows the expected FFI overhead vs native C-extension libraries
+  for short strings. `damerau_distance` skipped because the full
+  Damerau kernel isn't yet exposed at the WIT boundary (needs a
+  wasm-portable hash story).
+
+- **`docs/design/tokenizers.md` — tokenizer subsystem design.** New
+  ~5,800-word design doc covering the tokenizer subsystem:
+  `Tokenizer` vs `Segmenter` trait taxonomy with GAT-based signatures,
+  three-tier crate layout (`stringcheese-tokenizer` for abstractions +
+  built-ins; `-bpe` / `-wordpiece` / `-sentencepiece` for algorithms;
+  `-tiktoken` / `-huggingface` for pre-configured models), SCUD
+  extension for BPE data packs, ~65-line WIT interface with
+  offset-preserving `encoding` record and configurable
+  `special-policy`, integration sketches for `compare` / `cdc` /
+  `manip` / `lang` / `index`, seven-phase implementation plan.
+  Nine open questions flagged (trait residency, concurrent-tokenizer
+  negotiation, SCUD compression measurement, loader sharing with
+  wit-i18n, default special-token policy, borrowed vs owned segmenter
+  output, ...). Design only — no implementation.
+
+### Changed
+
+- **`stringcheese-unicode`: wasm baseline shrunk from 213 KB to 190 KB
+  (11 %).** New `case-fold` feature (default on) and
+  `compiled-case-data` feature (default on) let callers opt out of
+  icu_casemap entirely. New `case_fold_with_mapper` /
+  `simple_case_fold_with_mapper` / `case_fold_turkic_with_mapper`
+  entry points accept a caller-supplied `CaseMapper` when the tables
+  aren't baked in; re-exports `icu_casemap::CaseMapper` for that.
+  The 40-60 % target wasn't achievable through feature-gating alone —
+  LTO was already stripping most of icu_casemap when the calling
+  code doesn't reach `case_fold`; the residual ~145 KB is in
+  unicode-normalization's NFC / NFD / NFKC / NFKD tables (needs an
+  upstream `unicode-normalization` patch to feature-gate the compat
+  tables). `.wasm-size-limits.toml` re-baselined at 189567 B;
+  `docs/wasm-binary-size.md` updated with the new number + twiggy
+  breakdown. No downstream crate Cargo.toml changes required
+  (nothing in the workspace uses `case_fold`).
+
+- **Project renamed from Comparand to StringCheese.** Every crate is renamed
   Second wave fills in `split`, `join`, `replace`, `normalize`, `slice`,
   `find`, `pad`, `lines`, `escape`, `quote`, and `template`. Only
   `pipeline` (the transformation IR) remains a scaffold. 14 of 15
