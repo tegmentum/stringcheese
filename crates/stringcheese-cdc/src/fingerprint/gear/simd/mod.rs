@@ -6,24 +6,36 @@
 //! `roll(byte)` sequence would produce for the same input, then dispatches
 //! at run time to the best backend the host CPU supports.
 //!
-//! # The rolling recurrence is strictly sequential
+//! # The rolling recurrence is sequential — but a 64-byte block is not
 //!
 //! Gear's per-byte update is `state = (state << 1) + G[byte]`. Each step
-//! depends on the previous state, so there is no natural per-byte SIMD
-//! parallelism at the update level. The backends here therefore consume
-//! the byte slice sequentially inside a `#[target_feature]` context and
-//! rely on the compiler to auto-vectorize the load/gather/shift/add
-//! sequence with whatever the enabled ISA can express — the same
-//! shape [`crate::fingerprint::gear::simd`] uses for wasm SIMD and
-//! established previously in the wave-5 SIMD sub-trees under
-//! `stringcheese_compare`.
+//! naïvely depends on the previous state, so there is no natural
+//! per-byte SIMD parallelism at the update level. Unrolled over `k`
+//! bytes, however, the recurrence collapses to the closed form
+//!
+//! ```text
+//! state_k  =  state_0 << k  +  Σ_{i=0..k}  G[b_i] << (k-1-i)
+//! ```
+//!
+//! and at `k = 64` the leading `state_0 << 64` term wipes to zero in
+//! `u64` arithmetic — every bit of the prior state has shifted out.
+//! Each 64-byte block therefore hashes in isolation: `state_64 =
+//! Σ_{i=0..64} G[b_i] << (63-i)`, independent of what came before.
+//! That is the reformulation the arch backends exploit — the block
+//! sum has a natural Horner-form SIMD shape (`acc = (acc << lanes) +
+//! [G[b_i] << (lanes-1-j)]_j`) that expresses the whole block-hash in
+//! `64 / lanes` SIMD steps.
 //!
 //! The important property this file preserves is the **byte-identical
 //! contract**: each backend produces the same `u64` digest a scalar
-//! `RollingHash::roll` loop would produce, for every input. That
-//! contract is what lets a future hand-written wide-block bit-parallel
-//! kernel drop in without changing this module's API — the differential
-//! tests below anchor every backend to the scalar reference.
+//! `RollingHash::roll` loop would produce, for every input. The block
+//! form is byte-identical to the scalar recurrence on any 64-byte-
+//! aligned run because both compute the same closed-form sum; the
+//! `len % 64` tail after the last full block is consumed by the
+//! scalar loop directly, and inputs shorter than one block fall back
+//! to scalar entirely (there is no prior `state_0` to wipe). The
+//! per-backend differential tests below anchor every path — full
+//! blocks, partial tails, and short inputs — to the scalar reference.
 //!
 //! # Public surface
 //!
@@ -39,15 +51,31 @@
 //! * `scalar` — portable single-`u64` Gear loop. Always compiled; the
 //!   reference against which every arch-specific backend is
 //!   differentially tested.
-//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`.
-//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`.
-//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`.
+//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`. Real block-
+//!   reformulation kernel over four `u64` lanes: `_mm256_i32gather_epi64`
+//!   for the per-byte `GEAR_TABLE` lookup, `_mm256_sllv_epi64` for the
+//!   per-lane pre-shift, `_mm256_slli_epi64::<4>` for the Horner
+//!   advance, `_mm256_add_epi64` for the fold. 16 iterations per
+//!   64-byte block.
+//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`. Deliberately
+//!   scalar under `target_feature(sse2)`; see that module's docs for
+//!   why (no gather; no `pshufb` / `pinsrb`; no per-lane variable
+//!   shift below AVX2/SSE4.1). AVX2 is the wide x86 branch the
+//!   dispatcher prefers.
+//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`. Real
+//!   block-reformulation kernel over two `u64` lanes: scalar-side
+//!   `GEAR_TABLE` loads packed with `vsetq_lane_u64`, `vshlq_u64` for
+//!   the per-lane pre-shift, `vshlq_n_u64::<2>` for the Horner
+//!   advance, `vaddq_u64` for the fold. 32 iterations per 64-byte
+//!   block.
 //! * `wasm_simd128` — wasm SIMD128-gated, compiled only when the
-//!   `simd128` target-feature is enabled at build time. Gear's shift-add
-//!   recurrence has no natural v128 lift but the module compiles the
-//!   same scalar core under the wasm SIMD compile-time flag so
-//!   auto-vectorization can proceed and the API is uniform across
-//!   arches.
+//!   `simd128` target-feature is enabled at build time. Real block-
+//!   reformulation kernel over two `u64` lanes: scalar-side
+//!   `GEAR_TABLE` loads packed with `u64x2(_, _)`, a scalar-side
+//!   `g0 << 1` pre-shift that factors out wasm's uniform-per-lane
+//!   `u64x2_shl` limitation, `u64x2_shl(_, 2)` for the Horner
+//!   advance, `u64x2_add` for the fold. 32 iterations per 64-byte
+//!   block.
 //!
 //! # `unsafe` policy
 //!

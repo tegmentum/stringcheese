@@ -5,17 +5,24 @@
 //! `x86_64` CPU has SSE2 as part of the baseline ABI, so this branch is
 //! always a valid target.
 //!
-//! # Kernel shape
+//! # Kernel shape — scalar under `target_feature(sse2)`
 //!
-//! Gear's `state = (state << 1) + G[byte]` recurrence is strictly
-//! sequential: `state_{n+1}` depends on `state_n`, so there is no natural
-//! per-byte SIMD parallelism. This backend therefore consumes the byte
-//! slice sequentially and relies on the compiler to use the SSE2
-//! target-feature context established by `#[target_feature(enable = "sse2")]`
-//! for whatever the enabled ISA can express — table loads, prefetching,
-//! and register scheduling. See the [module docs][super] for the
-//! trade-off and the reason a bit-parallel wide-block replacement is
-//! documented follow-up work rather than shipped here.
+//! The [AVX2][super::x86_avx2] and [NEON][super::aarch64_neon] backends
+//! ship a real vectorized kernel built on the Gear block reformulation
+//! — see their module docs for the derivation. This SSE2 backend
+//! deliberately does **not**: SSE2 has no `_mm_i32gather_epi64` (that
+//! arrived in AVX2) and no `pshufb` / `pinsrb` / `_mm_cvtepu8_epi32`
+//! (SSSE3 / SSE4.1), so the per-byte `GEAR_TABLE` lookup would fall
+//! back to scalar loads anyway; SSE2's `_mm_slli_epi64` only supports a
+//! shared shift-count, and while that is enough for the Horner outer
+//! step, the per-lane pre-shift the block form needs cannot be
+//! expressed without SSE4.1 (`_mm_cvtsi64_si128` alone doesn't split
+//! the lanes at build time). The cost/benefit of a partly-emulated
+//! kernel on SSE2 hardware in 2026 is poor, so this backend keeps the
+//! scalar `state = (state << 1) + G[byte]` core and lets the compiler
+//! generate SSE2-flavoured code inside the `#[target_feature]`
+//! context. AVX2 is the wide x86 branch the dispatcher prefers when
+//! available.
 //!
 //! # Safety
 //!
