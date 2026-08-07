@@ -210,6 +210,65 @@ fn bench_myers_dispatched(c: &mut Criterion) {
     group.finish();
 }
 
+/// Wide-block sweep length list. Densely samples across the SSE2/NEON
+/// break (128) and the AVX2 break (256) so each backend's bit-parallel
+/// range and its rolling-rows fallback are both represented.
+///
+/// * 64 is the last length the scalar single-word path handles — the
+///   floor for measuring the wide-block win.
+/// * 96, 128 sit in the SSE2/NEON 128-bit lane.
+/// * 160, 192, 224, 256 sit in the AVX2 256-bit lane and are where the
+///   biggest wide-block-vs-rolling-rows gap should appear.
+const WIDE_BLOCK_LENGTHS: &[usize] = &[64, 96, 128, 160, 192, 224, 256];
+
+fn bench_myers_wide_block_scalar(c: &mut Criterion) {
+    // Scalar Myers at the wide-block-relevant lengths. For m > 64 this
+    // is the rolling-rows fallback embedded in `myers_scalar`, and it
+    // is the baseline the SIMD wide-block wins should be measured
+    // against. Random-kind only — the wide-block algorithm has no
+    // early termination, so the "similar" and "identical" regimes only
+    // matter for banded/full_matrix comparisons.
+    let mut group = c.benchmark_group("levenshtein/myers_wide_block_scalar");
+    for &len in WIDE_BLOCK_LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = build_pair(len, "random");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(len),
+            &(a, b),
+            |bencher, (a, b)| {
+                bencher.iter(|| {
+                    myers_scalar::distance(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_myers_wide_block_dispatched(c: &mut Criterion) {
+    // Runtime-dispatched Myers at the wide-block-relevant lengths.
+    // The dispatcher picks the widest available backend for the host,
+    // so on an AVX2 host every length in this sweep runs through the
+    // AVX2 backend (which internally delegates to SSE2 for m ≤ 128 and
+    // to scalar for m ≤ 64). Speedup vs. `myers_wide_block_scalar` is
+    // the headline number for this landing.
+    let mut group = c.benchmark_group("levenshtein/myers_wide_block_dispatched");
+    for &len in WIDE_BLOCK_LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = build_pair(len, "random");
+        group.bench_with_input(
+            BenchmarkId::from_parameter(len),
+            &(a, b),
+            |bencher, (a, b)| {
+                bencher.iter(|| {
+                    levenshtein_simd::distance(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_full_matrix,
@@ -219,5 +278,7 @@ criterion_group!(
     bench_handle_no_workspace,
     bench_myers_scalar,
     bench_myers_dispatched,
+    bench_myers_wide_block_scalar,
+    bench_myers_wide_block_dispatched,
 );
 criterion_main!(benches);

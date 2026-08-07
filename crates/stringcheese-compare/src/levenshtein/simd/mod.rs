@@ -25,19 +25,36 @@
 //!
 //! * `myers_scalar` — portable single-word Myers 1999 (m ≤ 64) with a
 //!   rolling-rows fallback for longer patterns. Always compiled.
-//! * `myers_x86_avx2` — AVX2-gated, compiled only on `x86_64`.
-//! * `myers_x86_sse2` — SSE2-gated, compiled only on `x86_64`.
-//! * `myers_aarch64_neon` — NEON-gated, compiled only on `aarch64`.
+//! * `myers_x86_avx2` — AVX2-gated wide-block Myers, `m ≤ 256`. Four
+//!   `u64` lanes per `__m256i`, cross-lane carry propagation for the
+//!   256-bit add and 256-bit shift-left-by-one. Compiled only on
+//!   `x86_64`.
+//! * `myers_x86_sse2` — SSE2-gated wide-block Myers, `m ≤ 128`. Two
+//!   `u64` lanes per `__m128i`, cross-lane carry propagation for the
+//!   128-bit add and 128-bit shift-left-by-one. Compiled only on
+//!   `x86_64`.
+//! * `myers_aarch64_neon` — NEON-gated wide-block Myers, `m ≤ 128`.
+//!   Two `u64` lanes per `uint64x2_t`, same shape as SSE2. Compiled
+//!   only on `aarch64`.
 //!
-//! The three arch-specific backends currently share the scalar Myers
-//! implementation under a `#[target_feature(enable = "...")]` context;
-//! this puts the runtime-dispatch scaffolding in place and lets the
-//! compiler use the enabled ISA for its own auto-vectorization of the
-//! Peq table build. A true wide-block Myers using 128-bit / 256-bit
-//! integer arithmetic (SSE2 `_mm_add_epi64`, AVX2 `_mm256_add_epi64`,
-//! NEON `vaddq_u64`) with explicit inter-lane carry propagation is
-//! documented as follow-up work — landing it does not require any API
-//! change.
+//! Each arch-specific backend picks the widest register that comfortably
+//! fits the pattern:
+//!
+//! * `m ≤ 64` → scalar single-word Myers (Peq-build setup cost dominates
+//!   the SIMD win at that pattern length).
+//! * `64 < m ≤ 128` → SSE2/NEON 128-bit wide-block; the AVX2 backend
+//!   delegates to the SSE2 sibling here because a 256-bit register with
+//!   half the lanes idle costs more than a native 128-bit run.
+//! * `128 < m ≤ 256` → AVX2 256-bit wide-block. SSE2 and NEON fall back
+//!   to the scalar rolling-rows path in this range.
+//! * `m > 256` → scalar rolling-rows (block-form Hyyrö for m > 256 is
+//!   documented follow-up work).
+//!
+//! Wide-block correctness is anchored by per-backend differential tests
+//! that walk every pattern length across the SIMD-relevant range and
+//! assert bit-for-bit agreement with the scalar Myers kernel, which is
+//! itself checked against the full-matrix oracle by the sibling
+//! `simd_property_tests` module.
 //!
 //! # `unsafe` policy
 //!

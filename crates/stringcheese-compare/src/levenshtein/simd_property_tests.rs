@@ -19,11 +19,20 @@ use crate::levenshtein::simd::myers_scalar;
 /// Byte-slice strategy over the full byte alphabet, capped at 128 bytes.
 ///
 /// Full byte alphabet exercises the Peq table's every entry, not just a
-/// small subset. 128 bytes crosses both the single-word Myers boundary
-/// (m ≤ 64) and the rolling-rows fallback (m > 64), so both paths are
-/// exercised by the same test.
+/// small subset. 128 bytes crosses the single-word Myers boundary
+/// (m ≤ 64) and the SSE2/NEON 128-bit wide-block range, exercising the
+/// scalar and the 128-bit-lane arch backends on every input.
 fn arb_bytes() -> impl Strategy<Value = alloc::vec::Vec<u8>> {
     proptest::collection::vec(0u8..=255, 0..=128)
+}
+
+/// Wider byte-slice strategy — up to 300 bytes — for the AVX2 backend
+/// whose bit-parallel path extends to m ≤ 256. 300 crosses both the
+/// SSE2 boundary (128) and the AVX2 boundary (256). Only used by the
+/// x86_64-gated test bodies, hence the `#[cfg(target_arch = "x86_64")]`.
+#[cfg(target_arch = "x86_64")]
+fn arb_bytes_wide() -> impl Strategy<Value = alloc::vec::Vec<u8>> {
+    proptest::collection::vec(0u8..=255, 0..=300)
 }
 
 /// Long-side strategy — up to 512 bytes — to catch any Myers state that
@@ -78,9 +87,9 @@ proptest! {
     }
 
     /// The AVX2 backend, when available on the host, must agree with
-    /// the scalar Myers on every input. This is the arch-specific
-    /// differential that catches any drift between the SIMD-gated
-    /// wrapper and the shared scalar core.
+    /// the scalar Myers on every input up to 128 bytes. Covers the
+    /// scalar-delegation (m ≤ 64) and SSE2-delegation (64 < m ≤ 128)
+    /// branches inside the AVX2 dispatcher.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn avx2_matches_scalar(a in arb_bytes(), b in arb_bytes()) {
@@ -95,6 +104,26 @@ proptest! {
         let simd_result = unsafe { simd::myers_x86_avx2::distance(&a, &b) };
         let scalar_result = myers_scalar::distance(&a, &b);
         prop_assert_eq!(simd_result, scalar_result, "avx2 disagreed with scalar");
+    }
+
+    /// AVX2 differential over the wider m range that exercises the
+    /// 256-bit wide-block path (128 < m ≤ 256) and the rolling-rows
+    /// fallback (m > 256). Split from `avx2_matches_scalar` so shrinking
+    /// on the small-m failure mode isn't slowed down by 300-byte inputs.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn avx2_matches_scalar_wide(a in arb_bytes_wide(), b in arb_bytes_wide()) {
+        if !is_x86_feature_detected!("avx2") {
+            return Ok(());
+        }
+        // SAFETY: is_x86_feature_detected!("avx2") returned true.
+        #[allow(
+            unsafe_code,
+            reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
+        )]
+        let simd_result = unsafe { simd::myers_x86_avx2::distance(&a, &b) };
+        let scalar_result = myers_scalar::distance(&a, &b);
+        prop_assert_eq!(simd_result, scalar_result, "avx2 disagreed with scalar on wide input");
     }
 
     /// SSE2 differential — SSE2 is baseline on x86_64, so this branch
