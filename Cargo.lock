@@ -1077,6 +1077,8 @@ dependencies = [
  "proptest",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-sr",
+ "stringcheese-uk",
 ]
 
 [[package]]

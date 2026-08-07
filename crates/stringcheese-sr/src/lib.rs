@@ -46,7 +46,14 @@
 //!   input — Cyrillic gets transliterated, Latin gets lowercased —
 //!   so a phonetic index built on the pack conflates records filed
 //!   under either script under the same key. Adapter name:
-//!   `"sr-latin"`.
+//!   `"sr-latin"`. The pack also opts into the cross-Slavic
+//!   [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+//!   Metaphone-family sound-alike encoder from `stringcheese-phonetic`
+//!   behind the `slavic-metaphone` Cargo feature — grab
+//!   [`SERBIAN_WITH_SLAVIC_METAPHONE`] for a pack whose
+//!   [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+//!   returns the shared Slavic-family sound-alike key instead of the
+//!   default `SerbianLatin` transliteration.
 //!
 //! ## The bijective transliteration
 //!
@@ -156,6 +163,8 @@ pub mod tokenizer;
 #[cfg(all(test, feature = "std", not(target_family = "wasm")))]
 mod properties;
 
+#[cfg(all(feature = "alloc", feature = "slavic-metaphone"))]
+pub use phonetic::SlavicMetaphoneAdapter;
 #[cfg(feature = "alloc")]
 pub use phonetic::{SerbianLatin, SerbianLatinAdapter};
 #[cfg(feature = "alloc")]
@@ -176,30 +185,133 @@ mod pack {
     use stringcheese_lang::{Language, LanguagePhoneticEncoder};
 
     use crate::phonetic::SerbianLatinAdapter;
+    #[cfg(feature = "slavic-metaphone")]
+    use crate::phonetic::SlavicMetaphoneAdapter;
     use crate::scripts::contains_cyrillic;
     use crate::snowball::SerbianSnowball;
     use crate::stopwords::{STOPWORDS_ALL, STOPWORDS_CYR, STOPWORDS_LAT};
     use crate::tokenizer::SerbianTokenizer;
 
+    /// Which phonetic encoder this [`Serbian`] instance uses.
+    ///
+    /// Modeled as an `enum` (rather than a `&'static dyn ...` reference)
+    /// so the pack stays `Copy`, its constant constructors stay
+    /// `const`-usable, and the shipped encoders stay a closed set. The
+    /// [`SlavicMetaphone`](Self::SlavicMetaphone) variant is only
+    /// available when the crate's `slavic-metaphone` Cargo feature is
+    /// on; a build without that feature carries only the
+    /// [`SerbianLatin`](Self::SerbianLatin) variant.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+    pub enum SerbianPhoneticChoice {
+        /// The default Cyrillic → Latin `SerbianLatin`
+        /// transliteration adapter
+        /// ([`SerbianLatinAdapter`](crate::phonetic::SerbianLatinAdapter)).
+        #[default]
+        SerbianLatin,
+        /// The cross-Slavic
+        /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+        /// Metaphone-family sound-alike encoder from
+        /// `stringcheese-phonetic`, wrapped as
+        /// [`SlavicMetaphoneAdapter`](crate::phonetic::SlavicMetaphoneAdapter).
+        /// Only available when the crate's `slavic-metaphone` Cargo
+        /// feature is on.
+        #[cfg(feature = "slavic-metaphone")]
+        SlavicMetaphone,
+    }
+
     /// The Serbian language pack.
     ///
-    /// Zero-sized; construct as [`Serbian`] and reuse the value freely
-    /// across threads and calls, or grab the crate-level
-    /// [`SERBIAN`](crate::SERBIAN) constant.
+    /// Carries a phonetic-encoder choice — the default (used by the
+    /// [`SERBIAN`](crate::SERBIAN) constant) is the `SerbianLatin`
+    /// Cyrillic-to-Latin transliteration; callers who want the
+    /// cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// sound-alike encoder grab
+    /// [`SERBIAN_WITH_SLAVIC_METAPHONE`](crate::SERBIAN_WITH_SLAVIC_METAPHONE)
+    /// (behind the `slavic-metaphone` feature) or compose their own
+    /// via [`with_slavic_metaphone_encoder`](Serbian::with_slavic_metaphone_encoder).
+    ///
+    /// Two `Serbian` values with different encoder choices are
+    /// otherwise identical — same stopwords, same stemmer, same
+    /// tokenizer, same code/name, same dual-script commitments. The
+    /// distinguishing piece is cheap (a small enum), so `Serbian`
+    /// remains cheap to copy and cheap to construct.
     ///
     /// See the [crate-level docs](crate) for the implementation
     /// choices and the dual-script commitments.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-    pub struct Serbian;
+    pub struct Serbian {
+        phonetic_choice: SerbianPhoneticChoice,
+    }
+
+    impl Serbian {
+        /// Construct a `Serbian` pack with the default `SerbianLatin`
+        /// Cyrillic-to-Latin transliteration phonetic encoder.
+        #[must_use]
+        pub const fn new() -> Self {
+            Self {
+                phonetic_choice: SerbianPhoneticChoice::SerbianLatin,
+            }
+        }
+
+        /// Return a `Serbian` pack whose
+        /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+        /// hands back the default `SerbianLatin` Cyrillic-to-Latin
+        /// transliteration adapter
+        /// ([`SerbianLatinAdapter`](crate::phonetic::SerbianLatinAdapter)).
+        ///
+        /// This is the default; the method exists so a caller who
+        /// composed a
+        /// [`with_slavic_metaphone_encoder`](Self::with_slavic_metaphone_encoder)
+        /// pack can undo that choice.
+        #[must_use]
+        pub const fn with_default_encoder(mut self) -> Self {
+            self.phonetic_choice = SerbianPhoneticChoice::SerbianLatin;
+            self
+        }
+
+        /// Return a `Serbian` pack whose
+        /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+        /// hands back the cross-Slavic
+        /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+        /// Metaphone-family sound-alike encoder from
+        /// `stringcheese-phonetic`, wrapped as
+        /// [`SlavicMetaphoneAdapter`](crate::phonetic::SlavicMetaphoneAdapter).
+        ///
+        /// Reach for the [`SERBIAN_WITH_SLAVIC_METAPHONE`](crate::SERBIAN_WITH_SLAVIC_METAPHONE)
+        /// constant if you want the default pack with the
+        /// Slavic-Metaphone encoder; this builder method lets a caller
+        /// compose the encoder choice with future non-default pack
+        /// pieces.
+        ///
+        /// Only available when the crate's `slavic-metaphone` Cargo
+        /// feature is enabled.
+        #[cfg(feature = "slavic-metaphone")]
+        #[must_use]
+        pub const fn with_slavic_metaphone_encoder(mut self) -> Self {
+            self.phonetic_choice = SerbianPhoneticChoice::SlavicMetaphone;
+            self
+        }
+    }
 
     /// The static [`SerbianLatinAdapter`] [`Serbian`] hands back from
-    /// [`phonetic_encoder`](Language::phonetic_encoder).
+    /// [`phonetic_encoder`](Language::phonetic_encoder) when the pack
+    /// was built with the default choice.
     ///
     /// Kept as a `static` so
     /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
     /// can return a reference with the required `'static`-friendly
     /// lifetime through a trait object.
     static SR_LATIN: SerbianLatinAdapter = SerbianLatinAdapter;
+
+    /// The static [`SlavicMetaphoneAdapter`] [`Serbian`] hands back
+    /// from [`phonetic_encoder`](Language::phonetic_encoder) when the
+    /// pack was built with
+    /// [`SerbianPhoneticChoice::SlavicMetaphone`].
+    ///
+    /// Kept as a `static` for the same reason as `SR_LATIN`.
+    #[cfg(feature = "slavic-metaphone")]
+    static SLAVIC_METAPHONE: SlavicMetaphoneAdapter = SlavicMetaphoneAdapter;
 
     /// Lowercase `word` under default Unicode rules.
     fn lowercase(word: &str) -> String {
@@ -254,22 +366,49 @@ mod pack {
         }
 
         fn phonetic_encoder(&self) -> Option<&dyn LanguagePhoneticEncoder> {
-            Some(&SR_LATIN)
+            match self.phonetic_choice {
+                SerbianPhoneticChoice::SerbianLatin => Some(&SR_LATIN),
+                #[cfg(feature = "slavic-metaphone")]
+                SerbianPhoneticChoice::SlavicMetaphone => Some(&SLAVIC_METAPHONE),
+            }
         }
     }
 
-    /// The singleton [`Serbian`] language pack.
+    /// The singleton [`Serbian`] language pack (default `SerbianLatin`
+    /// Cyrillic-to-Latin transliteration phonetic encoder).
     ///
     /// Callers reach for this constant rather than constructing
-    /// [`Serbian`] every time — the type is zero-sized, so the two
-    /// forms are equivalent, but the constant is the intended entry
-    /// point and matches the pattern every other `stringcheese-<lang>`
-    /// pack follows.
-    pub const SERBIAN: Serbian = Serbian;
+    /// [`Serbian`] every time — the two forms are equivalent, but the
+    /// constant is the intended entry point and matches the pattern
+    /// every other `stringcheese-<lang>` pack follows.
+    ///
+    /// See [`SERBIAN_WITH_SLAVIC_METAPHONE`](crate::SERBIAN_WITH_SLAVIC_METAPHONE)
+    /// for the same pack backed by the cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// encoder.
+    pub const SERBIAN: Serbian = Serbian::new();
+
+    /// The singleton [`Serbian`] language pack whose
+    /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+    /// hands back the cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// Metaphone-family sound-alike encoder instead of the default
+    /// `SerbianLatin` Cyrillic-to-Latin transliteration.
+    ///
+    /// Identical to [`SERBIAN`](crate::SERBIAN) in every respect
+    /// except its phonetic encoder. Only available when the crate's
+    /// `slavic-metaphone` Cargo feature is enabled — see the
+    /// [`slavic_metaphone`](mod@stringcheese_phonetic::slavic_metaphone)
+    /// module docs for the design trade-offs.
+    #[cfg(feature = "slavic-metaphone")]
+    pub const SERBIAN_WITH_SLAVIC_METAPHONE: Serbian =
+        Serbian::new().with_slavic_metaphone_encoder();
 }
 
+#[cfg(all(feature = "alloc", feature = "slavic-metaphone"))]
+pub use pack::SERBIAN_WITH_SLAVIC_METAPHONE;
 #[cfg(feature = "alloc")]
-pub use pack::{SERBIAN, Serbian};
+pub use pack::{SERBIAN, Serbian, SerbianPhoneticChoice};
 
 // Register into `stringcheese-lang::registry` so callers who look up
 // languages dynamically (`registry::language("sr")`) find this pack.

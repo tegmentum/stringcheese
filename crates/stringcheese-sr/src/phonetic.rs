@@ -99,6 +99,43 @@ impl LanguagePhoneticEncoder for SerbianLatinAdapter {
     }
 }
 
+/// Adapter that exposes the cross-Slavic
+/// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+/// Metaphone-family sound-alike encoder from `stringcheese-phonetic`
+/// through the object-safe [`LanguagePhoneticEncoder`] trait — this is
+/// the type
+/// [`Serbian::phonetic_encoder`](crate::Serbian) hands back when the
+/// pack was built with
+/// [`SerbianPhoneticChoice::SlavicMetaphone`](crate::SerbianPhoneticChoice).
+///
+/// Uses [`SlavicMetaphone::new`](stringcheese_phonetic::SlavicMetaphone::new)
+/// with the default options (drop non-initial vowels, cap at the
+/// default key length). Returns `Some((key, None))` on success and
+/// `None` when the encoder produces the empty key (input with no
+/// mappable Slavic-family letter).
+///
+/// Only available when the crate's `slavic-metaphone` Cargo feature is
+/// enabled.
+#[cfg(feature = "slavic-metaphone")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct SlavicMetaphoneAdapter;
+
+#[cfg(feature = "slavic-metaphone")]
+impl LanguagePhoneticEncoder for SlavicMetaphoneAdapter {
+    fn encode(&self, word: &str) -> Option<(String, Option<String>)> {
+        let key = stringcheese_phonetic::SlavicMetaphone::new().encode(word);
+        if key.is_empty() {
+            None
+        } else {
+            Some((key, None))
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "slavic-metaphone-2026"
+    }
+}
+
 /// Returns `true` if `text` contains any Serbian (Cyrillic or Latin)
 /// letter. Used by tests / callers who want a quick "is this Serbian?"
 /// probe; the adapter itself does not gate on this — it happily

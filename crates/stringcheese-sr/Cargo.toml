@@ -22,6 +22,15 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # to the stopword slices and the module constants alone (enough to
 # link against on embedded targets that only want the tables).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Opt in to the cross-Slavic `SlavicMetaphone` sound-alike encoder from
+# `stringcheese-phonetic` as an alternate phonetic encoder alongside the
+# default Cyrillic-to-Latin `SerbianLatin` transliteration. Off by
+# default so callers who only want the transliteration pay no cost for
+# the shared Slavic family encoder's tables; on by opt-in via
+# `SERBIAN_WITH_SLAVIC_METAPHONE` (or
+# `Serbian::with_slavic_metaphone_encoder`). Requires `alloc` because
+# the encoder returns owned `String` keys.
+slavic-metaphone = ["alloc"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }

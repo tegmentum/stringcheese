@@ -2,6 +2,8 @@
 
 use stringcheese_lang::Language;
 use stringcheese_uk::UKRAINIAN;
+#[cfg(feature = "slavic-metaphone")]
+use stringcheese_uk::{UKRAINIAN_WITH_SLAVIC_METAPHONE, Ukrainian};
 
 #[test]
 fn code_and_name() {
@@ -91,4 +93,55 @@ fn phonetic_encoder_returns_none_for_no_cyrillic() {
 #[test]
 fn collator_is_none_by_default() {
     assert!(UKRAINIAN.collator().is_none());
+}
+
+// ---------------------------------------------------------------------
+// Slavic-Metaphone opt-in encoder variant.
+// ---------------------------------------------------------------------
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_swaps_the_phonetic_encoder() {
+    let enc = UKRAINIAN_WITH_SLAVIC_METAPHONE
+        .phonetic_encoder()
+        .expect("Ukrainian slavic-metaphone pack ships a phonetic encoder");
+    assert_eq!(enc.name(), "slavic-metaphone-2026");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_encodes_cyrillic_and_latin_alike() {
+    // Ukrainian Cyrillic "Чехов" (rendered as-if borrowing the Russian
+    // surname) and its Latin transliteration "Chekhov" hash to the
+    // same cross-Slavic key.
+    let enc = UKRAINIAN_WITH_SLAVIC_METAPHONE.phonetic_encoder().unwrap();
+    let (cyr, _) = enc.encode("Чехов").expect("encodes Cyrillic");
+    let (lat, _) = enc.encode("Chekhov").expect("encodes Latin");
+    assert_eq!(cyr, lat);
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_encoder_can_be_restored_after_opting_in() {
+    // Undo path: `.with_default_encoder()` returns the pack to the
+    // Ukrainian GOST 7.79-B transliteration.
+    let restored = Ukrainian::new()
+        .with_slavic_metaphone_encoder()
+        .with_default_encoder();
+    let enc = restored
+        .phonetic_encoder()
+        .expect("restored pack ships an encoder");
+    assert_eq!(enc.name(), "gost-7.79-b-uk");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_ukrainian_constant_preserves_gost_encoder() {
+    // Belt-and-braces: the module-level UKRAINIAN constant must keep
+    // returning the GOST 7.79-B (UK) adapter even when the
+    // slavic-metaphone feature is compiled in.
+    let enc = UKRAINIAN
+        .phonetic_encoder()
+        .expect("default Ukrainian pack ships an encoder");
+    assert_eq!(enc.name(), "gost-7.79-b-uk");
 }

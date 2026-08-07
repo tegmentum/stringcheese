@@ -115,7 +115,14 @@
 //!   `х`, and `щ` and cover disjoint letter sets). See [`phonetic`]
 //!   for the mapping table and the rationale behind the Ukrainian
 //!   choices (`г → h`, `ґ → g`, `є → ye`, `ї → yi`, `и → y`,
-//!   `х → kh`, `щ → shch`).
+//!   `х → kh`, `щ → shch`). The pack also opts into the cross-Slavic
+//!   [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+//!   Metaphone-family sound-alike encoder from `stringcheese-phonetic`
+//!   behind the `slavic-metaphone` Cargo feature — grab
+//!   [`UKRAINIAN_WITH_SLAVIC_METAPHONE`] for a pack whose
+//!   [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+//!   returns the shared Slavic-family sound-alike key instead of the
+//!   default transliteration.
 //! * **Apostrophe-aware tokenizer.** Ukrainian orthography uses the
 //!   ASCII apostrophe **`'` (U+0027)** as a **word-internal**
 //!   separator marking the boundary between a hard consonant and a
@@ -151,11 +158,13 @@
 //!   inventories, different morphology, different subset of the
 //!   extended Cyrillic block (Belarusian `ў`, Serbian `љ њ ђ ћ џ`,
 //!   Macedonian `ѓ ќ ѕ`).
-//! * **Slavic-Metaphone / PHONEX-Slavic phonetic encoder.** The
-//!   shipped transliteration is a *transliteration* (deterministic
-//!   character-level mapping), not a *sound-alike* encoder. A
-//!   Slavic-tuned Metaphone that spans both Russian and Ukrainian
-//!   would complement it for cross-Slavic record linkage.
+//! * **PHONEX-Slavic phonetic encoder.** The shipped transliteration
+//!   is a *transliteration* (deterministic character-level mapping),
+//!   not a sound-alike encoder. The `slavic-metaphone` feature adds
+//!   the cross-Slavic
+//!   [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+//!   Metaphone-family encoder as an alternate; a Ukrainian-specific
+//!   PHONEX-Ukrainian variant is a further follow-up.
 //! * **ISO 9 System A transliteration alongside GOST 7.79-B.** Would
 //!   want it under a separate adapter for library-catalog interop.
 //! * **Ukrainian government 2010 transliteration.** The official
@@ -222,6 +231,8 @@ pub mod tokenizer;
 #[cfg(all(test, feature = "std", not(target_family = "wasm")))]
 mod properties;
 
+#[cfg(all(feature = "alloc", feature = "slavic-metaphone"))]
+pub use phonetic::SlavicMetaphoneAdapter;
 #[cfg(feature = "alloc")]
 pub use phonetic::{UkrainianGost779B, UkrainianGost779BAdapter};
 #[cfg(feature = "alloc")]
@@ -241,30 +252,132 @@ mod pack {
 
     use stringcheese_lang::{Language, LanguagePhoneticEncoder};
 
+    #[cfg(feature = "slavic-metaphone")]
+    use crate::phonetic::SlavicMetaphoneAdapter;
     use crate::phonetic::UkrainianGost779BAdapter;
     use crate::snowball::UkrainianSnowball;
     use crate::stopwords::STOPWORDS;
     use crate::tokenizer::UkrainianTokenizer;
 
+    /// Which phonetic encoder this [`Ukrainian`] instance uses.
+    ///
+    /// Modeled as an `enum` (rather than a `&'static dyn ...` reference)
+    /// so the pack stays `Copy`, its constant constructors stay
+    /// `const`-usable, and the shipped encoders stay a closed set. The
+    /// [`SlavicMetaphone`](Self::SlavicMetaphone) variant is only
+    /// available when the crate's `slavic-metaphone` Cargo feature is
+    /// on; a build without that feature carries only the
+    /// [`Gost779BUk`](Self::Gost779BUk) variant.
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+    pub enum UkrainianPhoneticChoice {
+        /// The default Ukrainian GOST 7.79 System B Cyrillic → Latin
+        /// transliteration adapter
+        /// ([`UkrainianGost779BAdapter`](crate::phonetic::UkrainianGost779BAdapter)).
+        #[default]
+        Gost779BUk,
+        /// The cross-Slavic
+        /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+        /// Metaphone-family sound-alike encoder from
+        /// `stringcheese-phonetic`, wrapped as
+        /// [`SlavicMetaphoneAdapter`](crate::phonetic::SlavicMetaphoneAdapter).
+        /// Only available when the crate's `slavic-metaphone` Cargo
+        /// feature is on.
+        #[cfg(feature = "slavic-metaphone")]
+        SlavicMetaphone,
+    }
+
     /// The Ukrainian language pack.
     ///
-    /// Zero-sized; construct as [`Ukrainian`] and reuse the value
-    /// freely across threads and calls, or grab the crate-level
-    /// [`UKRAINIAN`](crate::UKRAINIAN) constant.
+    /// Carries a phonetic-encoder choice — the default (used by the
+    /// [`UKRAINIAN`](crate::UKRAINIAN) constant) is the Ukrainian
+    /// GOST 7.79-B transliteration; callers who want the cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// sound-alike encoder grab
+    /// [`UKRAINIAN_WITH_SLAVIC_METAPHONE`](crate::UKRAINIAN_WITH_SLAVIC_METAPHONE)
+    /// (behind the `slavic-metaphone` feature) or compose their own
+    /// via [`with_slavic_metaphone_encoder`](Ukrainian::with_slavic_metaphone_encoder).
+    ///
+    /// Two `Ukrainian` values with different encoder choices are
+    /// otherwise identical — same stopwords, same stemmer, same
+    /// tokenizer, same code/name. The distinguishing piece is cheap
+    /// (a small enum), so `Ukrainian` remains cheap to copy and cheap
+    /// to construct.
     ///
     /// See the [crate-level docs](crate) for the implementation
     /// choices and the roadmap.
     #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-    pub struct Ukrainian;
+    pub struct Ukrainian {
+        phonetic_choice: UkrainianPhoneticChoice,
+    }
+
+    impl Ukrainian {
+        /// Construct a `Ukrainian` pack with the default Ukrainian
+        /// GOST 7.79-B transliteration phonetic encoder.
+        #[must_use]
+        pub const fn new() -> Self {
+            Self {
+                phonetic_choice: UkrainianPhoneticChoice::Gost779BUk,
+            }
+        }
+
+        /// Return a `Ukrainian` pack whose
+        /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+        /// hands back the default Ukrainian GOST 7.79-B
+        /// transliteration adapter
+        /// ([`UkrainianGost779BAdapter`](crate::phonetic::UkrainianGost779BAdapter)).
+        ///
+        /// This is the default; the method exists so a caller who
+        /// composed a
+        /// [`with_slavic_metaphone_encoder`](Self::with_slavic_metaphone_encoder)
+        /// pack can undo that choice.
+        #[must_use]
+        pub const fn with_default_encoder(mut self) -> Self {
+            self.phonetic_choice = UkrainianPhoneticChoice::Gost779BUk;
+            self
+        }
+
+        /// Return a `Ukrainian` pack whose
+        /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+        /// hands back the cross-Slavic
+        /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+        /// Metaphone-family sound-alike encoder from
+        /// `stringcheese-phonetic`, wrapped as
+        /// [`SlavicMetaphoneAdapter`](crate::phonetic::SlavicMetaphoneAdapter).
+        ///
+        /// Reach for the [`UKRAINIAN_WITH_SLAVIC_METAPHONE`](crate::UKRAINIAN_WITH_SLAVIC_METAPHONE)
+        /// constant if you want the default pack with the
+        /// Slavic-Metaphone encoder; this builder method lets a caller
+        /// compose the encoder choice with future non-default pack
+        /// pieces.
+        ///
+        /// Only available when the crate's `slavic-metaphone` Cargo
+        /// feature is enabled.
+        #[cfg(feature = "slavic-metaphone")]
+        #[must_use]
+        pub const fn with_slavic_metaphone_encoder(mut self) -> Self {
+            self.phonetic_choice = UkrainianPhoneticChoice::SlavicMetaphone;
+            self
+        }
+    }
 
     /// The static [`UkrainianGost779BAdapter`] [`Ukrainian`] hands
-    /// back from [`phonetic_encoder`](Language::phonetic_encoder).
+    /// back from [`phonetic_encoder`](Language::phonetic_encoder) when
+    /// the pack was built with the default choice.
     ///
     /// Kept as a `static` so
     /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
     /// can return a reference with the required `'static`-friendly
     /// lifetime through a trait object.
     static GOST_779_B_UK: UkrainianGost779BAdapter = UkrainianGost779BAdapter;
+
+    /// The static [`SlavicMetaphoneAdapter`] [`Ukrainian`] hands back
+    /// from [`phonetic_encoder`](Language::phonetic_encoder) when the
+    /// pack was built with
+    /// [`UkrainianPhoneticChoice::SlavicMetaphone`].
+    ///
+    /// Kept as a `static` for the same reason as `GOST_779_B_UK`.
+    #[cfg(feature = "slavic-metaphone")]
+    static SLAVIC_METAPHONE: SlavicMetaphoneAdapter = SlavicMetaphoneAdapter;
 
     /// Normalize a Cyrillic string for stopword comparison: lowercase
     /// under default Unicode rules. Unlike the Russian pack, no
@@ -312,22 +425,49 @@ mod pack {
         }
 
         fn phonetic_encoder(&self) -> Option<&dyn LanguagePhoneticEncoder> {
-            Some(&GOST_779_B_UK)
+            match self.phonetic_choice {
+                UkrainianPhoneticChoice::Gost779BUk => Some(&GOST_779_B_UK),
+                #[cfg(feature = "slavic-metaphone")]
+                UkrainianPhoneticChoice::SlavicMetaphone => Some(&SLAVIC_METAPHONE),
+            }
         }
     }
 
-    /// The singleton [`Ukrainian`] language pack.
+    /// The singleton [`Ukrainian`] language pack (default Ukrainian
+    /// GOST 7.79-B transliteration phonetic encoder).
     ///
     /// Callers reach for this constant rather than constructing
-    /// [`Ukrainian`] every time — the type is zero-sized, so the two
-    /// forms are equivalent, but the constant is the intended entry
-    /// point and matches the pattern every other `stringcheese-<lang>`
-    /// pack follows.
-    pub const UKRAINIAN: Ukrainian = Ukrainian;
+    /// [`Ukrainian`] every time — the two forms are equivalent, but
+    /// the constant is the intended entry point and matches the
+    /// pattern every other `stringcheese-<lang>` pack follows.
+    ///
+    /// See [`UKRAINIAN_WITH_SLAVIC_METAPHONE`](crate::UKRAINIAN_WITH_SLAVIC_METAPHONE)
+    /// for the same pack backed by the cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// encoder.
+    pub const UKRAINIAN: Ukrainian = Ukrainian::new();
+
+    /// The singleton [`Ukrainian`] language pack whose
+    /// [`Language::phonetic_encoder`](stringcheese_lang::Language::phonetic_encoder)
+    /// hands back the cross-Slavic
+    /// [`SlavicMetaphone`](stringcheese_phonetic::SlavicMetaphone)
+    /// Metaphone-family sound-alike encoder instead of the default
+    /// Ukrainian GOST 7.79-B transliteration.
+    ///
+    /// Identical to [`UKRAINIAN`](crate::UKRAINIAN) in every respect
+    /// except its phonetic encoder. Only available when the crate's
+    /// `slavic-metaphone` Cargo feature is enabled — see the
+    /// [`slavic_metaphone`](mod@stringcheese_phonetic::slavic_metaphone)
+    /// module docs for the design trade-offs.
+    #[cfg(feature = "slavic-metaphone")]
+    pub const UKRAINIAN_WITH_SLAVIC_METAPHONE: Ukrainian =
+        Ukrainian::new().with_slavic_metaphone_encoder();
 }
 
+#[cfg(all(feature = "alloc", feature = "slavic-metaphone"))]
+pub use pack::UKRAINIAN_WITH_SLAVIC_METAPHONE;
 #[cfg(feature = "alloc")]
-pub use pack::{UKRAINIAN, Ukrainian};
+pub use pack::{UKRAINIAN, Ukrainian, UkrainianPhoneticChoice};
 
 // Register into `stringcheese-lang::registry` so callers who look up
 // languages dynamically (`registry::language("uk")`) find this pack.

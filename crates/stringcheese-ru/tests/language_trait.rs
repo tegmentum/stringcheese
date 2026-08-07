@@ -2,6 +2,8 @@
 
 use stringcheese_lang::Language;
 use stringcheese_ru::RUSSIAN;
+#[cfg(feature = "slavic-metaphone")]
+use stringcheese_ru::{RUSSIAN_WITH_SLAVIC_METAPHONE, Russian};
 
 #[test]
 fn code_and_name() {
@@ -79,4 +81,55 @@ fn phonetic_encoder_returns_none_for_no_cyrillic() {
 #[test]
 fn collator_is_none_by_default() {
     assert!(RUSSIAN.collator().is_none());
+}
+
+// ---------------------------------------------------------------------
+// Slavic-Metaphone opt-in encoder variant.
+// ---------------------------------------------------------------------
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_swaps_the_phonetic_encoder() {
+    let enc = RUSSIAN_WITH_SLAVIC_METAPHONE
+        .phonetic_encoder()
+        .expect("Russian slavic-metaphone pack ships a phonetic encoder");
+    assert_eq!(enc.name(), "slavic-metaphone-2026");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_encodes_cyrillic_and_latin_alike() {
+    // The whole point of the cross-Slavic encoder: Russian Cyrillic
+    // "Чехов" and its Latin transliteration "Chekhov" hash to the
+    // same key.
+    let enc = RUSSIAN_WITH_SLAVIC_METAPHONE.phonetic_encoder().unwrap();
+    let (cyr, _) = enc.encode("Чехов").expect("encodes Cyrillic");
+    let (lat, _) = enc.encode("Chekhov").expect("encodes Latin");
+    assert_eq!(cyr, lat);
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_encoder_can_be_restored_after_opting_in() {
+    // Undo path: `.with_default_encoder()` returns the pack to the
+    // GOST 7.79-B transliteration.
+    let restored = Russian::new()
+        .with_slavic_metaphone_encoder()
+        .with_default_encoder();
+    let enc = restored
+        .phonetic_encoder()
+        .expect("restored pack ships an encoder");
+    assert_eq!(enc.name(), "gost-7.79-b");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_russian_constant_preserves_gost_encoder() {
+    // Belt-and-braces: the module-level RUSSIAN constant must keep
+    // returning the GOST 7.79-B adapter even when the slavic-metaphone
+    // feature is compiled in.
+    let enc = RUSSIAN
+        .phonetic_encoder()
+        .expect("default Russian pack ships an encoder");
+    assert_eq!(enc.name(), "gost-7.79-b");
 }

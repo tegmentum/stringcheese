@@ -22,12 +22,32 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # alone (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Opt in to the cross-Slavic `SlavicMetaphone` sound-alike encoder from
+# `stringcheese-phonetic` as an alternate phonetic encoder alongside the
+# default GOST 7.79-B transliteration. Off by default so callers who
+# only want the transliteration pay no cost for the shared Slavic
+# family encoder's tables; on by opt-in via
+# `RUSSIAN_WITH_SLAVIC_METAPHONE` (or `Russian::with_slavic_metaphone_encoder`).
+# Requires `alloc` because the encoder returns owned `String` keys.
+slavic-metaphone = ["alloc"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
 
 [dev-dependencies]
+# Cross-pack Slavic-Metaphone equivalence tests: the Ukrainian and
+# Serbian packs are dev-deps of the Russian pack so
+# `tests/slavic_metaphone_cross_pack.rs` can prove that the shared
+# cross-Slavic encoder (accessed via each pack's
+# `..._WITH_SLAVIC_METAPHONE` constant) produces the same key for
+# equivalent inputs — the whole point of the encoder living in
+# `stringcheese-phonetic` and being wired identically into every
+# Slavic pack. Only the slavic-metaphone feature needs to be on;
+# every other pack feature is default-enabled through
+# `default-features = true`.
+stringcheese-uk = { workspace = true, default-features = true, features = ["slavic-metaphone"] }
+stringcheese-sr = { workspace = true, default-features = true, features = ["slavic-metaphone"] }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is

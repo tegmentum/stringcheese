@@ -2,6 +2,8 @@
 
 use stringcheese_lang::Language;
 use stringcheese_sr::SERBIAN;
+#[cfg(feature = "slavic-metaphone")]
+use stringcheese_sr::{SERBIAN_WITH_SLAVIC_METAPHONE, Serbian};
 
 #[test]
 fn code_and_name() {
@@ -112,4 +114,55 @@ fn stopwords_slice_includes_both_scripts() {
     let all = SERBIAN.stopwords();
     assert!(all.contains(&"и"), "combined stopwords should include и");
     assert!(all.contains(&"i"), "combined stopwords should include i");
+}
+
+// ---------------------------------------------------------------------
+// Slavic-Metaphone opt-in encoder variant.
+// ---------------------------------------------------------------------
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_swaps_the_phonetic_encoder() {
+    let enc = SERBIAN_WITH_SLAVIC_METAPHONE
+        .phonetic_encoder()
+        .expect("Serbian slavic-metaphone pack ships a phonetic encoder");
+    assert_eq!(enc.name(), "slavic-metaphone-2026");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn slavic_metaphone_variant_unifies_cyrillic_and_latin() {
+    // The cross-Slavic encoder is designed to hash the Cyrillic and
+    // Latin renderings of the same Serbian name to the same key —
+    // "Београд" and "Beograd".
+    let enc = SERBIAN_WITH_SLAVIC_METAPHONE.phonetic_encoder().unwrap();
+    let (cyr, _) = enc.encode("Београд").expect("encodes Cyrillic");
+    let (lat, _) = enc.encode("Beograd").expect("encodes Latin");
+    assert_eq!(cyr, lat);
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_encoder_can_be_restored_after_opting_in() {
+    // Undo path: `.with_default_encoder()` returns the pack to the
+    // SerbianLatin transliteration.
+    let restored = Serbian::new()
+        .with_slavic_metaphone_encoder()
+        .with_default_encoder();
+    let enc = restored
+        .phonetic_encoder()
+        .expect("restored pack ships an encoder");
+    assert_eq!(enc.name(), "sr-latin");
+}
+
+#[cfg(feature = "slavic-metaphone")]
+#[test]
+fn default_serbian_constant_preserves_sr_latin_encoder() {
+    // Belt-and-braces: the module-level SERBIAN constant must keep
+    // returning the SerbianLatin adapter even when the
+    // slavic-metaphone feature is compiled in.
+    let enc = SERBIAN
+        .phonetic_encoder()
+        .expect("default Serbian pack ships an encoder");
+    assert_eq!(enc.name(), "sr-latin");
 }
