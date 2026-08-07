@@ -57,6 +57,7 @@
     reason = "SIMD intrinsics require unsafe by declaration; every unsafe fn and every unsafe block here has a safety comment naming the CPU-feature precondition the dispatcher upholds"
 )]
 
+mod common;
 pub mod scalar;
 
 #[cfg(target_arch = "x86_64")]
