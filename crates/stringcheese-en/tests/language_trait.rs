@@ -79,6 +79,17 @@ fn phonetic_encoder_is_soundex() {
 }
 
 #[test]
-fn collator_is_none_by_default() {
-    assert!(ENGLISH.collator().is_none());
+fn collator_is_the_english_dictionary_collator() {
+    use core::cmp::Ordering;
+
+    let c = ENGLISH
+        .collator()
+        .expect("English pack ships a dictionary-order collator");
+    // Ignore leading articles: "The Beatles" strips to "Beatles",
+    // which sorts after "Abbey Road".
+    assert_eq!(c.compare("Abbey Road", "The Beatles"), Ordering::Less);
+    // ASCII case-fold.
+    assert_eq!(c.compare("banana", "BANANA"), Ordering::Equal);
+    // Digits sort after letters.
+    assert_eq!(c.compare("banana", "1st"), Ordering::Less);
 }

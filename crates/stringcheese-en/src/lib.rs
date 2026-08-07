@@ -36,12 +36,12 @@
 //!   the century-old, well-understood algorithm is the honest choice.
 //!   Callers who want Double Metaphone construct the encoder
 //!   themselves via `stringcheese_phonetic::DoubleMetaphone`.
-//! * **Default Unicode collation.** English does not need a locale
-//!   tailoring for basic sort order; the pack's
-//!   [`Language::collator`](stringcheese_lang::Language::collator)
-//!   accessor returns `None`. Callers who need dictionary-style
-//!   ordering (case-insensitive; ignoring leading `A`, `An`, `The`)
-//!   should implement their own [`Collator`](stringcheese_lang::Collator).
+//! * **Dictionary-order collation.** The default pack ships an
+//!   [`EnglishCollator`] with case folding, leading-article stripping
+//!   (`a`, `an`, `the`), and digits-after-letters ordering. Reach it
+//!   through [`Language::collator`](stringcheese_lang::Language::collator)
+//!   or the exported [`ENGLISH_DICTIONARY_COLLATOR`] constant. This is
+//!   an ASCII-common-case implementation, not a full CLDR tailoring.
 //!
 //! # Which stemmer?
 //!
@@ -58,20 +58,38 @@
 //!   for fresh IR pipelines with no backwards-compat constraint. Use
 //!   [`ENGLISH_PORTER2`] or `English::default().with_porter2()`.
 //!
+//! # Optional collator and tokenizer
+//!
+//! * **[`EnglishCollator`]** — dictionary-order English collation
+//!   (ignore leading articles `a`/`an`/`the`, ASCII case-fold, digits
+//!   sort after letters). Exposed as [`ENGLISH_DICTIONARY_COLLATOR`]
+//!   and wired into the default [`ENGLISH`] pack's
+//!   [`Language::collator`](stringcheese_lang::Language::collator)
+//!   accessor.
+//! * **[`ContractionTokenizer`]** — English contraction-aware
+//!   tokenization (`"don't"` → `["do", "n't"]`, `"won't"` →
+//!   `["will", "n't"]`, etc.). Two presets:
+//!   [`STANDARD`](ContractionTokenizer::STANDARD) preserves
+//!   contraction fragments; [`NORMALIZED`](ContractionTokenizer::NORMALIZED)
+//!   expands them (`"n't"` → `"not"`, `"'ll"` → `"will"`). Wire into
+//!   the pack via [`English::with_contraction_tokenizer`] or reach for
+//!   the pre-configured [`ENGLISH_WITH_CONTRACTIONS`] singleton (which
+//!   uses [`STANDARD`](ContractionTokenizer::STANDARD)).
+//!
 //! # Deferred to a follow-up wave
 //!
-//! * **Contraction-aware tokenization.** The shipped tokenizer treats
-//!   the apostrophe in `"don't"` as a separator; a real English
-//!   tokenizer would emit `["do", "n't"]` (or `["don't"]`, depending
-//!   on the caller's preference). This is on the roadmap for a
-//!   dedicated `EnglishTokenizer` type that overrides
-//!   [`Language::tokenize`](stringcheese_lang::Language::tokenize).
-//! * **English-specific collator.** Dictionary-order sorting (fold
-//!   case, ignore leading articles, treat ligatures as expansions)
-//!   is a natural follow-on; it needs its own design pass.
 //! * **Lemmatization.** Reducing a word to its dictionary form
 //!   (`"better"` → `"good"`) rather than a suffix-stripped stem
 //!   requires a lexicon and is out of scope for a stem-only pack.
+//! * **CLDR-tailored English collation.** The dictionary-order collator
+//!   shipped here handles the ASCII common case; a proper
+//!   [Unicode Collation Algorithm][uca] tailoring for English would
+//!   depend on ICU-backed data tables this pack deliberately does not
+//!   ship. Callers who need CLDR-conformant English collation should
+//!   reach for `icu_collator` (via a
+//!   [`stringcheese_lang::Collator`] impl of their own).
+//!
+//! [uca]: https://unicode.org/reports/tr10/
 //!
 //! # Quick-start
 //!
@@ -97,9 +115,12 @@
 //!
 //! - [`porter`] — the [`Porter`] (1980) stemmer.
 //! - [`porter2`] — the [`Porter2`] (Snowball, 2001) stemmer.
+//! - [`collator`] — the [`EnglishCollator`] dictionary-order comparator.
+//! - [`contraction`] — the [`ContractionTokenizer`] English
+//!   contraction-aware tokenizer.
 //! - [`stopwords`] — the [`STOPWORDS`] list.
-//! - The [`English`] type and the [`ENGLISH`] / [`ENGLISH_PORTER2`]
-//!   constants live in this crate's root.
+//! - The [`English`] type and the [`ENGLISH`] / [`ENGLISH_PORTER2`] /
+//!   [`ENGLISH_WITH_CONTRACTIONS`] constants live in this crate's root.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -107,6 +128,10 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
+pub mod collator;
+#[cfg(feature = "alloc")]
+pub mod contraction;
 #[cfg(feature = "alloc")]
 pub mod porter;
 #[cfg(feature = "alloc")]
@@ -117,10 +142,23 @@ pub mod stopwords;
 mod properties;
 
 #[cfg(feature = "alloc")]
+pub use collator::EnglishCollator;
+#[cfg(feature = "alloc")]
+pub use contraction::{CONTRACTION_TOKENIZER, ContractionTokenizer};
+#[cfg(feature = "alloc")]
 pub use porter::Porter;
 #[cfg(feature = "alloc")]
 pub use porter2::Porter2;
 pub use stopwords::STOPWORDS;
+
+/// The dictionary-order [`EnglishCollator`] preset, exposed as an
+/// ergonomic `const` re-export of [`EnglishCollator::DICTIONARY`].
+///
+/// This is what the default [`ENGLISH`] pack's
+/// [`Language::collator`](stringcheese_lang::Language::collator)
+/// accessor returns.
+#[cfg(feature = "alloc")]
+pub const ENGLISH_DICTIONARY_COLLATOR: EnglishCollator = EnglishCollator::DICTIONARY;
 
 /// The [`Porter`] (1980) stemmer, exposed as a static so callers can
 /// name a `&'static dyn Stemmer` without allocation.
@@ -151,41 +189,73 @@ mod pack {
     use alloc::boxed::Box;
 
     use stringcheese_lang::{
-        Language, LanguagePhoneticEncoder, SimpleTokenizer, Stemmer, phonetic::SoundexAdapter,
+        Collator, Language, LanguagePhoneticEncoder, SimpleTokenizer, Stemmer,
+        phonetic::SoundexAdapter,
     };
 
     use crate::stopwords::STOPWORDS;
-    use crate::{PORTER_STEMMER, PORTER2_STEMMER};
+    use crate::{
+        CONTRACTION_TOKENIZER, ENGLISH_DICTIONARY_COLLATOR, PORTER_STEMMER, PORTER2_STEMMER,
+    };
+
+    /// Which tokenizer this [`English`] instance uses.
+    ///
+    /// Modeled as an `enum` (not as a `&'static dyn ...` reference like
+    /// the [`Stemmer`] field) so the pack stays `Copy`, its constant
+    /// constructors stay `const`-usable, and the two shipped tokenizers
+    /// stay a closed set — the trade-off is that a caller who wants a
+    /// hand-rolled tokenizer implements
+    /// [`Language`](stringcheese_lang::Language) directly rather than
+    /// slotting a `&'static dyn Tokenizer` in here.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum EnglishTokenizerChoice {
+        /// The default whitespace-and-punctuation
+        /// [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer).
+        Simple,
+        /// The [`ContractionTokenizer`](crate::ContractionTokenizer)
+        /// in its [`STANDARD`](crate::ContractionTokenizer::STANDARD)
+        /// configuration.
+        Contraction,
+    }
 
     /// The English language pack.
     ///
-    /// Carries a chosen stemmer as a `&'static dyn Stemmer`. The
-    /// default (used by the [`ENGLISH`](crate::ENGLISH) constant) is
-    /// Porter (1980); callers wanting Porter2 (Snowball, 2001) should
-    /// grab [`ENGLISH_PORTER2`](crate::ENGLISH_PORTER2) or call
-    /// [`with_porter2`](English::with_porter2) on an existing
-    /// `English`.
+    /// Carries a chosen stemmer as a `&'static dyn Stemmer` plus a
+    /// tokenizer choice. The default (used by the
+    /// [`ENGLISH`](crate::ENGLISH) constant) is Porter (1980) with the
+    /// baseline [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer);
+    /// callers who want Porter2 or the contraction-aware tokenizer
+    /// grab a different constant
+    /// ([`ENGLISH_PORTER2`](crate::ENGLISH_PORTER2),
+    /// [`ENGLISH_WITH_CONTRACTIONS`](crate::ENGLISH_WITH_CONTRACTIONS)),
+    /// or compose their own via
+    /// [`with_porter2`](English::with_porter2) /
+    /// [`with_contraction_tokenizer`](English::with_contraction_tokenizer).
     ///
-    /// Two `English` values with different stemmers are otherwise
-    /// identical — same stopwords, same tokenizer, same phonetic
-    /// encoder, same code/name. The `stemmer` field is the only
-    /// distinguishing piece, and it's a `&'static` reference, so
-    /// `English` remains cheap to copy and cheap to construct.
+    /// Two `English` values with different stemmers or tokenizer
+    /// choices are otherwise identical — same stopwords, same
+    /// collator, same phonetic encoder, same code/name. Both
+    /// distinguishing pieces are cheap (a `&'static` reference and a
+    /// two-variant enum), so `English` remains cheap to copy and cheap
+    /// to construct.
     ///
     /// See the [crate-level docs](crate) for the implementation
     /// choices and the roadmap.
     #[derive(Copy, Clone)]
     pub struct English {
         stemmer: &'static (dyn Stemmer + 'static),
+        tokenizer: EnglishTokenizerChoice,
     }
 
     impl English {
         /// Construct an `English` pack with the default stemmer
-        /// ([`Porter`](crate::Porter), 1980).
+        /// ([`Porter`](crate::Porter), 1980) and the baseline
+        /// [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer).
         #[must_use]
         pub const fn new() -> Self {
             Self {
                 stemmer: &PORTER_STEMMER,
+                tokenizer: EnglishTokenizerChoice::Simple,
             }
         }
 
@@ -196,10 +266,9 @@ mod pack {
         /// the method is `const`-usable at compile time (the same
         /// pattern as [`with_porter2`](Self::with_porter2)).
         #[must_use]
-        pub const fn with_porter(self) -> Self {
-            Self {
-                stemmer: &PORTER_STEMMER,
-            }
+        pub const fn with_porter(mut self) -> Self {
+            self.stemmer = &PORTER_STEMMER;
+            self
         }
 
         /// Return an `English` pack using the revised
@@ -208,10 +277,37 @@ mod pack {
         /// See [the crate docs' *Which stemmer?* section](crate#which-stemmer)
         /// for guidance on when to choose Porter2 over Porter.
         #[must_use]
-        pub const fn with_porter2(self) -> Self {
-            Self {
-                stemmer: &PORTER2_STEMMER,
-            }
+        pub const fn with_porter2(mut self) -> Self {
+            self.stemmer = &PORTER2_STEMMER;
+            self
+        }
+
+        /// Return an `English` pack using the baseline
+        /// [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer).
+        ///
+        /// This is the default; the method exists so a caller who
+        /// composed a
+        /// [`with_contraction_tokenizer`](Self::with_contraction_tokenizer)
+        /// pack can undo that choice.
+        #[must_use]
+        pub const fn with_simple_tokenizer(mut self) -> Self {
+            self.tokenizer = EnglishTokenizerChoice::Simple;
+            self
+        }
+
+        /// Return an `English` pack using the
+        /// [`ContractionTokenizer`](crate::ContractionTokenizer)
+        /// (`STANDARD` preset).
+        ///
+        /// Reach for the [`ENGLISH_WITH_CONTRACTIONS`](crate::ENGLISH_WITH_CONTRACTIONS)
+        /// constant if you want the default pack with contractions;
+        /// this builder method lets a caller compose contraction
+        /// tokenization with a non-default stemmer, e.g.
+        /// `English::new().with_porter2().with_contraction_tokenizer()`.
+        #[must_use]
+        pub const fn with_contraction_tokenizer(mut self) -> Self {
+            self.tokenizer = EnglishTokenizerChoice::Contraction;
+            self
         }
     }
 
@@ -248,15 +344,25 @@ mod pack {
         }
 
         fn tokenize<'a>(&self, text: &'a str) -> Box<dyn Iterator<Item = &'a str> + 'a> {
-            Box::new(SimpleTokenizer::new().tokenize(text))
+            match self.tokenizer {
+                EnglishTokenizerChoice::Simple => Box::new(SimpleTokenizer::new().tokenize(text)),
+                EnglishTokenizerChoice::Contraction => {
+                    CONTRACTION_TOKENIZER.tokenize_borrowed(text)
+                }
+            }
         }
 
         fn phonetic_encoder(&self) -> Option<&dyn LanguagePhoneticEncoder> {
             Some(&SOUNDEX)
         }
+
+        fn collator(&self) -> Option<&dyn Collator> {
+            Some(&ENGLISH_DICTIONARY_COLLATOR)
+        }
     }
 
-    /// The singleton [`English`] language pack (Porter 1980 stemmer).
+    /// The singleton [`English`] language pack (Porter 1980 stemmer,
+    /// baseline [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer)).
     ///
     /// Callers reach for this constant rather than constructing
     /// [`English`] every time — the two forms are equivalent, but the
@@ -264,7 +370,9 @@ mod pack {
     /// every other `stringcheese-<lang>` pack will follow.
     ///
     /// See [`ENGLISH_PORTER2`](crate::ENGLISH_PORTER2) for the same
-    /// pack backed by the Porter2 stemmer.
+    /// pack backed by the Porter2 stemmer, and
+    /// [`ENGLISH_WITH_CONTRACTIONS`](crate::ENGLISH_WITH_CONTRACTIONS)
+    /// for the same pack with contraction-aware tokenization.
     pub const ENGLISH: English = English::new();
 
     /// The singleton [`English`] language pack backed by the
@@ -273,10 +381,24 @@ mod pack {
     /// Identical to [`ENGLISH`](crate::ENGLISH) in every respect
     /// except its stemmer.
     pub const ENGLISH_PORTER2: English = English::new().with_porter2();
+
+    /// The singleton [`English`] language pack with the
+    /// [`ContractionTokenizer`](crate::ContractionTokenizer) wired
+    /// into [`Language::tokenize`](stringcheese_lang::Language::tokenize).
+    ///
+    /// Identical to [`ENGLISH`](crate::ENGLISH) in every respect
+    /// except its tokenizer. Uses the
+    /// [`STANDARD`](crate::ContractionTokenizer::STANDARD) preset
+    /// (contractions are split but fragments are preserved). Callers
+    /// who want the [`NORMALIZED`](crate::ContractionTokenizer::NORMALIZED)
+    /// expansion behaviour should reach for
+    /// [`ContractionTokenizer::NORMALIZED`](crate::ContractionTokenizer::NORMALIZED)
+    /// directly rather than going through the [`Language`] trait.
+    pub const ENGLISH_WITH_CONTRACTIONS: English = English::new().with_contraction_tokenizer();
 }
 
 #[cfg(feature = "alloc")]
-pub use pack::{ENGLISH, ENGLISH_PORTER2, English};
+pub use pack::{ENGLISH, ENGLISH_PORTER2, ENGLISH_WITH_CONTRACTIONS, English};
 
 /// Metadata about this release.
 pub mod meta {
