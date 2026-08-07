@@ -11,6 +11,132 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-pl` — Polish language pack.** New workspace crate.
+  ~282 stopwords (`być / mieć / móc / chcieć` paradigms + full pronoun /
+  preposition / conjunction inventory; carries both ASCII-typed and
+  diacritic-correct variants like `az` / `aż`). Light stemmer — no
+  canonical Snowball Polish (Stempel/Egothor requires a large trained
+  transducer, outside the per-crate offline envelope). Single-pass
+  longest-match stripper over a unified noun/adjective/verb/adverb
+  table with RV region floor and 2-char min-stem guard. `się` left to
+  the tokenizer (free-standing orthographic word, not a suffix).
+  Polish-specific letters `ą ć ę ł ń ó ś ź ż` handled. PHONEX-pl
+  encoder (`"phonex-pl"`): nasal-vowel folding `ą→a`/`ę→e`, `ó→u`
+  conflation (same modern /u/ phoneme), `ż`/`ź` merger (both → `Z`),
+  digraph handling (`sz→S`, `cz→C`, `rz→R`, `ch→K` before silent-H
+  strip). Case-fold override uses Unicode `to_lowercase` (default
+  `eq_ignore_ascii_case` would miss `Ą → ą`). 36 Snowball reference
+  pairs + 19 PHONEX pairs. 83 tests total.
+
+- **`stringcheese-cs` — Czech language pack.** New workspace crate.
+  ~275 stopwords (`být` copula's ~30 forms with `ne-` negation, plus
+  gender/number variants of possessives and demonstratives — higher
+  than the ~150-200 target because Czech function-word morphology is
+  rich). Light stemmer — no canonical Snowball Czech. Covers common
+  noun/adjective endings (`-ovi`, `-ova`, `-ovy`, `-ové`, `-ami`,
+  `-emi`, `-ám`, `-ým`, `-ého`, `-ých`), single-vowel case endings,
+  and verb endings (`-oval`, `-ovala`, `-ovat`, `-uji`, `-uje`).
+  Deliberately conservative to avoid over-stemming without a lexicon.
+  Czech-specific letters `á č ď é ě í ň ó ř š ť ú ů ý ž` handled.
+  PHONEX-cs encoder (`"phonex-cs"`): haček folds `č/š/ž/ř/ď/ť/ň →
+  C/S/Z/R/D/T/N`, long-vowel folds `á/é/í/ó/ú/ý → A/E/I/O/U/Y`,
+  `ů → U`, `ě → E`, `ch → X`, silent `h`. 33 stemmer reference pairs
+  + 17 PHONEX pairs. 99 tests total. Consonant alternation
+  (`ruka → ruce` — velar/palatal `k/c/č`, `h/z/ž`) stripped-but-not-
+  reversed; reversing needs a lexicon. Slovak sibling pack, aggressive
+  Dolamic-Savoy derivational variant, ISO 9-cs alternate adapter deferred.
+
+- **BCP-47 subtag fallback in `stringcheese-lang::registry`.** Extends
+  `registry::language(code)` to walk the fallback chain right-to-left
+  on hyphen boundaries: `"pt-BR"` → `"pt"`, `"sr-Cyrl-RS"` → `"sr-Cyrl"`
+  → `"sr"`, `"pt-BR-x-informal"` → all the way down to `"pt"`.
+  Case-insensitive throughout (BCP-47 comparisons are case-insensitive
+  regardless of script/region conventions). New
+  `registry::language_exact(code)` preserves pre-existing exact-match
+  semantics for callers who need them. **Fully backwards-compatible**:
+  every code that used to resolve still resolves to the same pack; codes
+  that used to return `None` either still return `None` (no primary-
+  language match) or now succeed via fallback. Grandfathered irregular
+  tags (`i-klingon`, `en-GB-oed`), private-use `-x-` subtags, and
+  extension `-u-` subtags all degrade to the same right-to-left walk
+  (no IANA-registry consultation). 10 new unit tests + 2 proptests
+  (exact-match wins over fallback; impl agrees with hand-rolled strip
+  loop).
+
+- **`stringcheese-phonetic`: Slavic-Metaphone encoder.** New shared
+  cross-Slavic sound-alike encoder covering 12 Slavic languages across
+  both Cyrillic and Latin scripts (Russian, Ukrainian, Serbian,
+  Bulgarian, Belarusian, Macedonian on the Cyrillic side; Polish,
+  Czech, Slovak, Croatian, Bosnian, Slovenian on the Latin side).
+  **Both scripts land directly in a shared 19-class ASCII alphabet**
+  (14 consonant classes + 5 vowel classes) via a single-pass classifier
+  with digraph lookahead — no intermediate Latin transliteration step.
+  Handles Polish `sz/cz/rz/dź/dż`, ASCII transliteration `sh/zh/kh/ts`,
+  Czech/Polish `ch`, and Serbian Latin `dž` at the classifier level.
+  **Deliberate cross-Slavic collapses**: `g → H` class (Prague ↔ Прага
+  match despite the g/h dialect divide), `ch → C` (Russian /tʃ/
+  convention wins; `kh` remains for /x/), sibilant voice pairs
+  `š/ž → X`, `s/z → S`, `č/dž → C` (classic Metaphone), palatalization
+  diacritics fold to base (`ń→N`, `ť→T`, `ď→T`, `đ→C`, `ł→L`), long
+  vowels fold to short, Polish nasals `ą/ę` decompose to `A+N`/`E+N`,
+  Russian and Ukrainian `щ` both fold to `X`. Default `max_length` 8;
+  vowels dropped after the initial by default (Metaphone convention),
+  opt-in `include_vowels`. `SlavicMetaphone` type + `SlavicMetaphoneOptions`
+  builder + `slavic_metaphone()` free function. 24 cross-language
+  reference pairs verified (`Чехов`/`Chekhov`, `Kraków`/`Краків`,
+  `Praha`/`Прага`, `Београд`/`Beograd`, ...). Beider-Morse-Slavic
+  (much larger rule engine) and language-tailored variants deferred.
+  Language packs deliberately not rewired — a future wave can expose
+  Slavic-Metaphone as an alternate encoder alongside their existing
+  transliterations.
+
+- **`stringcheese-manip`: `wrap_at_width` and `reflow` via UAX #14.**
+  New `wrap` module using the wave-8 UAX #14 line-break iterators from
+  `stringcheese-unicode::line_breaks`. Public API: `wrap_at_width(text,
+  width) -> Vec<String>`, `wrap_at_width_borrowed(text, width) ->
+  Vec<&str>` (zero-copy), `fill(text, width) -> String`, `reflow(text,
+  width) -> String` (paragraph-aware). `WrapOptions` builder with
+  `.width()`, `.break_words()`, `.initial_indent()`, `.subsequent_indent()`.
+  **Width unit: `unicode-width`** — CJK ideographs = 2 cols, combining
+  marks / ZWJ = 0 cols (fixed-cell terminal renderer convention).
+  Feature-gated on new `line-breaking` feature (default on), forwarding
+  through to `stringcheese-unicode/line-breaking` + pulling in
+  `unicode-width` (`no_std`, pure data). Wasm-size baseline unchanged
+  (probe doesn't reference `wrap`, so LTO strips both deps from the
+  measured build); documented transitive opt-in cost ~22 KB
+  (unicode-linebreak) + ~10-15 KB (unicode-width). Default matches
+  Python `textwrap`: oversized words overflow their line; `break_words(true)`
+  opts into character-level force-splits on valid UTF-8 boundaries.
+  `reflow` consumes single terminators as spaces and treats 2+
+  consecutive newlines as paragraph boundaries. 34 unit tests covering
+  the full golden matrix (empty / short / exact-width / oversized /
+  mandatory-break preservation / CRLF / multibyte UTF-8 boundary
+  safety / CJK double-width / combining marks / paragraph reflow).
+
+- **`stringcheese-tokenizer-bpe`: HuggingFace ByteLevel pre-tokenizer
+  and decoder.** Adds the largest single deferred feature from the
+  wave-8 HF parser landing — GPT-2 and Llama-family tokenization now
+  reachable end-to-end from `tokenizer.json`. New `byte_level` module
+  with `BYTES_TO_CHARS: [char; 256]` bijective mapping (printable ASCII
+  0x21..=0x7E, plus 0xA1..=0xAC / 0xAE..=0xFF unchanged; unprintable
+  bytes → Unicode 256..=(256+n)); `CHARS_TO_BYTES` inverse; `encode_bytes`
+  / `decode_chars` functions. Extends `HfTokenizerConfig` to recognize
+  `ByteLevel` pre-tokenizer variants and compose them with Split(Regex)
+  in the correct semantic order (ByteLevel encoding BEFORE regex split
+  for GPT-2 semantics). Extends `HfDecoder` to apply ByteLevel inverse
+  in decode paths. **On the ByteLevel path, BPE pieces are seeded per
+  char (not per byte)** so multi-byte encoded chars like `Ġ` stay
+  atomic — matches HF's own char-based BPE seeding; non-ByteLevel
+  paths (tiktoken, raw-byte BPE) keep per-byte seeding unchanged.
+  GPT-2 `tokenizer.json` now fully parseable end-to-end: `"hello"` →
+  `[Ġhello]`, `"hello world"` → `[Ġhello, Ġworld]`; canonical HF
+  `["ĠHello", "Ġworld"]` example matches byte-for-byte. 39 new tests
+  (10 byte_level, 7 hf ByteLevel-focused, plus config integration).
+  Deferred: WordPiece / Unigram / WordLevel models; all Normalizers
+  (NFC/NFD is the next highest-impact unlock); Post-processors
+  (`TemplateProcessing` for BOS/EOS injection in Llama-family);
+  `trim_offsets` on ByteLevel.
+
 - **`stringcheese-uk` — Ukrainian language pack.** New workspace crate.
   **Second Cyrillic-script pack** (after Russian). ~218 stopwords in
   Cyrillic. Light suffix-stripping stemmer (no canonical Snowball
@@ -657,6 +783,27 @@ bump; `0.x` versions are pre-stability.
   `crates/stringcheese-en/proptest-regressions/properties.txt`.
 
 ### Changed
+
+- **`stringcheese-cdc`: real vectorized Polynomial SIMD kernel via
+  block reformulation.** Closes the CDC SIMD trilogy (Gear wave 7,
+  Buzhash + Rabin wave 8, Polynomial now). Block reformulation:
+  `state_{k+16} = state_k * PK_BLOCK + Σ bytes[i]*pk[15-i]` (mod PRIME),
+  with `pk[j] = BASE^j mod PRIME` const-evaluated. Effective-slice
+  truncation (shared with Rabin): for `window > 0`, only last `window`
+  bytes affect the digest. Coefficient split: each 61-bit `pk` splits
+  into `pk_hi ≤ 2^29` and `pk_lo = 32 bits` so `byte * pk_half` fits
+  in a u64 lane; `hi_acc` and `lo_acc` accumulate independently across
+  the 16-byte block, then reassemble as `hi_sum * 2^32 + lo_sum` in
+  u128 for a single per-block Mersenne reduction. **All four arches
+  got real kernels**: AVX2 (`_mm256_mul_epu32` VPMULUDQ, 4-lane u64),
+  SSE2 (`_mm_mul_epu32` PMULUDQ — no gather needed, SSE2 baseline
+  suffices, 2-lane u64), NEON (`vmull_u32` widening 32×32→64, 2-lane
+  u64), wasm SIMD128 (`i64x2_mul` low-64; inputs bounded ≤32 bits so
+  low-64 == widening product). Verified byte-identical to scalar on
+  aarch64 host (98 CDC tests pass) and x86_64 under Rosetta (23
+  polynomial tests, both AVX2 and SSE2 kernels bit-identical). AVX-512
+  IFMA (`_mm256_madd52lo/hi_epu64`, fused 52-bit multiply-add for the
+  61-bit Mersenne coefficient) noted as future work.
 
 - **`stringcheese-cdc`: real vectorized Buzhash SIMD kernel.** Replaces
   the wave-6 Buzhash scaffolding with a true block-reformulation kernel
