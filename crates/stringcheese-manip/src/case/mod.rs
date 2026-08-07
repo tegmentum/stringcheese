@@ -2,14 +2,17 @@
 //!
 //! This module handles *case mapping* — the operation that changes a
 //! string's presentation to lower- or upper-case for display. It is the
-//! companion to `stringcheese-unicode`'s
-//! [`case_fold`](stringcheese_unicode::case_fold) family, which handles
-//! *case folding* for case-insensitive comparison. The two are related
-//! but distinct; see the [`stringcheese_unicode::case_folding`] module
-//! documentation for the differences (Turkish dotless I, ß → ss, and
-//! Greek final sigma all diverge between them). If you are folding
-//! strings so they can be compared, reach for `stringcheese_unicode`, not
-//! this module.
+//! companion to `stringcheese-unicode`'s `case_fold` family, which
+//! handles *case folding* for case-insensitive comparison. The two are
+//! related but distinct; see the `stringcheese_unicode::case_folding`
+//! module documentation for the differences (Turkish dotless I,
+//! ß → ss, and Greek final sigma all diverge between them). If you are
+//! folding strings so they can be compared, reach for
+//! `stringcheese_unicode`, not this module.
+//!
+//! (The intra-doc links to `case_fold` / `case_folding` are avoided
+//! here so this module documents cleanly whether or not the caller
+//! turned on `stringcheese-unicode`'s optional `case-fold` feature.)
 //!
 //! # What this module offers
 //!

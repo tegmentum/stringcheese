@@ -11,7 +11,7 @@ categories = ["text-processing", "no-std"]
 keywords = ["string", "text", "manipulation", "no-std", "wasm"]
 
 [features]
-default = ["std"]
+default = ["std", "line-breaking"]
 # When enabled, the crate uses the standard library. Also implies `alloc`.
 std = [
     "alloc",
@@ -31,6 +31,21 @@ alloc = [
     "stringcheese-unicode/sentence-segmentation",
     "stringcheese-compare/alloc",
 ]
+# Enables the [`wrap`] module — word-wrap and reflow at UAX #14 line-
+# break opportunities. Forwards to `stringcheese-unicode`'s
+# `line-breaking` feature (which pulls in the `unicode-linebreak`
+# `Line_Break` property table, ~22 KB in `wasm-opt -Oz`) and additionally
+# pulls in `unicode-width` for Unicode East Asian Width-aware column
+# measurement so a terminal wrapper sees CJK ideographs as double-width
+# and combining marks as zero-width. `unicode-width` is a small pure-
+# data crate (~15 KB `wasm-opt -Oz`) with no transitive deps beyond
+# core. Requires `alloc` because both the wrapping algorithms and the
+# returned `Vec<String>` / `String` outputs are heap-typed.
+line-breaking = [
+    "alloc",
+    "stringcheese-unicode/line-breaking",
+    "dep:unicode-width",
+]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -45,6 +60,13 @@ stringcheese-unicode = { workspace = true }
 # in particular lets `replace_many` run many needle→replacement
 # substitutions in one linear pass).
 stringcheese-compare = { workspace = true }
+# `unicode-width` — Unicode East Asian Width lookup used by the [`wrap`]
+# module's column-width measurement so a terminal word-wrapper sees CJK
+# ideographs as double-width and combining marks as zero-width. Gated on
+# the `line-breaking` feature — an ASCII-only caller who only reaches
+# the byte / scalar / grapheme APIs pays nothing for it. `no_std`
+# compatible, no transitive deps beyond `core`.
+unicode-width = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 

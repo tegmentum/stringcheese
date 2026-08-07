@@ -98,6 +98,15 @@
 //!   writing directly to a `Write`. Not a general templating engine (no
 //!   conditionals, loops, or filters); reach for `askama` / `handlebars`
 //!   / `tera` for that.
+//! - [`wrap`] — *shipped* (feature `line-breaking`). Word-wrap and
+//!   reflow at UAX #14 line-break opportunities via
+//!   [`stringcheese_unicode::line_breaks()`]. Column width is measured
+//!   per Unicode East Asian Width so CJK ideographs count as two
+//!   columns and combining marks as zero. Offers greedy first-fit
+//!   [`wrap::wrap_at_width`] and its borrowed
+//!   [`wrap::wrap_at_width_borrowed`] variant, [`wrap::fill`],
+//!   [`wrap::reflow`] (paragraph-aware), and a [`wrap::WrapOptions`]
+//!   builder for indents and force-break control.
 //! - [`pipeline`] — *shipped.* [`pipeline::TextPipeline`], a
 //!   transformation IR that stages multiple [`pipeline::Operation`]s
 //!   for one-pass application over a ping-pong buffer pair. Concrete
@@ -151,6 +160,14 @@ pub mod slice;
 pub mod split;
 pub mod template;
 pub mod trim;
+// UAX #14-based word-wrap and reflow. Feature-gated on
+// `line-breaking`, which forwards to `stringcheese-unicode`'s
+// `line-breaking` feature and pulls in `unicode-width` for East Asian
+// Width-aware column measurement. Callers who do not need wrapping
+// can build with `--no-default-features --features std` and skip both
+// the UAX #14 property table and the East Asian Width lookup.
+#[cfg(feature = "line-breaking")]
+pub mod wrap;
 
 /// Metadata about this release.
 pub mod meta {
