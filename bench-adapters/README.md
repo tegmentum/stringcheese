@@ -51,15 +51,35 @@ Every adapter in this subtree — whatever language it targets — MUST:
 | Language     | Status              | Directory                  | Comparison libraries                  |
 |--------------|---------------------|----------------------------|---------------------------------------|
 | Rust         | shipping (v0.1)     | `bench-adapters/rust/`     | `strsim` 0.11, `rapidfuzz` 0.5        |
-| Python       | planned (v0.2)      | `bench-adapters/python/`   | `python-Levenshtein`, `rapidfuzz`, `jellyfish` |
+| Python       | shipping (v0.2)     | `bench-adapters/python/`   | `python-Levenshtein`, `jellyfish`, `rapidfuzz` |
 | Java         | planned (v0.2)      | `bench-adapters/java/`     | Apache Commons Text                    |
 | JavaScript   | planned (v0.2)      | `bench-adapters/javascript/` | `fast-levenshtein`, `natural`         |
 | C++          | planned (v0.3)      | `bench-adapters/cpp/`      | `rapidfuzz-cpp`, `edlib`              |
 | Go           | planned (v0.3)      | `bench-adapters/go/`       | `agnivade/levenshtein`, `xrash/smetrics` |
 
-Only the Rust slot ships in v0.1. The other slots are recorded here
-so that the directory layout is committed early and the sequencing
-matches `docs/DESIGN.md`'s "Implementation Sequence".
+The Rust and Python slots ship in v0.1/v0.2 respectively. The
+remaining slots are recorded here so that the directory layout is
+committed early and the sequencing matches `docs/DESIGN.md`'s
+"Implementation Sequence".
+
+## The FFI break — Rust vs. everyone else
+
+The Rust adapter measures the StringCheese kernels **statically linked**
+against the comparison crates: the whole binary is Rust and there is
+no boundary between the timing loop and the algorithm. That is the
+kernel-quality comparison the toolkit's own criterion suite also
+measures.
+
+Every non-Rust adapter (Python first, then JavaScript, Java, Go, C++)
+loads StringCheese as the WebAssembly component built by
+`cargo component build --release` under `component/rust-host/`. The
+per-call cost includes parameter lowering across the wasm boundary,
+guest execution, result lifting, and `post_return` bookkeeping. At
+short input lengths that FFI tail dominates; at long input lengths the
+kernel work does. Each non-Rust adapter's README documents the
+crossover behaviour for its host language's ecosystem contestants —
+the point of these adapters is a whole-stack answer to "should I use
+StringCheese from this language", not a DP-kernel-only comparison.
 
 ## Running Rust adapters
 
@@ -69,6 +89,26 @@ cargo bench --manifest-path bench-adapters/rust/Cargo.toml
 
 See `bench-adapters/rust/README.md` for the per-adapter matrix,
 representation caveats, and interpretation notes.
+
+## Running Python adapters
+
+The Python adapter loads the wasm component built by
+`cargo component build --release`, so build the component first:
+
+```
+cd component/rust-host && cargo component build --release
+```
+
+Then install the Python dependencies and run pytest-benchmark:
+
+```
+cd bench-adapters/python
+pip install -r requirements.txt
+pytest --benchmark-only
+```
+
+See `bench-adapters/python/README.md` for prerequisites, per-adapter
+matrix, FFI-cost caveats, and interpretation notes.
 
 ## Non-goals
 

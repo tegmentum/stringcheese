@@ -1,0 +1,38 @@
+# StringCheese Python bench adapter — pinned dependency set.
+#
+# Pinned to specific versions for reproducibility: pytest-benchmark's
+# statistical output is only meaningful across runs on the same
+# environment, and a floating version pin would silently invalidate
+# cross-run comparisons the moment a dependency published a patch.
+#
+# Duplicated from `pyproject.toml`'s `[project].dependencies` — keep
+# the two in sync when bumping. The dedicated `requirements.txt` file
+# exists because the README's copy-paste workflow uses `pip install
+# -r requirements.txt` (works with vanilla pip on any Python 3.10+),
+# and because CI matrices are simpler to describe against a flat file
+# than against a TOML AST.
+#
+# Versions verified against Python 3.13 on macOS aarch64 (2026-08).
+
+# --- The wasm runtime -------------------------------------------------
+#
+# wasmtime-py 41.0.0 is the first release to expose the full
+# `wasmtime.component` surface (Component / Linker / Instance /
+# ExportIndex / add_wasip2). Older releases require manually driving
+# the raw C API through ctypes to instantiate a component. Do not
+# downgrade below 41.
+wasmtime==41.0.0
+
+# --- Bench harness ---------------------------------------------------
+pytest==9.0.1
+pytest-benchmark==5.2.3
+
+# --- Ecosystem contestants -------------------------------------------
+#
+# The three "everyone uses one of these" Python string-distance libs.
+# All three ship prebuilt wheels for CPython 3.10+ on the common
+# platforms, so `pip install -r requirements.txt` is a one-shot
+# operation without needing a C toolchain.
+python-Levenshtein==0.27.3
+jellyfish==1.2.1
+rapidfuzz==3.14.5

@@ -1,0 +1,19 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# pytest / pytest-benchmark output
+.pytest_cache/
+.benchmarks/
+
+# Build / install artifacts (nothing here compiles by default, but
+# `pip install .` would produce these).
+*.egg-info/
+build/
+dist/

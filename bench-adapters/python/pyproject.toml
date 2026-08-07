@@ -1,0 +1,73 @@
+# StringCheese Python bench adapter — package metadata.
+#
+# This subtree is a **standalone Python project** with no coupling to the
+# outer Cargo workspace. It intentionally has no `Cargo.toml` and is not
+# a Python source distribution of the StringCheese algorithms — the
+# algorithms are invoked through the WebAssembly component built by
+# `cargo component build --release` inside `component/rust-host/`.
+#
+# The `pyproject.toml` here exists so pip / uv / Poetry all know the
+# minimum Python version, the runtime dependencies, and the entry point
+# for `pytest`. Nothing here is published to PyPI (`publish = false`
+# equivalent — no `[project.urls]`, no `[project.classifiers]`, no
+# release infrastructure).
+
+[project]
+name = "stringcheese-bench-adapter"
+version = "0.1.0"
+description = "Head-to-head Python-ecosystem benchmark adapter for the StringCheese toolkit (loaded via wasmtime-py)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+authors = [
+    { name = "Zachary Whitley", email = "zachary.whitley@tegmentum.ai" },
+]
+keywords = ["stringcheese", "benchmark", "wasm", "wasmtime", "string-distance"]
+
+# Runtime dependencies. Version pins are duplicated in `requirements.txt`
+# so a `pip install -r requirements.txt` produces the exact same
+# environment the pyproject description implies; keep the two in sync.
+dependencies = [
+    "wasmtime==41.0.0",
+    "pytest==9.0.1",
+    "pytest-benchmark==5.2.3",
+    "python-Levenshtein==0.27.3",
+    "jellyfish==1.2.1",
+    "rapidfuzz==3.14.5",
+]
+
+[project.optional-dependencies]
+# Nothing here yet; the slot exists so a future `dev = [...]` for
+# linting/formatting can land without restructuring.
+dev = []
+
+[build-system]
+# Pure setuptools build backend — the package is a single `.py` file
+# and a `benches/` directory of pytest modules; there is nothing to
+# compile. Using setuptools rather than Poetry keeps the toolchain
+# lightweight and matches what `pip install .` expects out of the box.
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Explicit rather than autodiscovery — the sibling `benches/` directory
+# is a pytest test tree, not a Python package we want to install.
+py-modules = ["stringcheese_adapter"]
+
+[tool.pytest.ini_options]
+# pytest-benchmark options centralised here so `pytest benches/` works
+# without command-line flags. See the README for interpretation notes.
+minversion = "7.0"
+testpaths = ["benches"]
+# Only tests named `*_bench.py` are collected — the shared `_inputs.py`
+# and `conftest.py` files in the same directory are not tests.
+python_files = ["*_bench.py"]
+# pytest-benchmark defaults are conservative; the following keeps a
+# full run under ~2 minutes on a modern laptop while producing tight
+# enough confidence intervals for cross-implementation comparison.
+addopts = [
+    "--benchmark-columns=min,median,mean,stddev,rounds,iterations",
+    "--benchmark-sort=mean",
+    "--benchmark-warmup=on",
+    "--benchmark-disable-gc",
+]
