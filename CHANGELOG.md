@@ -11,6 +11,96 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-tokenizer` + `stringcheese-tokenizer-bpe` — tokenizer
+  subsystem, Phases 1+2.** Two new workspace crates per
+  `docs/design/tokenizers.md`:
+  * `stringcheese-tokenizer` — `Segmenter` (GAT-based, non-round-trip)
+    and `Tokenizer` (round-trip; `encode`/`decode`/`count`) traits;
+    `Encoding<Token>` with offsets + special_mask; built-in
+    tokenizers: `WhitespaceTokenizer`, `DelimiterTokenizer`,
+    `IdentifierTokenizer` (5 modes: SnakeCase/KebabCase/DottedPath/
+    CamelCase/Auto), `GraphemeSegmenter` (wraps
+    `stringcheese-unicode`), `NgramSegmenter`. Facade re-exports as
+    `stringcheese::tokenizer`.
+  * `stringcheese-tokenizer-bpe` — data-neutral BPE algorithm
+    (Sennrich et al. 2016). `BpeMergeTable` + `BpeVocabulary` +
+    `BpeTokenizer::from_parts()`. Special-token handling
+    (longest-first, literal match). Round-trip verified: `decode(encode(x)) == x`.
+    Regex pre-tokenization stubbed as `PreTokenizerRegex::Literal`
+    (full regex is Phase 2b). Naive O(n²) merge loop — linked-list +
+    min-heap is Phase 2 optimization.
+
+- **`stringcheese-ja` — Japanese language pack.** First non-Latin-script
+  pack. ~141 stopwords (particles, auxiliaries, demonstratives,
+  pronouns, adverbs), character-type tokenizer (range-based
+  Hiragana/Katakana/Kanji/Latin/digit classification with
+  Kanji+Hiragana okurigana merging), Kunrei-shiki romanization
+  (ISO 3602) as the phonetic encoder (chosen over Hepburn for
+  key-stability: `し → si`, `じ → zi`), minimal polite-form /
+  plural-marker stemmer. Public `JAPANESE` constant. Registers into
+  `stringcheese-lang::registry` as `"ja"`. Full morphological
+  tokenization deliberately deferred (kuromoji-scale dictionary
+  is outside the wasm-first / offline-first envelope).
+
+- **JavaScript bench adapter.** `bench-adapters/js/` — third non-Rust
+  adapter after Python. Uses `@bytecodealliance/jco@1.27.0` to
+  transpile the WIT component to ES modules that Node.js can
+  import. Compares StringCheese vs `fastest-levenshtein`,
+  `js-levenshtein`, `natural`, `string-similarity`. Uses
+  `tinybench` (lightweight ESM-native harness). Verified end-to-end
+  with an actual bench run. `damerauDistance` throws
+  `NotImplementedError` (upstream WIT surface gap — full Damerau
+  kernel isn't wasm-portable yet).
+
+- **`stringcheese-en`: English collation + contraction tokenization.**
+  Two additive features:
+  * `EnglishCollator` implementing `stringcheese_lang::Collator` with
+    three flags — `ignore_leading_articles` (a/an/the with
+    whitespace separator), `case_insensitive` (ASCII case-fold),
+    `digits_after_letters` (digit lift into 0x80..=0x89 slot).
+    Presets `EnglishCollator::DICTIONARY` and `::ASCII`.
+    `English.collator()` now returns `Some(&ENGLISH_DICTIONARY_COLLATOR)`
+    (was `None`).
+  * `ContractionTokenizer` handles English contractions ("don't" →
+    ["do", "n't"], "won't" → ["will", "n't"], "shan't" →
+    ["shall", "n't"], plus `'ll` / `'ve` / `'re` / `'d` / `'s` / `'m`
+    suffixes). Two presets: `STANDARD` (preserves fragments),
+    `NORMALIZED` (expands to full-word forms). Handles ASCII `'`
+    and typographic `'`. Both owned `String` and borrowed `&'a str`
+    tokenization surfaces.
+  * New `ENGLISH_WITH_CONTRACTIONS` constant. Backwards-compat:
+    `ENGLISH`, `PORTER_STEMMER`, `PORTER2_STEMMER`, `ENGLISH_PORTER2`
+    unchanged.
+
+- **`stringcheese-lang`: static language-pack registry via linkme.**
+  New `registry` module with `language(code) -> Option<&'static dyn
+  Language>` and `languages()` iteration. Language packs opt in via
+  the new `register_language!` macro. Uses `linkme`
+  (`#[distributed_slice]`) for compile-time collection with zero
+  runtime constructor cost. BCP-47 codes matched case-insensitively;
+  full BCP-47 fallback (`pt-BR → pt`) deferred. All four language
+  packs (`stringcheese-en`, `-de`, `-fr`, `-ja`) self-register.
+  `#![forbid(unsafe_code)]` relaxed to `#![deny]` in the affected
+  crates (linkme emits an `unsafe fn __typecheck`); the sole
+  registration site carries an explicit `#[allow(unsafe_code)]`.
+
+- **`stringcheese-compare::levenshtein::simd`: wide-block Myers.**
+  Replaces the delegation-to-scalar in the three SIMD arch backends
+  with actual vector-intrinsic wide-block Myers:
+  * SSE2 — 128-bit (2 × u64 lanes) — m ≤ 128
+  * NEON — 128-bit (2 × u64 lanes) — m ≤ 128
+  * AVX2 — 256-bit (4 × u64 lanes) — m ≤ 256
+
+  Cross-lane carry via `_mm_slli_si128` / `vextq_u64` /
+  `_mm256_permute4x64_epi64`; multi-lane integer add uses
+  per-lane vector add plus scalar carry chain. Dispatcher picks
+  widest available; falls back to scalar Myers for m ≤ 64 and to
+  rolling-rows for m > register-width. Differential tests confirm
+  bit-for-bit agreement with scalar reference across every
+  arch × m combination. **Benchmarks**: 17-20× speedup on NEON at
+  m=96-128; 6-10× on SSE2 at m=96-128. m > 256 still uses
+  rolling-rows (block-form Hyyrö deferred).
+
 - **`stringcheese-manip`: `pipeline` module ships — all 15 modules real.**
   `TextPipeline` stages `Operation` trait objects into an ordered
   transformation IR that applies each in one pass over a ping-pong
