@@ -179,6 +179,7 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-en` | English pack: ~150-word stopword list, Porter (1980) stemmer, simple tokenizer, Soundex phonetic hookup |
 | `stringcheese-de` | German pack: ~200-word stopword list, Snowball German stemmer, simple tokenizer, Kölner Phonetik (Postel 1969) hookup |
 | `stringcheese-fr` | French pack: ~200-word stopword list, Snowball French stemmer, elision-aware tokenizer, PHONEX phonetic hookup |
+| `stringcheese-ja` | Japanese pack: ~120-word stopword list, character-type-based (dictionary-free) tokenizer, Kunrei-shiki (ISO 3602) romanization phonetic hookup, minimal polite/plural stemmer. First non-Latin-script pack — full morphological tokenization deferred (needs kuromoji-scale dictionary outside the wasm-first / offline-first envelope). |
 | `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
 | `stringcheese-tokenizer` | Tokenizer/segmenter trait crate + built-in tokenizers (whitespace, delimiter, identifier, grapheme, n-gram). Foundation for downstream subword algorithm crates and model packs. See [docs/design/tokenizers.md](./design/tokenizers.md). |
 | `stringcheese-tokenizer-bpe` | Data-neutral Byte-Pair Encoding (Sennrich, Haddow, Birch 2016) algorithm crate — caller supplies merge table and vocabulary. Substrate for the planned `stringcheese-tokenizer-tiktoken` and `-huggingface` model packs. |
