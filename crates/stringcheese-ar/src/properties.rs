@@ -18,6 +18,15 @@ fn ar_text() -> impl Strategy<Value = String> {
         .expect("static regex is valid")
 }
 
+/// Strategy for text spanning Arabic letters and all three digit blocks
+/// — used by the digit-normalization idempotence tests.
+fn ar_text_with_digits() -> impl Strategy<Value = String> {
+    prop::string::string_regex(
+        "[ابتثجحخدذرزسشصضطظعغفقكلمنهويى0123456789٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹ـ ]{0,40}",
+    )
+    .expect("static regex is valid")
+}
+
 /// Strategy for arbitrary short Arabic *words* (letters only, no
 /// separators, no diacritics — the shape a stemmer sees post-normalize).
 fn ar_word() -> impl Strategy<Value = String> {
@@ -68,6 +77,95 @@ proptest! {
             t.len(),
             out.len()
         );
+    }
+
+    /// Tatweel stripping is idempotent.
+    #[test]
+    fn normalizer_with_strip_tatweel_is_idempotent(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_strip_tatweel(true);
+        let once = n.normalize(&t);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(&once, &twice, "normalizer not idempotent on {:?}", t);
+    }
+
+    /// Tatweel stripping never grows the input (U+0640 is 2 bytes and
+    /// the rule deletes it; every other rewrite is same-length or a
+    /// deletion).
+    #[test]
+    fn normalizer_with_strip_tatweel_never_grows_input(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_strip_tatweel(true);
+        let out = n.normalize(&t);
+        prop_assert!(
+            out.len() <= t.len(),
+            "normalize({:?}) grew from {} to {} bytes",
+            t,
+            t.len(),
+            out.len()
+        );
+    }
+
+    /// Eastern → Western digit folding is idempotent.
+    #[test]
+    fn normalizer_with_western_digits_is_idempotent(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_western_digits(true);
+        let once = n.normalize(&t);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(&once, &twice, "normalizer not idempotent on {:?}", t);
+    }
+
+    /// Western → Eastern digit folding is idempotent (the output has
+    /// no ASCII digits left, so a second pass is a no-op).
+    #[test]
+    fn normalizer_with_eastern_digits_is_idempotent(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_eastern_digits(true);
+        let once = n.normalize(&t);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(&once, &twice, "normalizer not idempotent on {:?}", t);
+    }
+
+    /// After Eastern → Western folding, no Arabic-Indic or Extended
+    /// Arabic-Indic digit scalars remain.
+    #[test]
+    fn western_digit_folding_leaves_no_eastern_digits(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_western_digits(true);
+        let out = n.normalize(&t);
+        for c in out.chars() {
+            prop_assert!(
+                !matches!(c, '\u{0660}'..='\u{0669}' | '\u{06F0}'..='\u{06F9}'),
+                "eastern digit {:?} survived Eastern→Western folding of {:?}",
+                c,
+                t
+            );
+        }
+    }
+
+    /// After Western → Eastern folding, no ASCII digit scalars remain.
+    #[test]
+    fn eastern_digit_folding_leaves_no_ascii_digits(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_eastern_digits(true);
+        let out = n.normalize(&t);
+        for c in out.chars() {
+            prop_assert!(
+                !c.is_ascii_digit(),
+                "ascii digit {:?} survived Western→Eastern folding of {:?}",
+                c,
+                t
+            );
+        }
+    }
+
+    /// After tatweel stripping, no U+0640 scalars remain.
+    #[test]
+    fn strip_tatweel_leaves_no_tatweel(t in ar_text_with_digits()) {
+        let n = ArabicNormalizer::builder().with_strip_tatweel(true);
+        let out = n.normalize(&t);
+        for c in out.chars() {
+            prop_assert!(
+                c != '\u{0640}',
+                "tatweel survived stripping of {:?}",
+                t
+            );
+        }
     }
 
     // -----------------------------------------------------------------

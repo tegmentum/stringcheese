@@ -60,7 +60,12 @@
 //!   the full mapping.
 //! * **Arabic normalizer.** Strips harakat (short-vowel diacritics),
 //!   folds alef variants (`أ إ آ → ا`), folds `ى → ي`, and offers
-//!   opt-in teh-marbuta → heh folding as a builder flag. See
+//!   opt-in teh-marbuta → heh folding, tatweel (`ـ` U+0640) stripping,
+//!   and bidirectional digit folding
+//!   (Arabic-Indic `٠..٩` and Extended Arabic-Indic `۰..۹` ↔ Western
+//!   `0..9`) as builder flags. A ready-made
+//!   [`ArabicNormalizer::DEFAULT_FOR_SEARCH`] preset turns on tatweel
+//!   stripping for search / comparison callers. See
 //!   [`ArabicNormalizer`] for the (short) rule set.
 //! * **`SimpleTokenizer` wrapper.** Modern Standard Arabic uses ASCII
 //!   spaces between orthographic words, and every Arabic letter is
@@ -92,10 +97,6 @@
 //!   transliteration, not a sound-alike encoder. An `AraSoundex` or
 //!   ISRI-style phonetic encoder that collapses homophones would be
 //!   a useful alternate.
-//! * **Digit normalization.** Arabic uses both Eastern Arabic digits
-//!   (`٠١٢٣٤٥٦٧٨٩`) and Western Arabic digits (`0123456789`); a
-//!   normalizer variant that folds between them would help
-//!   numeric-search use-cases.
 //!
 //! # Quick-start
 //!
