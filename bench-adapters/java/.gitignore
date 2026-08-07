@@ -1,0 +1,38 @@
+# Maven build output.
+target/
+
+# Gradle output — not used by this adapter today, but reserved so a
+# future gradle build (JMH's `gradle-jmh-plugin` in particular) can be
+# added without a churn commit.
+.gradle/
+build/
+
+# IntelliJ IDEA project metadata.
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse project metadata.
+.project
+.classpath
+.settings/
+bin/
+
+# NetBeans.
+nbproject/private/
+nbactions.xml
+nb-configuration.xml
+
+# VS Code — only ignore per-user files; keep .vscode/tasks.json if a
+# maintainer commits it deliberately.
+.vscode/settings.json
+.vscode/launch.json
+
+# macOS / Linux / Windows filesystem cruft.
+.DS_Store
+Thumbs.db
+
+# JMH text-report artefacts if a user redirects a run's output here.
+*.jmh.log
+jmh-result.*

@@ -54,10 +54,10 @@ Every adapter in this subtree — whatever language it targets — MUST:
 | Python       | shipping (v0.2)     | `bench-adapters/python/`   | `python-Levenshtein`, `jellyfish`, `rapidfuzz` |
 | JavaScript   | shipping (v0.2)     | `bench-adapters/js/`       | `fastest-levenshtein`, `js-levenshtein`, `natural`, `string-similarity` |
 | Go           | shipping (v0.3)     | `bench-adapters/go/`       | `agnivade/levenshtein` 1.2, `hbollon/go-edlib` 1.7 |
-| Java         | planned (v0.2)      | `bench-adapters/java/`     | Apache Commons Text                    |
+| Java         | shipping (v0.3)     | `bench-adapters/java/`     | `apache-commons-text` 1.13, `info.debatty/java-string-similarity` 2.0 |
 | C++          | planned (v0.3)      | `bench-adapters/cpp/`      | `rapidfuzz-cpp`, `edlib`              |
 
-The Rust, Python, JavaScript, and Go slots ship in v0.1/v0.2/v0.3.
+The Rust, Python, JavaScript, Go, and Java slots ship in v0.1/v0.2/v0.3.
 The remaining slots are recorded here so that the directory layout is
 committed early and the sequencing matches `docs/DESIGN.md`'s
 "Implementation Sequence".
@@ -128,6 +128,24 @@ go test -bench=. -benchmem ./bench/...
 
 See `bench-adapters/go/README.md` for prerequisites, per-adapter
 matrix, FFI-cost caveats, and the wazero / Component Model gap
+writeup.
+
+## Running Java adapters
+
+The Java adapter loads the same wasm component and follows the same
+`wasm-tools component unbundle` pattern as the Go adapter — Chicory
+(the pure-Java runtime the adapter uses) does not yet run Component
+Model wasm directly.
+
+```
+cd component/rust-host && cargo component build --release
+cd bench-adapters/java
+mvn -o test                                           # smoke tests
+mvn -o exec:exec -Djmh.args="LevenshteinBenchmark"    # JMH bench matrix
+```
+
+See `bench-adapters/java/README.md` for prerequisites, per-adapter
+matrix, FFI-cost caveats, and the Chicory / Component Model gap
 writeup.
 
 ## Non-goals
