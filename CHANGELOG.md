@@ -11,6 +11,123 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-pt` — Portuguese language pack.** New workspace crate.
+  ~203 stopwords (SER/ESTAR/HAVER/TER paradigms plus Snowball's ranked
+  head). Full Snowball Portuguese stemmer per the official `.sbl` spec —
+  three-branch RV computation, all suffix cascades (steps 1–5), postlude
+  accent-fold. Uses a placeholder mechanism `ã → a~` / `õ → o~` during
+  the cascade so nasals can't be chewed by unrelated `-o` suffixes; the
+  postlude walks the buffer forward and folds them back. PHONEX-Portuguese
+  encoder (`"phonex-pt"`) — Soundex-shaped 4-char key with Portuguese-tuned
+  preprocessing (Ç→S, LH→L, NH→N, CH→X, QU→K, `ão` collapse, accent fold).
+  Cedilla is intentionally lossless for the sibilant class: `Coração` and
+  `Coracao` produce different keys (the cedilla marks the /s/
+  pronunciation). Registered as `"pt"`. 40 Snowball reference pairs +
+  17 PHONEX pairs. pt-BR variant, Métaphone Português, Beider-Morse
+  Portuguese, CLDR-tailored Portuguese collator, verb-conjugation
+  lemmatization deferred.
+
+- **`stringcheese-tr` — Turkish language pack.** New workspace crate.
+  ~192 stopwords, Snowball Turkish stemmer with vowel-harmony rules.
+  First language pack with **Turkic case-fold semantics**: an internal
+  `case_fold` module implements `'I' → 'ı'`, `'İ' → 'i'` (distinct from
+  Unicode default). Rationale: pulling in `stringcheese-unicode`'s
+  ICU4X-backed Turkic path roughly doubles the pack's wasm footprint;
+  the internal path is a single scalar rewrite. Stemmer, phonetic
+  encoder, and `Language::is_stopword` all route through the Turkic
+  fold. Idempotence property-tested. `TurkishPhonex` encoder
+  (`"phonex-tr"`) — 4-char Soundex-shape with Turkic pre-fold and
+  ASCII narrowing (ç→c, ğ→g, ı→i, ö→o, ş→s, ü→u). 31 Snowball reference
+  pairs. **Deliberate deviation from Snowball spec:** the stemmer uses
+  a unified longest-match across all suffix tables per iteration rather
+  than the strict three-phase pipeline — better on ambiguous inputs
+  (`tuzsuz` picks `-suz` derivational over `-uz` nominal-verb), and
+  documented as a practical variant. Full-corpus Snowball cross-verify,
+  consonant-alternation restoration (kitab → kitap), and Métaphone-shaped
+  variable-length encoder deferred.
+
+- **`stringcheese-tokenizer-bpe`: full regex pre-tokenizer (Phase 2b).**
+  Replaces the `PreTokenizerRegex::Literal` stub with a real regex-backed
+  `RegexPreTokenizer`. Chose **`fancy-regex 0.14`** over `regex` (no
+  look-around) and `regex-lite` (no Unicode categories) — the tiktoken
+  canonical pattern needs both `\p{L}`/`\p{N}` and a `\s+(?!\S)`
+  negative-lookahead. Same crate upstream tiktoken's own Rust impl uses.
+  Compiles clean on `wasm32-wasip1`. New optional `dep:fancy-regex` gated
+  under the `std` feature. Exposes `RegexPreTokenizer::tiktoken_canonical()`,
+  `::gpt2()`, `split(text)`, `split_ranges(text)`. 21 new unit tests
+  covering word/punctuation/contraction/digit-group/Unicode/whitespace
+  splits and multi-byte byte-offset correctness. Byte-identical tiktoken
+  IDs still require real `mergeable_ranks` blobs plus the O(n log n)
+  encoder — this landing removes the last algorithmic blocker.
+
+- **`stringcheese-tokenizer-bpe`: O(n log n) linked-list + min-heap
+  encoder.** Replaces the naive O(n²) merge loop with an arena-based
+  linked list + `BinaryHeap<Reverse<HeapEntry>>` min-heap
+  (`(rank, left_idx, right_idx)` ordering). Lazy stale-entry deletion on
+  heap pop — verify both endpoints alive, `left.next == right`, and
+  merge-table rank unchanged; discard otherwise. Zero new deps (uses
+  `alloc::collections::BinaryHeap`). Naive form retained as
+  `#[cfg(test)] fn merge_loop_naive` and used as the oracle: exhaustive
+  agreement over all 127 strings of length 0..=6 over `{a,b}` and all
+  121 strings of length 0..=4 over `{a,b,c}` with dense merge tables,
+  plus a 512-case proptest with random inputs × random tables, plus a
+  UTF-8 round-trip proptest. Measured speedup (release, `a^n` chained
+  merges): 3.8× at n=50, 7.4× at n=100, 14.2× at n=200, 27.3× at n=400
+  — doubles per doubling of n, matches asymptotic delta. Downstream
+  `stringcheese-tokenizer-tiktoken` still passes 24/24 tests.
+
+- **Wide-block SIMD Jaro and OSA on wasm32 (simd128).** Closes the SIMD
+  matrix on wasm32 — extends the wave-5 wasm Levenshtein pattern to the
+  two other SIMD-dispatched families. Jaro: 16-byte-block via
+  `u8x16_splat` + `u8x16_eq` + `u8x16_bitmask` (which returns `u16`
+  directly on wasm, unlike SSE2's i32). OSA: Hyyrö 2003 bit-parallel
+  wide-block for `64 < m ≤ 128` on v128, with cross-lane carry via
+  `u64x2_extract_lane` / `u64x2_replace_lane` scalar hop (wasm SIMD has
+  no whole-register byte-shift on the u64 lane dimension). 128-bit
+  big-integer add via lane-extract → scalar `overflowing_add` → lane-replace,
+  same shape as SSE2's `add128`. `v128_andnot(a, b) = a & ~b` (opposite of
+  SSE2's `_mm_andnot_si128(a, b) = ~a & b`), so operand order is reversed
+  relative to the SSE2 code. 27 new SIMD-gated tests; wasmtime-driven full
+  test run reports 616 passed. Block-form OSA for `m > 128` and relaxed-simd
+  extensions deferred.
+
+- **CDC SIMD scaffolding for all four rolling hashes.** New `simd` feature
+  in `stringcheese-cdc`. Adds `<hash>/simd/{mod, scalar, x86_sse2,
+  x86_avx2, aarch64_neon, wasm_simd128}.rs` scaffolding for Gear, Buzhash,
+  Polynomial, and Rabin. Runtime dispatcher (`is_x86_feature_detected!`)
+  routes `digest_of_slice` through the best available backend. **Present
+  landing ships the scalar core under `#[target_feature(enable = "...")]`
+  gating on every arch** — rolling hashes are strictly sequential
+  (`state_{n+1}` depends on `state_n`), so real per-byte SIMD lifts need
+  algorithm reformulation (Gear's block form `state_k = state_0 << k +
+  Σ G[b_i] << (k-1-i)` for k ≥ 64; Buzhash v128 rotate-XOR; `pclmulqdq`
+  GF(2) reduction for Rabin; AVX-512 IFMA Polynomial). Scaffolding + API
+  + differential-test harness (short random, chunk boundaries 1..129,
+  window-sized, 512 B–16 KiB blobs) is stable so real kernels drop in
+  without churn. Crate root relaxed `forbid(unsafe_code)` → `deny` for
+  the target_feature attribute. 87 crate tests pass; wasm build clean
+  under `RUSTFLAGS="-C target-feature=+simd128"`.
+
+- **Java bench adapter.** `bench-adapters/java/` — fifth non-Rust adapter
+  after Python (wave 3), JavaScript (wave 4), Go (wave 5). Uses
+  **Chicory 1.7.3** (dylibso pure-Java wasm runtime, no JNI) — chosen to
+  match the wazero-on-Go ethos: `mvn test` works on any JDK 17+ with no
+  platform-native library. Component-model workaround mirrors the Go
+  adapter: shell out to `wasm-tools component unbundle` on first
+  construction, extract the inner core module, run in Chicory with its
+  built-in `WasiPreview1` shim. Cache-once. `STRINGCHEESE_CORE_WASM` env
+  override. Five JMH benchmark classes (`LevenshteinBenchmark`,
+  `HammingBenchmark`, `JaroBenchmark`, `DamerauBenchmark`, `LcsBenchmark`)
+  crossing `length ∈ {8, 32, 128, 512, 2048} × regime ∈ {random, similar,
+  identical}`. SplitMix64 corpus generator ports byte-for-byte from the
+  Rust/Go/Python/JS side (via `Long.remainderUnsigned` for u64 semantics)
+  so cross-adapter datapoints share exact corpora. Compared against
+  `apache-commons-text` (Levenshtein, Jaro-Winkler, LongestCommonSubsequence)
+  and `info.debatty/java-string-similarity` (10+ metrics including OSA,
+  Jaro-Winkler, Damerau, LCS). `SmokeTest`: 14 subtests all pass.
+  Chicory-native Component Model, GraalVM native-image path, and
+  rapidfuzz-equivalent Java binding deferred.
+
 - **`stringcheese-tokenizer-tiktoken` — OpenAI tiktoken model tokenizer
   pack (Phase 3).** New workspace crate. Feature-gated variants:
   `cl100k_base` (default), `p50k_base`, `r50k_base`, `o200k_base`.
