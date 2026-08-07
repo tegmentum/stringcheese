@@ -72,6 +72,9 @@ use stringcheese_core::{
 
 use super::RollingHash;
 
+#[cfg(feature = "simd")]
+pub mod simd;
+
 /// The low 64 coefficients of the fixed reduction polynomial
 /// `P(x) = x^64 + x^4 + x^3 + x + 1`.
 ///

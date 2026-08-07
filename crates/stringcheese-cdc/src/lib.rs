@@ -41,12 +41,32 @@
 //! * **Rabin CDC** — the pre-`FastCDC` generation of content-defined chunking
 //!   algorithms. Superseded in practice by `FastCDC` on modern CPUs; deferred
 //!   as future work.
-//! * **SIMD backends** — every kernel here is scalar. SIMD variants live
-//!   under a future `simd` feature flag and must produce byte-identical
-//!   output to the scalar variant.
+//!
+//! # SIMD backends (optional, `simd` feature)
+//!
+//! Each rolling hash carries a sibling `simd` module tree under
+//! [`fingerprint::gear::simd`], [`fingerprint::buzhash::simd`],
+//! [`fingerprint::polynomial::simd`], and [`fingerprint::rabin::simd`]. Each
+//! tree exposes a `digest_of_slice` entry point that consumes a byte slice
+//! and returns the same digest a scalar
+//! [`RollingHash`]-driven `roll(byte)` sequence
+//! would produce for the same input. Runtime dispatch on `x86_64` picks
+//! AVX2 → SSE2; `aarch64` uses NEON; wasm32 uses SIMD128 when the
+//! `simd128` target-feature is enabled at build time. Byte-identical
+//! output against the scalar reference is the contract, anchored by
+//! per-backend differential tests over short, chunk-boundary,
+//! window-sized, and larger random inputs. See
+//! [`fingerprint::gear::simd`] for the shared unsafe policy.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// The crate is `deny(unsafe_code)` rather than `forbid(unsafe_code)` so
+// that the optional SIMD backends under `fingerprint::<hash>::simd`
+// (only compiled with `--features simd`) can carry a documented
+// module-scoped `#[allow(unsafe_code)]`. `deny` is enforced everywhere
+// else — every module outside the SIMD sub-trees is expected to be
+// safe Rust; the allow attribute must be added deliberately and comes
+// with a `reason` explaining the exception.
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 #[cfg(feature = "alloc")]

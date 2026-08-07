@@ -1,0 +1,32 @@
+//! wasm SIMD128-gated Rabin-fingerprint slice-batch backend for `wasm32`.
+//!
+//! Compiled only on `wasm32` and only when the `simd128` target-feature
+//! is enabled at compile time. See the [module docs][super] and the
+//! parallel Gear wasm backend at
+//! [`crate::fingerprint::gear::simd::wasm_simd128`] for the compile-time
+//! gating model and the shared `unsafe` policy.
+//!
+//! Rabin's `GF(2)` reduction requires a `pclmulqdq`-style carry-less
+//! multiply for a bit-parallel wide-block form; wasm SIMD128 does not
+//! surface that primitive on integer lanes today, so this backend is
+//! shipped as the scalar core under the wasm SIMD128 compile-time flag
+//! and preserves API uniformity across the four hashes.
+
+#![allow(
+    unsafe_code,
+    reason = "`#[target_feature]` functions are unsafe by declaration; this module is one of the four documented SIMD exceptions listed in the crate root."
+)]
+
+use super::scalar;
+
+/// wasm SIMD128-gated Rabin-fingerprint digest of a byte slice.
+///
+/// # Safety
+///
+/// See the module-level safety note — on `wasm32 + simd128` this is
+/// unconditionally safe.
+#[target_feature(enable = "simd128")]
+#[must_use]
+pub unsafe fn digest_of_slice(window: usize, bytes: &[u8]) -> u64 {
+    scalar::digest_of_slice(window, bytes)
+}

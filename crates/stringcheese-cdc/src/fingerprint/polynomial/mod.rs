@@ -53,6 +53,9 @@ use stringcheese_core::{
 
 use super::RollingHash;
 
+#[cfg(feature = "simd")]
+pub mod simd;
+
 /// The Mersenne-61 prime, `2^61 - 1`, used as the modulus.
 ///
 /// A Mersenne prime is chosen so that `x mod PRIME` can be implemented

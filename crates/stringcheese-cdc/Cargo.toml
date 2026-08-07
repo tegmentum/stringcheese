@@ -19,6 +19,20 @@ std = ["alloc", "stringcheese-core/std"]
 # `FastCdc`. Kernels, iterators, and the `RollingHash` trait itself are
 # available in a pure no-alloc build.
 alloc = ["stringcheese-core/alloc"]
+# Enables the SIMD backends for the rolling-hash fingerprints under
+# `fingerprint::<hash>::simd`. Off by default because the arch-gated
+# `#[target_feature]` scaffolding is only meaningful on `x86_64`,
+# `aarch64`, and `wasm32+simd128`; every backend is byte-identical to
+# the corresponding scalar `RollingHash::roll` sequence and is
+# differentially tested against it. No external dependencies —
+# intrinsics are consumed from `core::arch` only. Implies `std`
+# because runtime CPU-feature detection on `x86_64` and `aarch64` goes
+# through `std::arch::is_*_feature_detected!` (there is no
+# `core::arch` equivalent stable today); the `wasm32+simd128` path
+# gates on a compile-time `cfg` and does not need it, but the feature
+# is unified for API-surface consistency. This matches the shape
+# `stringcheese-compare`'s `simd` feature declares.
+simd = ["std"]
 
 [dependencies]
 stringcheese-core = { workspace = true }

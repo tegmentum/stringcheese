@@ -49,6 +49,9 @@ use stringcheese_core::{
 
 use super::RollingHash;
 
+#[cfg(feature = "simd")]
+pub mod simd;
+
 /// The 256-entry Gear table.
 ///
 /// Generated at compile time via `SplitMix64` seeded with a fixed constant.
