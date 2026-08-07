@@ -18,7 +18,17 @@ std = ["alloc", "stringcheese-core/std", "stringcheese-unicode/std"]
 # Every built-in tokenizer and the trait output types require this;
 # without it the crate compiles as an empty no-alloc surface for
 # embedded builds that only need to link against the substrate crates.
-alloc = ["stringcheese-core/alloc", "stringcheese-unicode/alloc"]
+#
+# The `stringcheese-unicode` word- and sentence-segmentation features
+# are forwarded here so the built-in [`WordSegmenter`] and
+# [`SentenceSegmenter`] compile — they delegate to the UAX #29
+# iterators in `stringcheese-unicode`.
+alloc = [
+    "stringcheese-core/alloc",
+    "stringcheese-unicode/alloc",
+    "stringcheese-unicode/word-segmentation",
+    "stringcheese-unicode/sentence-segmentation",
+]
 
 [dependencies]
 stringcheese-core = { workspace = true }

@@ -60,5 +60,5 @@ pub use traits::{Encoding, Tokenizer};
 #[cfg(feature = "alloc")]
 pub use builtin::{
     DelimiterTokenizer, GraphemeSegmenter, IdentifierMode, IdentifierTokenizer, NgramSegmenter,
-    WhitespaceTokenizer,
+    SentenceSegmenter, WhitespaceTokenizer, WordSegmenter,
 };

@@ -158,11 +158,14 @@ pub extern "C" fn probe_stringcheese_compare() -> usize {
 // -----------------------------------------------------------------
 // stringcheese-unicode (normalization, graphemes, diacritics).
 //
-// Note: `case_fold` is behind the `case-fold` + `compiled-case-data`
-// features, which this probe deliberately does NOT enable. Baking the
-// ICU case-mapping tables into the binary costs roughly 110 KB in a
-// `wasm-opt -Oz` build and only wasm callers who opt in should pay
-// that. The size-limit baseline this probe drives therefore reflects
+// Note: `case_fold` (behind `case-fold` + `compiled-case-data`) and
+// `words` / `sentences` (behind `word-segmentation` /
+// `sentence-segmentation`) are all deliberately excluded from this
+// probe's baseline. Baking the ICU case-mapping tables into the
+// binary costs roughly 110 KB, and adding the UAX #29
+// word- / sentence-break tables costs roughly 60 KB, in a
+// `wasm-opt -Oz` build. Only wasm callers who opt in should pay
+// those. The size-limit baseline this probe drives therefore reflects
 // the minimum useful surface (normalization + graphemes + diacritic
 // stripping) — see `docs/wasm-binary-size.md`.
 // -----------------------------------------------------------------
@@ -187,6 +190,19 @@ pub extern "C" fn probe_stringcheese_unicode() -> usize {
     {
         use stringcheese_unicode::case_fold;
         acc ^= case_fold(s).len();
+    }
+    // Optional: enable the `unicode-with-segmentation` probe feature
+    // (see `Cargo.toml`) to additionally reach `words` and
+    // `sentences`, forcing LTO to retain the `Word_Break` and
+    // `Sentence_Break` tables. Not part of the gated baseline for the
+    // same reason as `unicode-with-compiled-case-data` — the tracked
+    // number reflects the minimum useful surface, and both features
+    // are individually toggleable by size-conscious wasm callers.
+    #[cfg(feature = "unicode-with-segmentation")]
+    {
+        use stringcheese_unicode::{sentences, words};
+        acc ^= words(s).count();
+        acc ^= sentences(s).count();
     }
     black_box(acc)
 }

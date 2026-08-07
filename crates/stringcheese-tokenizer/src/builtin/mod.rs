@@ -7,22 +7,23 @@
 //! unsafe code.
 //!
 //! See `docs/design/tokenizers.md` § 4 for the full built-in surface
-//! planned for this crate. `WordSegmenter` / `SentenceSegmenter` are
-//! not yet included pending UAX #29 word- and sentence-boundary support
-//! in [`stringcheese-unicode`](stringcheese_unicode); the stubs in
-//! [`crates/stringcheese-manip/src/split/mod.rs`][deferred] point at
-//! the same upstream gap.
-//!
-//! [deferred]: https://github.com/tegmentum/stringcheese/blob/main/crates/stringcheese-manip/src/split/mod.rs
+//! planned for this crate. [`WordSegmenter`] and [`SentenceSegmenter`]
+//! delegate to the UAX #29 iterators exposed by
+//! [`stringcheese_unicode`] (features `word-segmentation` and
+//! `sentence-segmentation`, both default-on).
 
 pub mod delimiter;
 pub mod grapheme;
 pub mod identifier;
 pub mod ngram;
+pub mod sentence;
 pub mod whitespace;
+pub mod word;
 
 pub use delimiter::DelimiterTokenizer;
 pub use grapheme::GraphemeSegmenter;
 pub use identifier::{IdentifierMode, IdentifierTokenizer};
 pub use ngram::NgramSegmenter;
+pub use sentence::SentenceSegmenter;
 pub use whitespace::WhitespaceTokenizer;
+pub use word::WordSegmenter;

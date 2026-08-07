@@ -75,6 +75,17 @@ unicode-with-compiled-case-data = [
     "stringcheese-unicode/case-fold",
     "stringcheese-unicode/compiled-case-data",
 ]
+# Experimental variant: additionally enables the UAX #29 word- and
+# sentence-segmentation surface so a probe that references `words` /
+# `sentences` can measure the `Word_Break` / `Sentence_Break` table
+# cost that a caller using the crate's defaults would pay. Not gated
+# by CI; use locally only. Measured impact today: roughly +60 KB on
+# top of the minimum surface baseline.
+unicode-with-segmentation = [
+    "probe-stringcheese-unicode",
+    "stringcheese-unicode/word-segmentation",
+    "stringcheese-unicode/sentence-segmentation",
+]
 probe-stringcheese-phonetic = ["dep:stringcheese-phonetic"]
 probe-stringcheese-cdc      = ["dep:stringcheese-cdc"]
 probe-stringcheese-index    = ["dep:stringcheese-index"]

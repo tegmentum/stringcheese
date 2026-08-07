@@ -16,6 +16,13 @@
 //!   [`stringcheese_core::IndexableSequence`]. This is the crate that finally
 //!   lets a distance kernel compare "over graphemes": before it,
 //!   Levenshtein could only compare over bytes or Unicode scalar values.
+//! - **UAX #29 word segmentation** via [`mod@words`] (gated on
+//!   `feature = "word-segmentation"`, default on), with a matching
+//!   materialized [`WordSequence`]. Extends the "compare over units"
+//!   story from graphemes up to words.
+//! - **UAX #29 sentence segmentation** via [`mod@sentences`] (gated on
+//!   `feature = "sentence-segmentation"`, default on), with a matching
+//!   materialized [`SentenceSequence`].
 //! - **Diacritic stripping** via [`diacritics`] (NFD → drop combining
 //!   marks → NFC). This is a lossy operation; see the module documentation
 //!   for what it does and does not cover.
@@ -70,6 +77,16 @@
 //!   caller to construct a [`case_folding::CaseMapper`] from a runtime
 //!   `DataProvider` and use the `_with_mapper` variants
 //!   ([`case_folding::case_fold_with_mapper`], etc.).
+//! - `word-segmentation` (default: on) — enables the [`mod@words`]
+//!   module (UAX #29 word iteration, `WordSequence`,
+//!   `SplitWordBoundsBehavior`, and `word_bounds`). The underlying
+//!   `unicode-segmentation` crate pulls in the `Word_Break` tables
+//!   only when a word-boundary API is reached; toggling this feature
+//!   off drops both the module and (via LTO) that table pressure.
+//! - `sentence-segmentation` (default: on) — enables the
+//!   [`mod@sentences`] module (UAX #29 sentence iteration and
+//!   `SentenceSequence`). Independently toggleable from
+//!   `word-segmentation` so callers can shed either surface.
 //!
 //! The wasm-size gate documented in `docs/wasm-binary-size.md` measures
 //! the `--no-default-features --features std` configuration — the
@@ -116,6 +133,10 @@ pub mod graphemes;
 pub mod normalization;
 #[cfg(feature = "alloc")]
 pub mod preprocessing;
+#[cfg(all(feature = "alloc", feature = "sentence-segmentation"))]
+pub mod sentences;
+#[cfg(all(feature = "alloc", feature = "word-segmentation"))]
+pub mod words;
 
 #[cfg(all(feature = "alloc", test))]
 mod golden;
@@ -140,3 +161,9 @@ pub use graphemes::{GraphemeSequence, graphemes};
 pub use normalization::{Normalization, nfc, nfd, nfkc, nfkd};
 #[cfg(feature = "alloc")]
 pub use preprocessing::{PreprocessingPipeline, PreprocessingStep};
+#[cfg(all(feature = "alloc", feature = "sentence-segmentation"))]
+pub use sentences::{SentenceSequence, sentence_indices, sentences};
+#[cfg(all(feature = "alloc", feature = "word-segmentation"))]
+pub use words::{
+    SplitWordBoundsBehavior, WordSequence, word_bound_indices, word_bounds, word_indices, words,
+};

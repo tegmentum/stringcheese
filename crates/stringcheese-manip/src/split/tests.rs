@@ -258,6 +258,81 @@ mod grapheme_tests {
 }
 
 // -----------------------------------------------------------------
+// split_words / split_sentences
+// -----------------------------------------------------------------
+
+#[cfg(feature = "alloc")]
+mod word_tests {
+    use super::*;
+
+    #[test]
+    fn split_words_ascii_whitespace() {
+        let ws: alloc::vec::Vec<&str> = split_words("hello world").collect();
+        assert_eq!(ws, ["hello", "world"]);
+    }
+
+    #[test]
+    fn split_words_treats_apostrophe_as_joiner() {
+        let ws: alloc::vec::Vec<&str> = split_words("don't stop").collect();
+        assert_eq!(ws, ["don't", "stop"]);
+    }
+
+    #[test]
+    fn split_words_drops_punctuation() {
+        let ws: alloc::vec::Vec<&str> = split_words("hello, world!").collect();
+        assert_eq!(ws, ["hello", "world"]);
+    }
+
+    #[test]
+    fn split_words_numeric_decimal_is_one_word() {
+        let ws: alloc::vec::Vec<&str> = split_words("3.14 pi").collect();
+        assert_eq!(ws, ["3.14", "pi"]);
+    }
+
+    #[test]
+    fn split_words_empty_input() {
+        let ws: alloc::vec::Vec<&str> = split_words("").collect();
+        assert!(ws.is_empty());
+    }
+}
+
+#[cfg(feature = "alloc")]
+mod sentence_tests {
+    use super::*;
+
+    #[test]
+    fn split_sentences_two_pieces() {
+        let ss: alloc::vec::Vec<&str> = split_sentences("Hello. World.").collect();
+        assert_eq!(ss.len(), 2);
+    }
+
+    #[test]
+    fn split_sentences_question_and_exclamation() {
+        let ss: alloc::vec::Vec<&str> = split_sentences("Yes! No? Maybe.").collect();
+        assert_eq!(ss.len(), 3);
+    }
+
+    #[test]
+    fn split_sentences_numeric_decimal_not_a_break() {
+        let ss: alloc::vec::Vec<&str> = split_sentences("Pi is 3.14 today.").collect();
+        assert_eq!(ss.len(), 1);
+    }
+
+    #[test]
+    fn split_sentences_round_trip() {
+        let s = "One. Two. Three.";
+        let joined: alloc::string::String = split_sentences(s).collect();
+        assert_eq!(joined, s);
+    }
+
+    #[test]
+    fn split_sentences_empty_input() {
+        let ss: alloc::vec::Vec<&str> = split_sentences("").collect();
+        assert!(ss.is_empty());
+    }
+}
+
+// -----------------------------------------------------------------
 // Property tests
 // -----------------------------------------------------------------
 

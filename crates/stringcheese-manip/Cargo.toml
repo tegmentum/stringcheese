@@ -27,6 +27,8 @@ std = [
 alloc = [
     "stringcheese-core/alloc",
     "stringcheese-unicode/alloc",
+    "stringcheese-unicode/word-segmentation",
+    "stringcheese-unicode/sentence-segmentation",
     "stringcheese-compare/alloc",
 ]
 

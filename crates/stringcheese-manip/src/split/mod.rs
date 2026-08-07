@@ -26,6 +26,13 @@
 //!   wrapper when you only need the delimiter-agnostic line split.
 //! - **Extended grapheme clusters** ([`split_graphemes`]) delegates to
 //!   [`stringcheese_unicode::graphemes()`] and returns one item per grapheme.
+//! - **UAX #29 words** ([`split_words`]) delegates to
+//!   [`stringcheese_unicode::words()`] — the same UAX #29 word-boundary
+//!   rules that treat `"don't"` as one word and drop punctuation.
+//! - **UAX #29 sentences** ([`split_sentences`]) delegates to
+//!   [`stringcheese_unicode::sentences()`] — the sentence-boundary
+//!   rules that split on `.`, `!`, `?` with numeric-decimal /
+//!   abbreviation carve-outs.
 //!
 //! # Allocation profile
 //!
@@ -36,11 +43,12 @@
 //! # `no_std`
 //!
 //! Every separator-, predicate-, whitespace-, and line-based split is
-//! available with no features enabled. [`split_graphemes`] is gated on
-//! `feature = "alloc"`; word- and sentence-level splits (`split_words`
-//! / `split_sentences`) are not yet implemented — `stringcheese-unicode`
-//! does not currently expose UAX #29 word or sentence segmentation. See
-//! the deferred stubs at the bottom of `split/mod.rs`.
+//! available with no features enabled. [`split_graphemes`],
+//! [`split_words`], and [`split_sentences`] are gated on
+//! `feature = "alloc"` — plus, respectively, the underlying
+//! `stringcheese-unicode/word-segmentation` and
+//! `stringcheese-unicode/sentence-segmentation` features (both on by
+//! default in this crate's `default` feature set).
 
 #[cfg(test)]
 mod tests;
@@ -308,14 +316,58 @@ pub fn split_graphemes(s: &str) -> impl Iterator<Item = &str> {
     stringcheese_unicode::graphemes(s)
 }
 
-// UAX #29 word segmentation. `stringcheese-unicode` does not currently
-// expose a `words()` iterator, so this function is deferred until the
-// upstream API lands. See <https://www.unicode.org/reports/tr29/>.
-//
-// pub fn split_words(s: &str) -> impl Iterator<Item = &str> { ... }
+/// Splits `s` into UAX #29 words, dropping whitespace and
+/// punctuation.
+///
+/// Delegates to [`stringcheese_unicode::words()`]. Under UAX #29,
+/// `"don't"` is a single word (the apostrophe is a joiner), `"3.14"`
+/// is a single word (numeric decimal), and stray punctuation such as
+/// `","` or `"!"` is *not* yielded — see
+/// [`stringcheese_unicode::word_bounds`] if you want the
+/// input-preserving view.
+///
+/// Zero allocation — the yielded `&str`s are sub-slices of the input.
+///
+/// # Examples
+///
+/// ```
+/// use stringcheese_manip::split;
+///
+/// let ws: Vec<&str> = split::split_words("don't stop!").collect();
+/// assert_eq!(ws, vec!["don't", "stop"]);
+///
+/// let ws: Vec<&str> = split::split_words("hello, world").collect();
+/// assert_eq!(ws, vec!["hello", "world"]);
+/// ```
+#[cfg(feature = "alloc")]
+pub fn split_words(s: &str) -> impl Iterator<Item = &str> {
+    stringcheese_unicode::words(s)
+}
 
-// UAX #29 sentence segmentation. Deferred for the same reason as
-// `split_words` — `stringcheese-unicode` does not currently expose a
-// sentence iterator.
-//
-// pub fn split_sentences(s: &str) -> impl Iterator<Item = &str> { ... }
+/// Splits `s` into UAX #29 sentences.
+///
+/// Delegates to [`stringcheese_unicode::sentences()`]. Boundaries are
+/// inferred from the Unicode `Sentence_Break` property — mostly `.`,
+/// `!`, and `?` followed by whitespace, with carve-outs for numeric
+/// decimals (`"3.14"` does not break). Trailing whitespace between
+/// sentences belongs to the *earlier* sentence's yielded slice, so
+/// the concatenation of the yielded sentences reconstructs the input.
+///
+/// Zero allocation — the yielded `&str`s are sub-slices of the input.
+///
+/// # Examples
+///
+/// ```
+/// use stringcheese_manip::split;
+///
+/// let ss: Vec<&str> = split::split_sentences("Hello. World.").collect();
+/// assert_eq!(ss.len(), 2);
+///
+/// // Numeric decimal is not a sentence break.
+/// let ss: Vec<&str> = split::split_sentences("Pi is 3.14 today.").collect();
+/// assert_eq!(ss.len(), 1);
+/// ```
+#[cfg(feature = "alloc")]
+pub fn split_sentences(s: &str) -> impl Iterator<Item = &str> {
+    stringcheese_unicode::sentences(s)
+}
