@@ -11,6 +11,100 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-nl` — Dutch language pack.** New workspace crate. ~174
+  stopwords, Snowball Dutch stemmer per the official spec: R1/R2 regions,
+  `ij` digraph handling (only marked as consonant-like `I` when strictly
+  between two vowels — `keien → kei`, `mijn → mijn`), `-en`/`-e` cascade
+  with `gem` guard on `-en`, undouble step scoped to `kk`/`dd`/`tt`,
+  Step 3b derivational suffixes that preserve `-cht`. PHONEX-Dutch
+  encoder (`"phonex-nl"`) — Soundex-shape with Dutch-tuned preprocessing
+  (`ij → I` collapse so `mijn` and `min` share a key; `sch → sX`
+  sibilant+velar; `ch → g` velar; labial merger `B/P/F/V/W`). Registered
+  as `"nl"`. 37 Snowball reference pairs + 20 PHONEX pairs. Belgian-Dutch
+  (nl-BE), Afrikaans, Métaphone Dutch, compound-noun splitting, CLDR-tailored
+  Dutch collator deferred.
+
+- **`stringcheese-ru` — Russian language pack.** New workspace crate.
+  **First Cyrillic-script pack.** ~235 stopwords (Cyrillic, plain-е form).
+  Snowball Russian stemmer per the official spec — RV region, four steps
+  (perfective gerund, reflexive, adjectival, verb + noun), `ё → е`
+  precomputation runs before every stem call and every stopword
+  comparison so `ёлка`/`елка` and `ЁЖ`/`еж` collapse identically. **All
+  suffix/region/stopword arithmetic runs on `Vec<char>`** (never raw
+  bytes) since every Cyrillic scalar is 2 bytes in UTF-8 and byte offsets
+  would silently corrupt boundaries — this is the pattern the next
+  Cyrillic pack (Ukrainian, Serbian, Bulgarian, ...) should copy. Case-fold
+  uses `char::to_lowercase` (no Turkic-style tailoring needed).
+  Transliteration encoder: **GOST 7.79-2000 System B** (deterministic
+  Cyrillic → ASCII: `ж → zh`, `ч → ch`, `ш → sh`, `щ → shh`, `ц → cz`,
+  `ъ → ''`, `ь → '`, `э → e'`, `ы → y`, `ё → yo`, `ю → yu`, `я → ya`).
+  Adapter `"gost-7.79-b"`. Registered as `"ru"`. 45 Snowball reference
+  pairs + 24 transliteration pairs (all 33 modern letters exercised).
+  Ukrainian/Belarusian/Serbian/Bulgarian/Macedonian packs, Slavic-Metaphone,
+  ISO 9 System A transliteration, pre-1918 orthography deferred.
+
+- **UAX #29 word and sentence segmentation.** New `words` and `sentences`
+  modules in `stringcheese-unicode`, feature-gated as `word-segmentation`
+  and `sentence-segmentation` (both default-on, individually toggleable
+  so wasm-size-conscious callers can shed either). `WordSequence` /
+  `SentenceSequence` types wrapping `unicode-segmentation`'s iterators;
+  `SplitWordBoundsBehavior` enum (`WordsOnly` vs `AllBoundaries`);
+  `words(text)`, `word_bounds(text)`, `word_indices(text)`,
+  `word_bound_indices(text)`, `sentences(text)`, `sentence_indices(text)`
+  helpers. `IndexableSequence` impls included. Wires up four downstream
+  stubs that were blocked on this API: `stringcheese-manip::split_words`,
+  `stringcheese-manip::split_sentences`, tokenizer `WordSegmenter`,
+  tokenizer `SentenceSegmenter`. Baseline wasm-size probe unchanged
+  (default probe doesn't enable the new features); a new
+  `unicode-with-segmentation` probe measures +59 KB for callers who
+  turn them on. UAX #14 line breaking and locale-tailored break rules
+  (`ja`, `ar`, Thai lexicon-based) deferred.
+
+- **`stringcheese-ja`: Hepburn romanization and kana normalization.**
+  Extends the Japanese pack with the two follow-ups the crate docs
+  explicitly named. `HepburnRomaji` — Modified Hepburn (macrons `ō`/`ū`
+  on long vowels, `ei` for `えい`, `oo → ō` for same-vowel doubles,
+  small-tsu geminates, small-y digraphs, shibboleths `shi`/`chi`/`tsu`/
+  `fu`/`ja`). `JapaneseWithHepburn` sibling type, `Japanese::with_hepburn_encoder()`
+  const factory, `JAPANESE_WITH_HEPBURN` const. Kunrei-shiki remains
+  the default `Language::phonetic_encoder`. `KanaNormalizer` builder
+  with 4 opt-in flags: full-width↔half-width ASCII, half-width→full-width
+  katakana (incl. dakuten/handakuten combining), katakana↔hiragana fold,
+  dakuten canonicalization (`<base> + U+3099 → precomposed`). Default
+  preset applies only the two lossless passes (half-width widening +
+  dakuten canonicalization). 46 Hepburn reference pairs. Word-boundary
+  macrons (requires morphological analyzer), Nihon-shiki as a third
+  romanization, full NFKC integration deferred.
+
+- **DIN 5007 German collators.** New `GermanCollator` in
+  `stringcheese-de` with two DIN 5007 presets — variant 1 (dictionary,
+  umlauts fold to base: `ä = a`, `ö = o`, `ü = u`, `ß = ss`; "Bär" sorts
+  with "Bar") and variant 2 (phonebook, umlauts expand to digraphs:
+  `ä = ae`, `ö = oe`, `ü = ue`, `ß = ss`; "Bär" sorts as "Baer"). Preset
+  consts `GermanCollator::DIN_5007_DICTIONARY`, `::DIN_5007_PHONEBOOK`,
+  `::ASCII`. `GermanCollatorChoice` enum field on `German` with
+  `with_din5007_variant1()`, `::with_din5007_variant2()`, `::with_ascii_collator()`
+  const constructors; new `GERMAN_WITH_DIN5007_DICTIONARY` and
+  `GERMAN_WITH_DIN5007_PHONEBOOK` consts. **On by default** (compile-time
+  tables, no ICU4X, zero new deps) — unlike the English CLDR collator
+  which is opt-in behind a feature. Reference orderings covered:
+  Müller/Muller/Munk/Muster divergence, Straße/Strasse identity,
+  Bär/Bar/Baer three-way. Austrian ordering variants, Swiss no-ß
+  ordering, CLDR-de opt-in feature deferred.
+
+- **`stringcheese-ar`: digit normalization and tatweel handling.**
+  Three new opt-in flags on `ArabicNormalizer::builder()`:
+  `with_western_digits(bool)` (Arabic-Indic `٠-٩` U+0660..=U+0669 and
+  Extended Arabic-Indic `۰-۹` U+06F0..=U+06F9 → Western `0-9`),
+  `with_eastern_digits(bool)` (reverse direction), `with_strip_tatweel(bool)`
+  (remove `ـ` U+0640). New `ArabicNormalizer::DEFAULT_FOR_SEARCH` preset
+  turns tatweel stripping on. **No default behavior change** — free
+  `normalize()`, `::new()`, `::default()`, and all `Language` paths on
+  `ARABIC` remain byte-for-byte identical. Read-back accessors added.
+  Alef-hamza on waw/yeh/standalone, yeh carrier variants (Persian yeh
+  U+06CC, yeh barree U+06D2), Persian-kaf (`ک` U+06A9 → `ك` U+0643),
+  ZWNJ handling deferred to a future `stringcheese-fa` pack.
+
 - **`stringcheese-pt` — Portuguese language pack.** New workspace crate.
   ~203 stopwords (SER/ESTAR/HAVER/TER paradigms plus Snowball's ranked
   head). Full Snowball Portuguese stemmer per the official `.sbl` spec —
@@ -444,6 +538,26 @@ bump; `0.x` versions are pre-stability.
   `crates/stringcheese-en/proptest-regressions/properties.txt`.
 
 ### Changed
+
+- **`stringcheese-cdc`: real vectorized Gear SIMD kernel.** Replaces
+  the wave-6 Gear scaffolding (scalar-under-`target_feature`) with a
+  true block-reformulation kernel per the invariant `state_k = state_0 << k
+  + Σ G[b_i] << (k-1-i)` (for k=64, `state_0 << 64 = 0` in u64, so each
+  64-byte block hashes independently). AVX2 backend: 16 iterations × 4
+  bytes via `_mm256_i32gather_epi64` from `GEAR_TABLE`,
+  `_mm256_sllv_epi64` per-lane pre-shift `[3,2,1,0]`,
+  `_mm256_slli_epi64::<4>` Horner advance, `_mm256_add_epi64` fold. NEON
+  backend: 32 iterations × 2 bytes via scalar-side gather packed with
+  `vsetq_lane_u64`, `vshlq_u64` pre-shift, `vshlq_n_u64::<2>` Horner,
+  `vaddq_u64` fold. wasm SIMD128 backend: 32 iterations × 2 bytes via
+  scalar-side `(g0<<1, g1)` pack, `u64x2_shl(_, 2)` Horner, `u64x2_add`
+  fold. SSE2 stays scalar (no gather, no per-lane variable shift before
+  SSE4.1). Non-64-byte-aligned tail falls back to the scalar recurrence.
+  Measured on Apple M-series: **2.09× at 16 KiB, 1.48× at 1 MiB** vs
+  the scalar baseline. Byte-identical output vs scalar reference over
+  all boundary sizes (63/64/65/127/128/129 + larger blobs). Buzhash,
+  Polynomial, Rabin real kernels remain scaffolding — deferred to
+  wave 8.
 
 - **`stringcheese-unicode`: wasm baseline shrunk from 213 KB to 190 KB
   (11 %).** New `case-fold` feature (default on) and
