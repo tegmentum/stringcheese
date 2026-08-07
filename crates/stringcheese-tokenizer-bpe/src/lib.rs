@@ -6,8 +6,17 @@
 //! the pre-configured `OpenAI` variants (`cl100k_base`, `o200k_base`,
 //! `r50k_base`, ...) live in the downstream
 //! `stringcheese-tokenizer-tiktoken` crate (Phase 3, not yet
-//! implemented), and Hugging Face `tokenizer.json` parsing lives in
-//! `stringcheese-tokenizer-huggingface` (Phase 5).
+//! implemented).
+//!
+//! # Hugging Face `tokenizer.json`
+//!
+//! Behind the `hf-tokenizer` Cargo feature this crate also ships a
+//! parser for the Hugging Face `tokenizer.json` format (see
+//! [`hf`]). The parser materialises the BPE slice of the spec —
+//! model, merges, vocabulary, added special tokens, and a
+//! `Split`/`Regex` pre-tokenizer — into a runnable [`BpeTokenizer`].
+//! Feature-gated so the extra `serde` / `serde_json` dependency does
+//! not weigh on callers who only want the algorithm core.
 //!
 //! # Algorithm
 //!
@@ -76,7 +85,13 @@ mod bpe;
 // enabled — the `no_std` build of this crate keeps its footprint at
 // the `PreTokenizerRegex::Literal` fallback.
 #[cfg(feature = "std")]
-mod pre_tokenizer;
+pub(crate) mod pre_tokenizer;
+
+// Hugging Face `tokenizer.json` parser and adapter. The full module
+// docs (support matrix, error taxonomy, deferred features) live in
+// `src/hf.rs`; here we only gate compilation on the crate feature.
+#[cfg(feature = "hf-tokenizer")]
+pub mod hf;
 
 #[cfg(feature = "alloc")]
 pub use bpe::{

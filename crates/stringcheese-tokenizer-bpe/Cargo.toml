@@ -22,6 +22,12 @@ std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std", "dep:fanc
 # vocabulary tables, merge maps); the crate compiles to an empty
 # surface without this feature.
 alloc = ["stringcheese-core/alloc", "stringcheese-tokenizer/alloc"]
+# Hugging Face `tokenizer.json` parser (see `src/hf.rs`). Implies
+# `std` because the JSON parser (`serde_json`) and the regex-based
+# pre-tokenizer both require the standard library. Callers on
+# `no_std` targets need only omit the feature; the rest of the crate
+# is unaffected.
+hf-tokenizer = ["std", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -35,6 +41,16 @@ stringcheese-tokenizer = { workspace = true }
 # `src/pre_tokenizer.rs` for the full rationale. Only compiled when
 # `std` is enabled (fancy-regex itself requires the standard library).
 fancy-regex = { version = "0.14", default-features = false, features = ["std", "unicode"], optional = true }
+
+# JSON parser for the Hugging Face `tokenizer.json` loader (see
+# `src/hf.rs`). Only compiled when the `hf-tokenizer` feature is on.
+# Both crates use their default (std) feature set — the loader itself
+# requires `std` for `fancy-regex` and for `std::error::Error` impls
+# on the returned errors, so pulling in `serde`/`serde_json` with
+# their standard features is not a footprint regression relative to
+# the surrounding module.
+serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["std"], optional = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is

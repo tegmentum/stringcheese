@@ -189,17 +189,32 @@ impl BpeVocabulary {
 
 /// A pre-tokenizer pattern.
 ///
-/// Phase 1 of the BPE algorithm crate only supports a **literal string
-/// separator** or **no pattern**. Full regex support — required to match
-/// tiktoken's `cl100k_base` pre-tokenizer verbatim — arrives with Phase
-/// 2b once the workspace commits to a specific regex backend. See
-/// `docs/design/tokenizers.md` § 5.1 for the shape of that machinery.
+/// Two shapes are supported:
+///
+/// * [`Self::Literal`] — split at every occurrence of a fixed
+///   separator string. The separator is discarded; adjacent matches
+///   collapse; leading and trailing matches yield no empty word.
+///   Available in every build; the fallback for `no_std` /
+///   `alloc`-only environments where the full regex backend is not
+///   linked.
+/// * [`Self::Regex`] — apply a compiled
+///   [`RegexPreTokenizer`](crate::pre_tokenizer::RegexPreTokenizer),
+///   taking every non-overlapping match as a word. This is the shape
+///   needed to reproduce tiktoken / Hugging Face pre-tokenization; only
+///   available when the `std` feature is on because the underlying
+///   `fancy-regex` backend requires `std::error::Error`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PreTokenizerRegex {
     /// Split at every occurrence of a literal string. Adjacent separator
     /// matches collapse; leading and trailing matches are dropped;
     /// nothing empty is yielded.
     Literal(String),
+    /// Split by matching a compiled regex against the input; each
+    /// match becomes one word. Regions between matches are silently
+    /// dropped (matching tiktoken / HF `re.findall(...)` semantics).
+    #[cfg(feature = "std")]
+    Regex(crate::pre_tokenizer::RegexPreTokenizer),
 }
 
 impl PreTokenizerRegex {
@@ -207,6 +222,14 @@ impl PreTokenizerRegex {
     #[must_use]
     pub fn literal(s: impl Into<String>) -> Self {
         Self::Literal(s.into())
+    }
+
+    /// Wraps a compiled [`RegexPreTokenizer`](crate::pre_tokenizer::RegexPreTokenizer)
+    /// as a pre-tokenizer pattern.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn regex(regex: crate::pre_tokenizer::RegexPreTokenizer) -> Self {
+        Self::Regex(regex)
     }
 }
 
@@ -715,6 +738,18 @@ struct Word<'a> {
 
 fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<Word<'a>> {
     let mut out = Vec::new();
+    // A compiled-regex pre-tokenizer walks the input via `find_iter`
+    // and emits every non-overlapping match as its own word (matching
+    // tiktoken's `re.findall(...)` semantics). This is the shape used
+    // by the HF `tokenizer.json` loader (`src/hf.rs`) and by any
+    // caller that has compiled the tiktoken canonical pattern.
+    #[cfg(feature = "std")]
+    if let Some(PreTokenizerRegex::Regex(pre)) = pattern {
+        for (offset, text) in pre.split(text) {
+            out.push(Word { offset, text });
+        }
+        return out;
+    }
     match pattern {
         Some(PreTokenizerRegex::Literal(sep)) if !sep.is_empty() => {
             let sep_bytes = sep.as_bytes();
