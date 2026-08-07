@@ -11,6 +11,118 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-uk` — Ukrainian language pack.** New workspace crate.
+  **Second Cyrillic-script pack** (after Russian). ~218 stopwords in
+  Cyrillic. Light suffix-stripping stemmer (no canonical Snowball
+  Ukrainian exists) with an RV region guard and a theme-vowel context
+  predicate on past-tense endings (`-в`, `-ла`, `-ло`, `-ли`) to prevent
+  noun `столи` from misfiring as verbal. Handles extended letters `ґ`
+  (U+0491), `є` (U+0454), `і` (U+0456), `ї` (U+0457) that Russian lacks;
+  documents that Ukrainian also lacks Russian's `ъ`/`ы`/`ё`/`э`.
+  All suffix arithmetic runs on `Vec<char>` per the wave-7 Cyrillic
+  pattern. Transliteration: **GOST 7.79-2000 System B, Ukrainian
+  adaptation** (adapter `"gost-7.79-b-uk"`). Ukrainian-specific
+  divergences from the Russian mapping: `г → h`, `ґ → g` (Russian
+  collapses both), `є → ye`, `ї → yi`, `и → y` (Ukrainian и is /ɪ/),
+  `х → kh`, `щ → shch` (vs Russian's `shh`). Registered as `"uk"`.
+  39 Snowball reference pairs + 21 transliteration pairs (all 33 letters
+  exercised). Verb-aspect prefix stripping, ISO 9 System A / Ukrainian
+  government 2010 transliterations, typographic apostrophe U+2019
+  recognition, and Belarusian/Bulgarian/Macedonian sibling packs deferred.
+
+- **`stringcheese-sr` — Serbian dual-script language pack.** New workspace
+  crate. **First dual-script pack** — Serbian is written in both Cyrillic
+  (Vukovica) and Latin (Gaj's), and both scripts are equally valid.
+  ~200 stopwords across two lists (`STOPWORDS_CYR` + `STOPWORDS_LAT`);
+  `is_stopword` looks up either script. Bijective `to_latin()` /
+  `to_cyrillic()` transliteration in a new `scripts` module: `нј → nj`,
+  `љ → lj`, `џ → dž`, `ђ → đ`, `ч → č`, `ц → c`, `ш → š`, `ž → ž`,
+  `ћ → ć`, `ј → j` (and reverse, correctly handling `nj`/`lj`/`dž`
+  digraph reassembly). **Snowball approach: normalize Cyrillic → Latin
+  via `to_latin`, run one Latin suffix table, transliterate back.**
+  Documented in `snowball.rs`. None of the ~65 shipped suffixes begin
+  with `j`/`ž`, so stripping cannot split `lj`/`nj`/`dž`. Ekavian vs.
+  ijekavian treated as distinct opaque forms; both variants of divergent
+  stopwords (`gde`/`gdje`, `uvek`/`uvijek`) live in each list.
+  Phonetic encoder: ships `to_latin` as `"sr-latin"` — unifies records
+  under either script by lowercase Latin key. Registered as `"sr"`.
+  30 Snowball pairs + 22 script conversion pairs (all digraphs, both
+  cases). Bijection caveat on plain-Cyrillic `лј`/`нј`/`дж` non-digraph
+  sequences captured as a proptest regression seed. Croatian, Bosnian,
+  Montenegrin (adds `с́`/`з́`) sibling packs, explicit ijekavian → ekavian
+  fold adapter, consonant alternation modelling (`k → č`, `g → ž`) deferred.
+
+- **`stringcheese-fa` — Persian (Farsi) language pack.** New workspace
+  crate. Arabic-script but Persian-tuned. ~177 stopwords. Handles Persian
+  additions to the Arabic alphabet: **پ چ ژ گ**. `PersianNormalizer`
+  builder with six opt-in flags: `with_arabic_yeh_to_persian` (default
+  true, Arabic `ي` U+064A → Persian `ی` U+06CC), `with_arabic_kaf_to_persian`
+  (default true, `ك` U+0643 → `ک` U+06A9), `with_western_digits` (default
+  false, Extended Arabic-Indic `۰-۹` U+06F0..=U+06F9 → Western `0-9`),
+  `with_strip_zwnj` (default false — ZWNJ U+200C is semantic in Persian
+  compounds), `with_strip_tatweel` (default true), `with_heh_yeh_normalization`
+  (default false, `ۀ` U+06C0). **Tokenizer treats ZWNJ as word-internal
+  by default** — compound words like `می‌روم` stay as one token; caller
+  opts into ZWNJ-stripping normalization for search contexts. Light
+  suffix-stripping stemmer for nominal suffixes: `-ها`, `-های`, `-تر`,
+  `-ترین`, `-ام/-ای/-اش/-مان/-تان/-شان`. Phonetic encoder:
+  **Persian-Buckwalter** — the classical Buckwalter Arabic mapping
+  extended with the four Persian consonants (`پ→p`, `چ→c`, `ژ→J`, `گ→g`).
+  Because `g` collides with Arabic-Buckwalter's ghain, ghain is
+  reassigned to `G` for invertibility. Persian yeh/kaf and Arabic yeh/kaf
+  both encode to `y`/`k`; inverse decodes to Persian forms so
+  `inverse(encode(x))` normalizes Arabic-yeh/kaf to Persian on round-trip.
+  Adapter `"persian-buckwalter"`. Registered as `"fa"`. 20 stemmer
+  reference pairs + 34 transliteration pairs (one per Persian letter).
+  Dari (Afghan Persian), Tajik-Cyrillic, ezafeh detection, verb morphology
+  (`می-`/`ب-` prefixes), compound-verb decomposition deferred.
+
+- **UAX #14 line breaking.** New `line_breaks` module in
+  `stringcheese-unicode`, feature-gated as `line-breaking` (default on,
+  individually toggleable). `LineBreak` enum (`Mandatory` for `\n`/`\r\n`/
+  paragraph separators; `Allowed` for soft-wrap opportunities).
+  `LineBreakSequence<'a>` iterator yielding `(byte_offset, LineBreak)`
+  pairs; `line_breaks(text)` helper. Complements the wave-7 UAX #29
+  word + sentence segmentation. Dep chosen: **`unicode-linebreak 0.1`**
+  over `xi-unicode` — 1:1 `BreakOpportunity::{Mandatory, Allowed}` enum
+  map to the public API, `#![no_std]`-clean, and actively maintained
+  (`xi-unicode` is a byproduct of the archived xi-editor). Wasm-size:
+  tracked baseline unchanged (default probe doesn't enable the new
+  feature); new opt-in `unicode-with-line-breaking` probe measures
+  +22 KB standalone cost. Downstream wiring deliberately deferred —
+  this is groundwork for a future `stringcheese-manip::wrap` helper.
+  Locale-tailored break rules (`line-break: strict/normal/loose`),
+  Southeast Asian dictionary-based break detection (Thai/Lao/Khmer/Myanmar),
+  and `word-break: break-all`-style forced-break iterator deferred.
+
+- **`stringcheese-tokenizer-bpe`: HuggingFace `tokenizer.json` parser.**
+  New optional `hf-tokenizer` feature (adds `serde 1` + `serde_json 1`,
+  gated behind the feature). New `hf` module with:
+  * `HfTokenizerConfig` — serde-derived top-level struct matching the
+    tokenizer.json shape (version, truncation, padding, added_tokens,
+    normalizer, pre_tokenizer, post_processor, decoder, model).
+  * `parse_tokenizer_json(json: &str) -> Result<HfTokenizerConfig, HfParseError>`
+    with structured errors.
+  * `to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfConversionError>`.
+  Supported: **BPE model** (vocab + merges in both shipped shapes — pair
+  form `[["a","b"]]` and space-joined `["a b"]`), **Split pre-tokenizer
+  with Regex pattern** (routed through the wave-6 `RegexPreTokenizer`),
+  single-child `Sequence` pre-tokenizer wrappers, **added special
+  tokens** (`special: true` → BPE special tokens; non-special → base
+  vocab). Deferred (returned as `HfConversionError::Unsupported` with
+  named feature): `WordPiece`/`Unigram`/`WordLevel` models; `ByteLevel`
+  (GPT-2 style byte remapping — requires a whole post-processing layer),
+  `Whitespace`, `WhitespaceSplit`, `Punctuation`, `Metaspace`,
+  `CharDelimiterSplit`, `BertPreTokenizer`, `Digits`, `UnicodeScripts`,
+  `FixedLength`, `Split(String)`, ambiguous multi-child `Sequence`;
+  normalizer/post_processor/decoder preserved on the parsed config for
+  caller inspection but not applied. Incidental change to `bpe.rs`:
+  `PreTokenizerRegex` grows a `Regex(RegexPreTokenizer)` variant (gated
+  on `std`) so the compiled regex from the Split(Regex) branch can be
+  threaded through the encoder. Tests parse both GPT-2-shape and
+  Llama-3-shape synthetic blobs (real ones deferred — GPT-2 uses
+  `ByteLevel`, which is the largest single deferred feature).
+
 - **`stringcheese-nl` — Dutch language pack.** New workspace crate. ~174
   stopwords, Snowball Dutch stemmer per the official spec: R1/R2 regions,
   `ij` digraph handling (only marked as consonant-like `I` when strictly
@@ -526,6 +638,13 @@ bump; `0.x` versions are pre-stability.
 
 ### Fixed
 
+- **`stringcheese-tokenizer-bpe`: backtick doc-markdown identifiers in
+  `hf.rs`.** Rust 1.97's `clippy::doc_markdown` lint fires on bare
+  identifiers like `WordPiece`, `WordLevel`, and `DeepSeek` in the HF
+  parser's module docstring. The HF agent ran clippy on an older
+  toolchain where the lint was more permissive; the identifiers now
+  carry backticks so `-D warnings` stays clean.
+
 - **`stringcheese-en`: contraction tokenizer idempotence on
   multi-apostrophe words.** `split_word` now short-circuits raw
   words with two or more apostrophes to atomic (unchanged) output.
@@ -538,6 +657,38 @@ bump; `0.x` versions are pre-stability.
   `crates/stringcheese-en/proptest-regressions/properties.txt`.
 
 ### Changed
+
+- **`stringcheese-cdc`: real vectorized Buzhash SIMD kernel.** Replaces
+  the wave-6 Buzhash scaffolding with a true block-reformulation kernel
+  via rotate-XOR. AVX2 backend: 4-lane u64, 16 iterations per 64-byte
+  block, per-lane variable rotate via `_mm256_sllv_epi64` +
+  `_mm256_srlv_epi64` + `_mm256_or_si256` with counts `[3,2,1,0]` /
+  `[61,62,63,0]`, 4-bit Horner advance, `_mm256_xor_si256` fold,
+  horizontal XOR via extract/xor. NEON backend: 2-lane u64, 32 iterations,
+  per-lane variable rotate via `vshlq_u64` with signed count vectors
+  (identity lane realised as `x|x` to keep counts in the unambiguous
+  `[-63,63]` band). wasm SIMD128 backend: 2-lane u64; `u64x2_shl` is
+  uniform-across-lanes so lane 0's pre-rotate factors to scalar
+  `g0.rotate_left(1)` before the `u64x2(_,_)` pack. SSE2 stays scalar
+  (no gather until SSE4.1, no per-lane variable shift until AVX2).
+  Boundary-differential-tested at sizes 63/64/65/127/128/129 across
+  windows 1/4/8/32/63/64/65/100/200 per backend + dispatcher.
+
+- **`stringcheese-cdc`: real vectorized Rabin SIMD kernel via
+  `pclmulqdq`.** Replaces the wave-6 Rabin scaffolding with a true
+  block-folding kernel using carry-less multiplication in GF(2). x86_64
+  SSE2 + PCLMULQDQ backend: 8-byte block folding via `_mm_clmulepi64_si128`,
+  runtime-detected via `is_x86_feature_detected!("pclmulqdq")`. AVX2
+  backend delegates into the SSE2 pclmul kernel (a 2-way VPCLMULQDQ path
+  is future work — the intrinsic stabilized in Rust 1.89 but the
+  workspace MSRV is 1.85). aarch64 NEON + AES (PMULL) backend: 8-byte
+  block folding via `vmull_p64`, gated on
+  `is_aarch64_feature_detected!("aes")`. wasm SIMD128 stays scalar
+  (no PMULL equivalent). Verified end-to-end on native aarch64 (PMULL
+  green) and under Rosetta 2 x86_64 (PCLMULQDQ green, VPCLMULQDQ absent
+  as expected). Boundary tests at sizes `{0,1,7,8,9,15,16,17,31,32,33,63,
+  64,65,127,128,129,511,512,513,4096}` × windows `{1,8,32,64,100,128,
+  512,1024}` per backend + dispatcher.
 
 - **`stringcheese-cdc`: real vectorized Gear SIMD kernel.** Replaces
   the wave-6 Gear scaffolding (scalar-under-`target_feature`) with a
