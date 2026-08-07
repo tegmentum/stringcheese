@@ -52,12 +52,12 @@ Every adapter in this subtree — whatever language it targets — MUST:
 |--------------|---------------------|----------------------------|---------------------------------------|
 | Rust         | shipping (v0.1)     | `bench-adapters/rust/`     | `strsim` 0.11, `rapidfuzz` 0.5        |
 | Python       | shipping (v0.2)     | `bench-adapters/python/`   | `python-Levenshtein`, `jellyfish`, `rapidfuzz` |
+| JavaScript   | shipping (v0.2)     | `bench-adapters/js/`       | `fastest-levenshtein`, `js-levenshtein`, `natural`, `string-similarity` |
 | Java         | planned (v0.2)      | `bench-adapters/java/`     | Apache Commons Text                    |
-| JavaScript   | planned (v0.2)      | `bench-adapters/javascript/` | `fast-levenshtein`, `natural`         |
 | C++          | planned (v0.3)      | `bench-adapters/cpp/`      | `rapidfuzz-cpp`, `edlib`              |
 | Go           | planned (v0.3)      | `bench-adapters/go/`       | `agnivade/levenshtein`, `xrash/smetrics` |
 
-The Rust and Python slots ship in v0.1/v0.2 respectively. The
+The Rust, Python, and JavaScript slots ship in v0.1/v0.2. The
 remaining slots are recorded here so that the directory layout is
 committed early and the sequencing matches `docs/DESIGN.md`'s
 "Implementation Sequence".

@@ -1,0 +1,30 @@
+{
+  "name": "stringcheese-bench-adapters-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Head-to-head JavaScript-ecosystem benchmark adapter for the StringCheese toolkit (loaded via jco-transpiled WebAssembly component).",
+  "license": "MIT OR Apache-2.0",
+  "author": "Zachary Whitley <zachary.whitley@tegmentum.ai>",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "transpile": "node scripts/transpile.js",
+    "bench": "node benches/levenshtein.bench.js && node benches/hamming.bench.js && node benches/jaro.bench.js && node benches/damerau.bench.js",
+    "bench:levenshtein": "node benches/levenshtein.bench.js",
+    "bench:hamming": "node benches/hamming.bench.js",
+    "bench:jaro": "node benches/jaro.bench.js",
+    "bench:damerau": "node benches/damerau.bench.js"
+  },
+  "dependencies": {
+    "fastest-levenshtein": "1.0.16",
+    "js-levenshtein": "1.1.6",
+    "natural": "8.1.1",
+    "string-similarity": "4.0.4",
+    "tinybench": "6.1.2"
+  },
+  "devDependencies": {
+    "@bytecodealliance/jco": "1.27.0"
+  }
+}
