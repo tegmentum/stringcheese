@@ -92,6 +92,9 @@
 //! * [`double_metaphone`] — the [`DoubleMetaphone`] encoder and its
 //!   [`DoubleMetaphoneKey`] output type.
 //! * [`nysiis`] — the [`Nysiis`] encoder.
+//! * [`mod@slavic_metaphone`] — the [`SlavicMetaphone`] encoder, a
+//!   variable-length Metaphone-shaped encoder for the Slavic language
+//!   family across both Cyrillic and Latin scripts.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -108,6 +111,8 @@ pub mod double_metaphone;
 pub mod encoder;
 #[cfg(feature = "alloc")]
 pub mod nysiis;
+#[cfg(feature = "alloc")]
+pub mod slavic_metaphone;
 #[cfg(feature = "alloc")]
 pub mod soundex;
 
@@ -126,5 +131,10 @@ pub use double_metaphone::{DoubleMetaphone, DoubleMetaphoneKey, DoubleMetaphoneV
 pub use encoder::{Applicability, LanguageTag, PhoneticEncoder, RegionTag, ScriptTag};
 #[cfg(feature = "alloc")]
 pub use nysiis::Nysiis;
+#[cfg(feature = "alloc")]
+pub use slavic_metaphone::{
+    DEFAULT_MAX_KEY_LEN, HARD_MAX_KEY_LEN, SlavicMetaphone, SlavicMetaphoneOptions,
+    slavic_metaphone,
+};
 #[cfg(feature = "alloc")]
 pub use soundex::Soundex;

@@ -13,7 +13,7 @@
 
 use proptest::prelude::*;
 
-use crate::{DoubleMetaphone, Nysiis, Soundex};
+use crate::{DoubleMetaphone, Nysiis, SlavicMetaphone, SlavicMetaphoneOptions, Soundex};
 
 /// An ASCII-letter strategy with mixed case and a small length cap.
 ///
@@ -362,6 +362,128 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Slavic Metaphone
+// ---------------------------------------------------------------------------
+
+/// Strategy producing short mixed Cyrillic/Latin/ASCII strings likely to
+/// stress the Slavic-Metaphone normalizer (digraph collisions, nasal
+/// vowels, soft signs).
+fn arb_slavic_word() -> impl Strategy<Value = std::string::String> {
+    // Character set: ASCII letters (both cases), plus a hand-picked pool
+    // of Slavic Latin diacritics, plus Cyrillic scalars from the core
+    // Slavic range. Kept small so the generator produces meaningful
+    // interactions in short strings.
+    proptest::string::string_regex(
+        "[A-Za-zšžčćđńňłśźżáéíóúąęůřА-Яа-яЁёІіЇїЄєҐґЎўЈјЉљЊњЋћЂђЏџЩщЪъ]{1,15}",
+    )
+    .unwrap()
+}
+
+proptest! {
+    /// Determinism: `encode(x)` returns the same key every call.
+    #[test]
+    fn slavic_metaphone_determinism(w in arb_slavic_word()) {
+        let enc = SlavicMetaphone::new();
+        prop_assert_eq!(enc.encode(&w), enc.encode(&w));
+    }
+
+    /// Idempotence surrogate — encoding is a pure function of its input.
+    /// (The classic Metaphone "encode(encode(x)) == encode(x)" property
+    /// does not hold in general because the ASCII class alphabet is a
+    /// subset of the input alphabet — re-encoding a key may collapse
+    /// further under the vowel gate — but the encode-twice-same-input
+    /// property is the deterministic-function guarantee we care about.)
+    #[test]
+    fn slavic_metaphone_encode_twice_same(w in arb_slavic_word()) {
+        let enc = SlavicMetaphone::new();
+        let a = enc.encode(&w);
+        let b = enc.encode(&w);
+        prop_assert_eq!(a, b);
+    }
+
+    /// Case insensitivity: the encoder lowercases its input, so upper /
+    /// lower / title forms all produce the same key.
+    #[test]
+    fn slavic_metaphone_case_insensitive(w in arb_slavic_word()) {
+        let enc = SlavicMetaphone::new();
+        let upper: std::string::String = w.chars().flat_map(char::to_uppercase).collect();
+        let lower: std::string::String = w.chars().flat_map(char::to_lowercase).collect();
+        prop_assert_eq!(enc.encode(&w), enc.encode(&upper));
+        prop_assert_eq!(enc.encode(&w), enc.encode(&lower));
+    }
+
+    /// Length bound: default output never exceeds the default max, and a
+    /// caller-provided max is respected up to the hard cap.
+    #[test]
+    fn slavic_metaphone_length_bound(w in arb_slavic_word()) {
+        let enc = SlavicMetaphone::new();
+        let out = enc.encode(&w);
+        prop_assert!(out.len() <= crate::slavic_metaphone::DEFAULT_MAX_KEY_LEN,
+            "encode({:?}) = {:?} exceeded default max", w, out);
+    }
+
+    /// Fixed max_length bound: whatever the caller asks for is honored,
+    /// clamped only against the module's hard cap.
+    #[test]
+    fn slavic_metaphone_max_length_respected(
+        w in arb_slavic_word(),
+        m in 0usize..12usize,
+    ) {
+        let out = SlavicMetaphone::new().encode_max(&w, m);
+        let expected_cap = m.min(crate::slavic_metaphone::HARD_MAX_KEY_LEN);
+        prop_assert!(out.len() <= expected_cap,
+            "encode_max({:?}, {}) = {:?} exceeded cap", w, m, out);
+    }
+
+    /// Structure: every character in the emitted key belongs to the
+    /// 19-class alphabet (14 consonant classes + 5 vowel classes).
+    #[test]
+    fn slavic_metaphone_class_alphabet(w in arb_slavic_word()) {
+        let out = SlavicMetaphone::new().encode(&w);
+        for c in out.chars() {
+            prop_assert!(
+                matches!(c,
+                    'P'|'F'|'T'|'K'|'H'|'S'|'Z'|'X'|'C'
+                    |'M'|'N'|'L'|'R'|'J'
+                    |'A'|'E'|'I'|'O'|'U'),
+                "unexpected class char {:?} in encode({:?}) = {:?}", c, w, out);
+        }
+    }
+
+    /// Default gate drops non-initial vowels: no vowel can appear past
+    /// position 0.
+    #[test]
+    fn slavic_metaphone_default_drops_non_initial_vowels(w in arb_slavic_word()) {
+        let out = SlavicMetaphone::new().encode(&w);
+        for (i, c) in out.chars().enumerate() {
+            if i == 0 { continue; }
+            prop_assert!(
+                !matches!(c, 'A'|'E'|'I'|'O'|'U'),
+                "vowel {:?} at position {} of encode({:?}) = {:?}", c, i, w, out);
+        }
+    }
+
+    /// `include_vowels = true` keeps vowels; the length bound still holds.
+    #[test]
+    fn slavic_metaphone_include_vowels_length_bound(w in arb_slavic_word()) {
+        let opts = SlavicMetaphoneOptions::default().with_include_vowels(true);
+        let out = SlavicMetaphone::with_options(opts).encode(&w);
+        prop_assert!(out.len() <= crate::slavic_metaphone::DEFAULT_MAX_KEY_LEN,
+            "encode_v({:?}) = {:?} exceeded default max", w, out);
+    }
+
+    /// No-panic on arbitrary input.
+    #[test]
+    fn slavic_metaphone_no_panic(w in arb_arbitrary_short_string()) {
+        let _ = SlavicMetaphone::new().encode(&w);
+        let _ = slavic_metaphone(&w);
+    }
+}
+
+/// Free-function import for the no-panic property test above.
+use crate::slavic_metaphone;
 
 // ---------------------------------------------------------------------------
 // Cross-encoder properties
