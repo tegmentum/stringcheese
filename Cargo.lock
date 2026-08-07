@@ -962,6 +962,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-tokenizer-tiktoken"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide",
+ "proptest",
+ "stringcheese-tokenizer",
+ "stringcheese-tokenizer-bpe",
+]
+
+[[package]]
 name = "stringcheese-unicode"
 version = "0.1.0"
 dependencies = [
