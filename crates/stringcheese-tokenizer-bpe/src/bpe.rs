@@ -1,8 +1,9 @@
 //! The BPE core: merge table, vocabulary, and tokenizer types.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::cmp::Reverse;
 use core::ops::Range;
 
 use stringcheese_tokenizer::{Encoding, Tokenizer, TokenizerError};
@@ -303,6 +304,18 @@ impl BpeTokenizer {
         &self,
         text: &str,
     ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
+        self.encode_pieces_with(text, Self::merge_loop_nlogn)
+    }
+
+    /// Shared driver: same pipeline as [`Self::encode_pieces`] but the
+    /// per-word merge strategy is a function pointer. In production this
+    /// is [`Self::merge_loop_nlogn`]; the tests drive the same pipeline
+    /// through [`Self::merge_loop_naive`] as a Phase-2 acceptance oracle.
+    fn encode_pieces_with(
+        &self,
+        text: &str,
+        merge_fn: MergeLoopFn,
+    ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
         let mut out = Vec::new();
         // Walk the input, extracting special-token literal matches. The
         // regions between matches are handed to the BPE loop.
@@ -340,7 +353,7 @@ impl BpeTokenizer {
                 }
             }
             let region = &text[cursor..next_special];
-            self.encode_region_bpe(region, cursor, &mut out)?;
+            self.encode_region_bpe(region, cursor, &mut out, merge_fn)?;
             cursor = next_special;
         }
         Ok(out)
@@ -361,12 +374,14 @@ impl BpeTokenizer {
 
     /// BPE-encode a substring of the input; `region_offset` is the byte
     /// offset of `region` within the original input, used to compute
-    /// output offsets.
+    /// output offsets. The per-word merge strategy is dispatched through
+    /// `merge_fn` so the tests can substitute the naive oracle.
     fn encode_region_bpe(
         &self,
         region: &str,
         region_offset: usize,
         out: &mut Vec<(TokenId, Range<usize>, bool)>,
+        merge_fn: MergeLoopFn,
     ) -> Result<(), TokenizerError> {
         if region.is_empty() {
             return Ok(());
@@ -388,7 +403,7 @@ impl BpeTokenizer {
                 });
             }
 
-            self.merge_loop(&mut pieces);
+            merge_fn(self, &mut pieces);
 
             for p in pieces {
                 let Some(id) = self.vocab.id(&p.bytes) else {
@@ -402,10 +417,17 @@ impl BpeTokenizer {
         Ok(())
     }
 
-    /// Iteratively merge the pair with the lowest rank until no
-    /// mergeable pair remains. `O(n²)`; see the crate docs for the
-    /// planned linked-list-plus-heap optimisation.
-    fn merge_loop(&self, pieces: &mut Vec<PieceRef>) {
+    /// Naive O(n²) merge loop: repeatedly rescan the whole piece
+    /// sequence for the adjacent pair with the lowest rank, merge it,
+    /// and shift the tail down.
+    ///
+    /// Retained as a test-only oracle: the design doc's Phase 2
+    /// acceptance criterion (`docs/design/tokenizers.md` §11) says
+    /// "the O(n log n) implementation agrees with the naive O(n²) oracle
+    /// over exhaustive short inputs." We keep this callable from the
+    /// proptest module so that agreement is checked mechanically.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn merge_loop_naive(&self, pieces: &mut Vec<PieceRef>) {
         loop {
             if pieces.len() < 2 {
                 return;
@@ -434,6 +456,148 @@ impl BpeTokenizer {
             };
             pieces[i] = merged;
             pieces.remove(i + 1);
+        }
+    }
+
+    /// Production O(n log n) merge loop — Sennrich, Haddow, & Birch
+    /// (2016), the "linked-list plus min-heap" formulation.
+    ///
+    /// Data structure: a *doubly-linked list* of merge nodes over an
+    /// arena `Vec<MergeNode>`, plus a *min-heap* of pending merge
+    /// candidates keyed by `(rank, left_idx)`. `left_idx` is the arena
+    /// slot of the left piece; ties on rank break by original position
+    /// (the leftmost pair first), which matches the naive oracle's
+    /// left-to-right scan tie-break byte-for-byte.
+    ///
+    /// The invariant we defend on every heap pop:
+    ///
+    /// 1. `left` and `right` are still alive (a merge that consumed
+    ///    either would have flipped `alive` to `false`);
+    /// 2. `left.next == right` (the pair is still adjacent — no
+    ///    intervening merge has re-parented the list);
+    /// 3. the rank we stamped at push time equals
+    ///    `merges.rank(&left.bytes, &right.bytes)` today (the merged
+    ///    bytes of either endpoint may have changed under us).
+    ///
+    /// Any pop that fails any of the three is a *stale* entry and is
+    /// discarded — this is the lazy-deletion approach called out in the
+    /// task's implementation-strategy question. Concretely: we don't
+    /// walk the heap to purge entries when we merge; we just let stale
+    /// entries surface at the top and skip them. Each pair enters the
+    /// heap at most O(1) times *net* (a merge creates at most two new
+    /// pairs — the merged node's new left and right neighbours — and
+    /// there are at most `n - 1` merges), so the heap size is O(n)
+    /// amortised and the whole loop is O(n log n).
+    ///
+    /// We use `BinaryHeap<Reverse<HeapEntry>>` (from `alloc`) as the
+    /// min-heap: `BinaryHeap` is a max-heap by default, and `Reverse`
+    /// inverts the ordering — cheaper than defining a custom `Ord`
+    /// with inverted comparisons.
+    fn merge_loop_nlogn(&self, pieces: &mut Vec<PieceRef>) {
+        let n = pieces.len();
+        if n < 2 {
+            return;
+        }
+
+        // Build the arena. Nodes 0..n mirror pieces[0..n]; the merged
+        // node keeps its arena slot forever, so `left_idx` is a stable
+        // deterministic key for tie-breaking (it matches the original
+        // byte position of the pair's left piece).
+        let mut nodes: Vec<MergeNode> = Vec::with_capacity(n);
+        for (i, p) in pieces.iter().enumerate() {
+            nodes.push(MergeNode {
+                bytes: p.bytes.clone(),
+                start: p.start,
+                len: p.len,
+                prev: if i == 0 { None } else { Some(i - 1) },
+                next: if i + 1 == n { None } else { Some(i + 1) },
+                alive: true,
+            });
+        }
+
+        // Seed the heap with every initial adjacent pair that has a
+        // rank in the merge table.
+        let mut heap: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
+        for i in 0..n - 1 {
+            if let Some(rank) = self.merges.rank(&nodes[i].bytes, &nodes[i + 1].bytes) {
+                heap.push(Reverse(HeapEntry {
+                    rank,
+                    left_idx: i,
+                    right_idx: i + 1,
+                }));
+            }
+        }
+
+        while let Some(Reverse(entry)) = heap.pop() {
+            let li = entry.left_idx;
+            let ri = entry.right_idx;
+
+            // Validity checks — see the doc-comment above for the
+            // invariant this defends.
+            if !nodes[li].alive || !nodes[ri].alive {
+                continue;
+            }
+            if nodes[li].next != Some(ri) {
+                continue;
+            }
+            // The rank stored at push time must still be the rank of
+            // the *current* byte strings — either endpoint's bytes may
+            // have grown since the entry was queued.
+            let Some(current_rank) = self.merges.rank(&nodes[li].bytes, &nodes[ri].bytes) else {
+                continue;
+            };
+            if current_rank != entry.rank {
+                continue;
+            }
+
+            // Perform the merge: absorb right's bytes into left; splice
+            // right out of the list; mark right dead.
+            let right_bytes = core::mem::take(&mut nodes[ri].bytes);
+            nodes[li].bytes.extend_from_slice(&right_bytes);
+            nodes[li].len += nodes[ri].len;
+            let new_next = nodes[ri].next;
+            nodes[li].next = new_next;
+            if let Some(nn) = new_next {
+                nodes[nn].prev = Some(li);
+            }
+            nodes[ri].alive = false;
+
+            // Queue up any newly-adjacent pairs. Left's predecessor may
+            // now form a merge with left's new (extended) bytes; and
+            // left's new successor may form one on the other side.
+            if let Some(pi) = nodes[li].prev {
+                if let Some(rank) = self.merges.rank(&nodes[pi].bytes, &nodes[li].bytes) {
+                    heap.push(Reverse(HeapEntry {
+                        rank,
+                        left_idx: pi,
+                        right_idx: li,
+                    }));
+                }
+            }
+            if let Some(ni) = nodes[li].next {
+                if let Some(rank) = self.merges.rank(&nodes[li].bytes, &nodes[ni].bytes) {
+                    heap.push(Reverse(HeapEntry {
+                        rank,
+                        left_idx: li,
+                        right_idx: ni,
+                    }));
+                }
+            }
+        }
+
+        // Walk the surviving list in order and rebuild `pieces`.
+        pieces.clear();
+        // Node 0 has no predecessor so it can never be the *right* of
+        // any merge; therefore it is always alive and is the list head.
+        let mut cursor: Option<usize> = Some(0);
+        while let Some(i) = cursor {
+            debug_assert!(nodes[i].alive, "walked to a dead node in the merge list");
+            pieces.push(PieceRef {
+                bytes: core::mem::take(&mut nodes[i].bytes),
+                start: nodes[i].start,
+                len: nodes[i].len,
+            });
+            cursor = nodes[i].next;
         }
     }
 }
@@ -492,6 +656,56 @@ struct PieceRef {
     start: usize,
     len: usize,
 }
+
+/// One arena slot in the O(n log n) merge loop's doubly-linked list.
+///
+/// The list uses `Option<usize>` prev/next indices into the enclosing
+/// `Vec<MergeNode>` — no raw pointers, no `unsafe`, and slot indices are
+/// stable for the whole run (a merge absorbs the right piece into the
+/// left slot; the right slot is marked `alive = false` but never freed).
+#[derive(Debug)]
+struct MergeNode {
+    bytes: Vec<u8>,
+    start: usize,
+    len: usize,
+    prev: Option<usize>,
+    next: Option<usize>,
+    alive: bool,
+}
+
+/// A pending merge candidate sitting in the min-heap.
+///
+/// Order is `(rank, left_idx)` — lower rank wins, and ties break by the
+/// smaller `left_idx`. Because arena slots are never renumbered,
+/// `left_idx` is a stable proxy for the pair's original left-to-right
+/// position in the input; the naive oracle also breaks ties by
+/// left-to-right position, so the two agree byte-for-byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct HeapEntry {
+    rank: u32,
+    left_idx: usize,
+    right_idx: usize,
+}
+
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.rank
+            .cmp(&other.rank)
+            .then_with(|| self.left_idx.cmp(&other.left_idx))
+            .then_with(|| self.right_idx.cmp(&other.right_idx))
+    }
+}
+
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Function pointer to a per-word merge strategy. Production code uses
+/// [`BpeTokenizer::merge_loop_nlogn`]; the tests substitute the naive
+/// oracle to verify the two strategies agree.
+type MergeLoopFn = fn(&BpeTokenizer, &mut Vec<PieceRef>);
 
 /// Text plus (byte) offset within its enclosing region.
 struct Word<'a> {
@@ -1001,6 +1215,261 @@ mod tests {
         let round = tok.decode(&enc.ids).unwrap();
         assert_eq!(round, "catdog");
     }
+
+    // ------------------------------------------------------------------
+    // Phase 2 acceptance oracle: the O(n log n) implementation must
+    // agree with the naive O(n²) implementation "over exhaustive short
+    // inputs." The proptest module (below) covers the random-input case;
+    // this block enumerates short inputs deterministically so the
+    // agreement is checked by every host in every CI run — no proptest
+    // seed to lose, no wasm target skip.
+    // ------------------------------------------------------------------
+
+    /// Drive the naive merge loop through the full encoding pipeline —
+    /// same as `BpeTokenizer::encode`, but with the merge strategy
+    /// swapped for the O(n²) oracle. Test-only helper.
+    fn encode_via_naive(tok: &BpeTokenizer, text: &str) -> Vec<TokenId> {
+        let pieces = tok
+            .encode_pieces_with(text, BpeTokenizer::merge_loop_naive)
+            .expect("naive encode should succeed on byte-alphabet vocab");
+        pieces.into_iter().map(|(id, _, _)| id).collect()
+    }
+
+    fn encode_via_nlogn(tok: &BpeTokenizer, text: &str) -> Vec<TokenId> {
+        let pieces = tok
+            .encode_pieces_with(text, BpeTokenizer::merge_loop_nlogn)
+            .expect("nlogn encode should succeed on byte-alphabet vocab");
+        pieces.into_iter().map(|(id, _, _)| id).collect()
+    }
+
+    /// Enumerate every string of length 0..=`max_len` over `alphabet`.
+    fn enumerate_strings(alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
+        let mut out: Vec<Vec<u8>> = vec![Vec::new()];
+        let mut frontier: Vec<Vec<u8>> = vec![Vec::new()];
+        for _ in 1..=max_len {
+            let mut next = Vec::new();
+            for s in &frontier {
+                for &c in alphabet {
+                    let mut x = s.clone();
+                    x.push(c);
+                    next.push(x);
+                }
+            }
+            out.extend(next.iter().cloned());
+            frontier = next;
+        }
+        out
+    }
+
+    #[test]
+    fn nlogn_matches_naive_exhaustive_len_0_to_6_alphabet_ab() {
+        // Alphabet {a, b}: |alphabet|=2, len<=6 → 1 + 2 + 4 + 8 + 16 + 32 + 64 = 127 inputs.
+        // Merge table covers every 2-byte pair, plus a few longer pieces
+        // so merges compose non-trivially and the two strategies have
+        // room to diverge on tie-break order (they mustn't).
+        let mut v = BpeVocabulary::new();
+        v.ensure_byte_alphabet(0).unwrap();
+        v.insert(256, b"ab".to_vec()).unwrap();
+        v.insert(257, b"ba".to_vec()).unwrap();
+        v.insert(258, b"aa".to_vec()).unwrap();
+        v.insert(259, b"bb".to_vec()).unwrap();
+        v.insert(260, b"aba".to_vec()).unwrap();
+        v.insert(261, b"abab".to_vec()).unwrap();
+        v.insert(262, b"bab".to_vec()).unwrap();
+        v.insert(263, b"aabb".to_vec()).unwrap();
+        v.insert(264, b"abba".to_vec()).unwrap();
+        let mut m = BpeMergeTable::new();
+        m.insert(b"a".to_vec(), b"b".to_vec(), 0);
+        m.insert(b"b".to_vec(), b"a".to_vec(), 1);
+        m.insert(b"ab".to_vec(), b"a".to_vec(), 2);
+        m.insert(b"ab".to_vec(), b"ab".to_vec(), 3);
+        m.insert(b"b".to_vec(), b"ab".to_vec(), 4);
+        m.insert(b"a".to_vec(), b"a".to_vec(), 5);
+        m.insert(b"b".to_vec(), b"b".to_vec(), 6);
+        m.insert(b"a".to_vec(), b"abb".to_vec(), 7);
+        m.insert(b"ab".to_vec(), b"ba".to_vec(), 8);
+        let tok = BpeTokenizer::from_parts(m, v);
+
+        for s in enumerate_strings(b"ab", 6) {
+            let text = core::str::from_utf8(&s).unwrap();
+            let via_naive = encode_via_naive(&tok, text);
+            let via_nlogn = encode_via_nlogn(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "encoders disagree on {text:?}");
+        }
+    }
+
+    #[test]
+    fn nlogn_matches_naive_exhaustive_len_0_to_4_alphabet_abc() {
+        // Alphabet {a, b, c}: len<=4 → 1 + 3 + 9 + 27 + 81 = 121 inputs.
+        // Broader alphabet exposes cases where the leftmost pair of a
+        // given rank is not adjacent to the previous merge — a shape the
+        // naive scanner and the heap-driven walker resolve differently
+        // if the tie-break is wrong.
+        let mut v = BpeVocabulary::new();
+        v.ensure_byte_alphabet(0).unwrap();
+        // Every 2-byte pair over {a,b,c} lives in the vocab; a couple
+        // of 3-4 byte pieces so merges compose.
+        let extras: &[&[u8]] = &[
+            b"ab", b"ac", b"ba", b"bc", b"ca", b"cb", b"aa", b"bb", b"cc", b"abc", b"cab", b"aba",
+            b"cbc", b"abca", b"caba",
+        ];
+        for (i, e) in extras.iter().enumerate() {
+            v.insert(256 + u32::try_from(i).unwrap(), e.to_vec())
+                .unwrap();
+        }
+        let mut m = BpeMergeTable::new();
+        let rules: &[(&[u8], &[u8], u32)] = &[
+            (b"a", b"b", 0),
+            (b"b", b"c", 1),
+            (b"c", b"a", 2),
+            (b"a", b"c", 3),
+            (b"b", b"a", 4),
+            (b"c", b"b", 5),
+            (b"ab", b"c", 6),
+            (b"c", b"ab", 7),
+            (b"a", b"bc", 8),
+            (b"ca", b"b", 9),
+            (b"ab", b"ca", 10),
+        ];
+        for &(l, r, rank) in rules {
+            m.insert(l.to_vec(), r.to_vec(), rank);
+        }
+        let tok = BpeTokenizer::from_parts(m, v);
+
+        for s in enumerate_strings(b"abc", 4) {
+            let text = core::str::from_utf8(&s).unwrap();
+            let via_naive = encode_via_naive(&tok, text);
+            let via_nlogn = encode_via_nlogn(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "encoders disagree on {text:?}");
+        }
+    }
+
+    #[test]
+    fn nlogn_matches_naive_over_reference_corpus() {
+        let tok = build_reference_tokenizer();
+        // Includes the whitespace-split fallback (multi-word input) and
+        // pure single-word inputs so both the region-splitting seam and
+        // the merge loop itself are exercised.
+        let corpus = [
+            "",
+            "c",
+            "a",
+            "t",
+            "cat",
+            "cats",
+            "dog",
+            "dogs",
+            "hello",
+            "world",
+            "cat dog",
+            "hello world",
+            "cats dogs hello world",
+            "acat",
+            "catsdogs",
+        ];
+        for text in corpus {
+            let via_naive = encode_via_naive(&tok, text);
+            let via_nlogn = encode_via_nlogn(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "disagree on {text:?}");
+        }
+    }
+
+    #[test]
+    fn nlogn_matches_naive_on_all_specials_input() {
+        // Input consisting entirely of special-token surface strings.
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let mut specials = BTreeMap::new();
+        specials.insert(String::from("<|s|>"), 500);
+        specials.insert(String::from("<|t|>"), 501);
+        let tok =
+            BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_special_tokens(specials);
+        for text in ["<|s|>", "<|s|><|t|>", "<|s|><|s|><|t|>"] {
+            assert_eq!(encode_via_naive(&tok, text), encode_via_nlogn(&tok, text));
+        }
+    }
+
+    #[test]
+    fn nlogn_matches_naive_on_unicode_edge_cases() {
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab);
+        // A pinch of multibyte code points: Latin-1 supplement, CJK,
+        // combining marks, an emoji-sized 4-byte code point.
+        let corpus = [
+            "",
+            "a",
+            "é",
+            "héllo",
+            "日本語",
+            "e\u{0301}",
+            "\u{1F600}",
+            "混ぜ書き",
+        ];
+        for text in corpus {
+            assert_eq!(
+                encode_via_naive(&tok, text),
+                encode_via_nlogn(&tok, text),
+                "disagree on {text:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    #[ignore = "manual perf comparison, not correctness"]
+    fn perf_compare_naive_vs_nlogn() {
+        use std::time::Instant;
+        for n in [50usize, 100, 200, 400] {
+            let mut v = BpeVocabulary::new();
+            v.ensure_byte_alphabet(0).unwrap();
+            let mut m = BpeMergeTable::new();
+            let mut prefix = b"a".to_vec();
+            for (next_id, k) in (256_u32..).zip(0..(n - 1)) {
+                let left = prefix.clone();
+                m.insert(left.clone(), b"a".to_vec(), u32::try_from(k).unwrap());
+                let mut merged = left;
+                merged.push(b'a');
+                v.insert(next_id, merged.clone()).unwrap();
+                prefix = merged;
+            }
+            let tok = BpeTokenizer::from_parts(m, v);
+            let input = "a".repeat(n);
+            let iters = 10;
+
+            let start = Instant::now();
+            for _ in 0..iters {
+                let _ = tok
+                    .encode_pieces_with(&input, BpeTokenizer::merge_loop_naive)
+                    .unwrap();
+            }
+            let naive_ns = start.elapsed().as_nanos() / iters;
+
+            let start = Instant::now();
+            for _ in 0..iters {
+                let _ = tok
+                    .encode_pieces_with(&input, BpeTokenizer::merge_loop_nlogn)
+                    .unwrap();
+            }
+            let nlogn_ns = start.elapsed().as_nanos() / iters;
+
+            #[allow(clippy::cast_precision_loss)]
+            let speedup = (naive_ns as f64) / (nlogn_ns as f64);
+            eprintln!(
+                "n={n:4}: naive {naive_ns:>10} ns  nlogn {nlogn_ns:>10} ns  speedup {speedup:.2}x"
+            );
+        }
+    }
+
+    #[test]
+    fn nlogn_roundtrips_on_reference_corpus() {
+        let tok = build_reference_tokenizer();
+        for text in [
+            "", "c", "cat", "cats", "dog", "dogs", "hello", "world", "catsdogs", "hello",
+        ] {
+            let enc = tok.encode(text).unwrap();
+            let round = tok.decode(&enc.ids).unwrap();
+            assert_eq!(round, text, "roundtrip fail on {text:?}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -1055,6 +1524,124 @@ mod properties {
             let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), v);
             let enc = tok.encode("").unwrap();
             prop_assert_eq!(enc.len(), 0);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 2 acceptance oracle (randomized): the O(n log n) implementation
+    // and the naive O(n²) implementation must agree on every input, for
+    // every merge table. We drive both through the full encoding
+    // pipeline (`encode_pieces_with`) so the check covers the merge
+    // loop itself *and* every seam around it.
+    // ------------------------------------------------------------------
+
+    /// Small alphabet (3 letters). Deliberately narrow so short random
+    /// inputs land many repeated adjacent pairs — that's where the two
+    /// strategies would diverge if the tie-break shape was wrong.
+    fn arb_small_ascii_input() -> impl Strategy<Value = String> {
+        prop::collection::vec(any::<u8>().prop_map(|b| (b % 3) + b'a'), 0..16)
+            .prop_map(|v| String::from_utf8(v).unwrap())
+    }
+
+    /// Random small merge table over the {a,b,c} alphabet plus a few
+    /// two-byte and three-byte pieces. Ranks are drawn from 0..20 with
+    /// duplicates permitted (the resulting ties are exactly what
+    /// exercises the tie-break rule).
+    fn arb_merges_and_extras() -> impl Strategy<Value = (BpeMergeTable, Vec<Vec<u8>>)> {
+        let byte_choices: &'static [&'static [u8]] = &[
+            b"a", b"b", b"c", b"ab", b"ba", b"ac", b"ca", b"bc", b"cb", b"aa", b"bb", b"cc",
+            b"abc", b"cab", b"aba", b"cbc",
+        ];
+        let single_merge = (
+            0usize..byte_choices.len(),
+            0usize..byte_choices.len(),
+            0u32..20,
+        )
+            .prop_map(move |(li, ri, rank)| {
+                let l = byte_choices[li].to_vec();
+                let r = byte_choices[ri].to_vec();
+                (l, r, rank)
+            });
+        prop::collection::vec(single_merge, 0..20).prop_map(|rules| {
+            let mut m = BpeMergeTable::new();
+            let mut extras: Vec<Vec<u8>> = Vec::new();
+            for (l, r, rank) in rules {
+                let mut merged = l.clone();
+                merged.extend_from_slice(&r);
+                extras.push(merged);
+                m.insert(l, r, rank);
+            }
+            (m, extras)
+        })
+    }
+
+    fn build_tokenizer(merges: BpeMergeTable, extras: &[Vec<u8>]) -> BpeTokenizer {
+        let mut v = BpeVocabulary::new();
+        let mut next = v.ensure_byte_alphabet(0).unwrap();
+        for e in extras {
+            if v.id(e).is_some() {
+                continue;
+            }
+            v.insert(next, e.clone()).unwrap();
+            next += 1;
+        }
+        BpeTokenizer::from_parts(merges, v)
+    }
+
+    fn encode_ids_with(
+        tok: &BpeTokenizer,
+        text: &str,
+        f: fn(&BpeTokenizer, &mut Vec<super::PieceRef>),
+    ) -> Vec<TokenId> {
+        tok.encode_pieces_with(text, f)
+            .expect("encode should succeed against a byte-alphabet vocab")
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 512,
+            .. ProptestConfig::default()
+        })]
+
+        /// Wave-6 acceptance: the O(n log n) encoder agrees with the
+        /// naive O(n²) oracle for every random (input, merge-table)
+        /// combination.
+        #[test]
+        fn nlogn_matches_naive_random(
+            text in arb_small_ascii_input(),
+            (merges, extras) in arb_merges_and_extras(),
+        ) {
+            let tok = build_tokenizer(merges, &extras);
+            let naive = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_naive);
+            let nlogn = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_nlogn);
+            prop_assert_eq!(naive, nlogn);
+        }
+    }
+
+    proptest! {
+        /// A random-input round-trip check that exercises the O(n log n)
+        /// encoder on strings likely to trip the byte / char boundary
+        /// (UTF-8 continuation bytes span the byte alphabet). Pure
+        /// byte-alphabet vocab so every input decodes cleanly.
+        ///
+        /// Whitespace is excluded from the input generator: the default
+        /// pre-tokenizer's whitespace-split fallback *discards*
+        /// whitespace, and that lossy exception is already covered
+        /// explicitly by `reference_prefix_words_multi_word_input_...`
+        /// in the tests block above. Filtering it out here keeps the
+        /// round-trip invariant sharp.
+        #[test]
+        fn round_trip_random_utf8(text in "\\PC{0,16}") {
+            prop_assume!(!text.chars().any(char::is_whitespace));
+            let mut v = BpeVocabulary::new();
+            v.ensure_byte_alphabet(0).unwrap();
+            let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), v);
+            let enc = tok.encode(&text).unwrap();
+            let round = tok.decode(&enc.ids).unwrap();
+            prop_assert_eq!(round, text);
         }
     }
 }

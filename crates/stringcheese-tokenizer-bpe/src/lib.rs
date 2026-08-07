@@ -34,11 +34,16 @@
 //!
 //! # Complexity
 //!
-//! The naive implementation here is `O(n²)` per word (repeated linear
-//! scans for the lowest-rank pair). The design doc's Phase 2 also
-//! sketches an `O(n log n)` linked-list-plus-min-heap variant matching
-//! tiktoken's throughput; the current focus is *correctness* on the
-//! algorithmic surface, and the naive form is enough for that.
+//! Encoding runs an `O(n log n)` merge loop per word: a doubly-linked
+//! list of pieces backed by an arena `Vec`, plus a `BinaryHeap` (used as
+//! a min-heap via `Reverse`) of pending merge candidates keyed by
+//! `(rank, left_idx)`. Stale heap entries are handled by *lazy
+//! deletion* — we don't purge them when a merge happens; we skip them
+//! when they surface at the top and no longer satisfy the adjacency
+//! and rank invariants. This is the Sennrich, Haddow, & Birch (2016)
+//! formulation and matches tiktoken's throughput shape. The naive
+//! `O(n²)` variant is retained inside `#[cfg(test)]` as the oracle
+//! demanded by the design doc's Phase 2 acceptance criterion.
 //!
 //! # `no_std`
 //!
