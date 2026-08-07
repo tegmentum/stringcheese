@@ -11,6 +11,114 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-tokenizer-tiktoken` — OpenAI tiktoken model tokenizer
+  pack (Phase 3).** New workspace crate. Feature-gated variants:
+  `cl100k_base` (default), `p50k_base`, `r50k_base`, `o200k_base`.
+  SCUD-lite BPE data format with `miniz_oxide` deflate (pure-Rust,
+  wasm-portable — chosen over Brotli which requires a C shim or a
+  substantially heavier pure-Rust decoder). `TiktokenPack::get()` /
+  `try_get()` return `&'static BpeTokenizer`; one `pub static` per
+  enabled variant. Build script synthesises deterministic small
+  stand-in packs into `OUT_DIR` when contributors haven't dropped
+  real `data/<variant>.tiktoken` blobs (OpenAI's ~5 MB
+  mergeable_ranks tables are not shipped in-tree per license +
+  bloat). Facade deliberately unlinked — the umbrella `stringcheese`
+  crate stays opt-in. Uses the placeholder whitespace pre-tokenizer
+  from Phase 2; real regex pre-tokenization for tiktoken-identical
+  IDs remains Phase 2b.
+
+- **`stringcheese-es` — Spanish language pack.** ~269 stopwords
+  (canonical accent-preserving form, NLTK-scale). Snowball Spanish
+  stemmer per `docs/design/snowball-es.md` — full three-branch RV
+  computation, pronoun-strip cascades (iéndo/ándo/ár/ér/ír, ando/
+  iendo/ar/er/ir, uyendo), postlude accent-fold. **Phonetic
+  encoder: PHONEX-Spanish** (option 3), a Soundex-shaped 4-char key
+  tuned for Spanish phonology (Ñ→N, LL→L, CH→X, QU→K, RR→R, PH→F,
+  GN→N, silent H, Z→S seseo, V→B betacismo, accent fold).
+  Registered as `"es"`. Reference-tested against 52 Snowball pairs
+  and 17 PHONEX pairs. Kondrak/Metaphone-Español/Beider-Morse
+  deferred (no single dominant published spec).
+
+- **`stringcheese-ar` — Arabic language pack.** ~148 stopwords, ISRI
+  Larkey light10 morphological stemmer, Buckwalter transliteration
+  as the phonetic encoder (bijective on the mapped subset —
+  `Buckwalter::inverse()` round-trips). ~106 tests total. First
+  right-to-left-script pack — the crate processes strings in
+  **logical UTF-8 order** (first-consonant-first); RTL rendering is
+  a display-layer concern. Stemmer preserves classical single-pass
+  semantics (avoids over-stripping `الوقت → قت`); property test
+  checks bounded convergence rather than strict idempotence. Teh
+  marbuta folding is opt-in via `ArabicNormalizer` builder.
+  Registered as `"ar"`. Root-and-pattern morphology, dialect
+  stopwords (Egyptian/Levantine/Gulf), AraSoundex/ISRI phonetic
+  deferred.
+
+- **`stringcheese-en`: opt-in CLDR-tailored collator via icu_collator.**
+  New feature `icu-collator` (requires `std`, adds `icu_collator` +
+  `icu_locid` + `icu_provider/sync` dependencies). `EnglishCldrCollator`
+  wraps ICU4X's collator behind a `OnceLock` for lazy init;
+  `CldrCollatorOptions` exposes `strength` (default Tertiary),
+  `numeric` (natural-number digit-run ordering), and `case_level`.
+  New `EnglishCollatorChoice` enum field on `English` with
+  `with_ascii_collator()` (always available) and (feature-gated)
+  `with_cldr_collator()` const constructors. New
+  `ENGLISH_WITH_CLDR_COLLATOR` const. `Language::collator` dispatches
+  on the choice. Feature isolation verified — default builds pull
+  no ICU4X. Observed size cost: ≈+52 KB in the rlib.
+
+- **Wide-block SIMD for Jaro and OSA.** Extends the Levenshtein
+  wide-block pattern to two more distance algorithms across all
+  three host arches:
+  * **Jaro**: SSE2 (16-byte blocks via `_mm_cmpeq_epi8` +
+    `_mm_movemask_epi8`), AVX2 (32-byte blocks via
+    `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8`), NEON (16-byte
+    blocks via `vceqq_u8` + `vshrn_n_u16::<4>` narrow-mask idiom).
+    New shared `jaro/simd/common.rs` with a packed word-backed
+    `Bitmap` supporting straddling 16/32-bit window reads.
+  * **OSA**: Hyyrö 2003 bit-parallel with cross-lane carry. SSE2
+    and NEON wide-block cover `64 < m ≤ 128`, AVX2 wide-block
+    covers `128 < m ≤ 256`. Algorithm was validated against a
+    Python-form prototype (0 failures over ~1M random pairs at
+    both 128-bit and 256-bit) before intrinsic port.
+
+  Measured perf on aarch64: OSA at n=128 jumps from ~48 µs
+  (scalar rolling-rows) to ~1.7 µs (NEON wide-block) — ~28×.
+  Jaro at n=128 sees ~10 % improvement on random inputs; similar/
+  identical inputs regress slightly because the algorithm
+  early-exits, so per-block SIMD setup dominates on short match
+  paths (correctness is exact; perf tuning is a follow-up).
+
+- **wasm SIMD (simd128) Levenshtein backend.** Closes the SIMD
+  matrix on the wasm32 target. New
+  `crates/stringcheese-compare/src/levenshtein/simd/wasm_simd128.rs`
+  using `core::arch::wasm32` v128 intrinsics with 128-bit
+  wide-block Myers for `64 < m ≤ 128`. Compile-time gated on
+  `target_feature = "simd128"` (no runtime detection on wasm).
+  Cross-lane carry via `u64x2_extract_lane` / `u64x2_replace_lane`
+  scalar hop — wasm SIMD has no `_mm_slli_si128` equivalent that
+  cleanly expresses a whole-register 1-bit shift. Verified
+  end-to-end under wasmtime 47.0.2 (588 wasm tests pass including
+  9 new boundary + differential cases). No default-build size
+  impact — the module is `#[cfg(feature = "simd")]`-gated and the
+  wasm-size probes don't enable `simd`. Bench extension deferred.
+
+- **Go bench adapter (wazero).** `bench-adapters/go/` — fourth
+  non-Rust adapter after Python and JavaScript. Uses **wazero
+  v1.9.0** (pure-Go, no CGO — chosen over wasmtime-go, whose
+  upstream is archived and adds a heavy CGO dep). Wazero doesn't
+  yet run Component Model, so the adapter shells out to
+  `wasm-tools component unbundle` on first construction to extract
+  the inner core module; cached under
+  `component/rust-host/target/.../unbundled/`. Canonical ABI wired
+  by hand: `cabi_realloc`, return-area pointers for
+  `result<u32, string>` and `variant bounded-distance`,
+  `cabi_post_hamming` for free. Compared against
+  `agnivade/levenshtein` (Levenshtein-only) and `hbollon/go-edlib`
+  (kitchen-sink pure-Go distance library — no rapidfuzz for Go).
+  `TestSmoke` covers 13 subtests across all 8 exposed algorithms;
+  full bench matrix (5 lengths × 3 regimes × 6 competitors) runs
+  end-to-end.
+
 - **`stringcheese-tokenizer` + `stringcheese-tokenizer-bpe` — tokenizer
   subsystem, Phases 1+2.** Two new workspace crates per
   `docs/design/tokenizers.md`:
@@ -204,6 +312,19 @@ bump; `0.x` versions are pre-stability.
   negotiation, SCUD compression measurement, loader sharing with
   wit-i18n, default special-token policy, borrowed vs owned segmenter
   output, ...). Design only — no implementation.
+
+### Fixed
+
+- **`stringcheese-en`: contraction tokenizer idempotence on
+  multi-apostrophe words.** `split_word` now short-circuits raw
+  words with two or more apostrophes to atomic (unchanged) output.
+  Earlier behavior on inputs like `"A'M'm"` yielded `["A'M", "'m"]`,
+  which re-tokenized to `["A", "'m", "'m"]` after join — violating
+  the property test's idempotence claim. Every real English
+  contraction carries exactly one apostrophe, so recognized
+  contractions (`don't`, `won't`, `I'll`, etc.) are unaffected.
+  Surfaced by a new proptest seed; regression pinned in
+  `crates/stringcheese-en/proptest-regressions/properties.txt`.
 
 ### Changed
 
