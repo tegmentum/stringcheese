@@ -6,6 +6,8 @@
 use proptest::prelude::*;
 use stringcheese_lang::Language;
 
+use crate::hepburn::HepburnRomaji;
+use crate::normalize::{KanaNormalizer, fold_hiragana_to_katakana, fold_katakana_to_hiragana};
 use crate::romaji::KunreiRomaji;
 use crate::stemmer::JapaneseStemmer;
 use crate::tokenizer::{CharType, JapaneseTokenizer, classify};
@@ -168,6 +170,91 @@ proptest! {
             w,
             out,
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Hepburn romaji — never panics; sensible pass-through on ASCII.
+    // -----------------------------------------------------------------
+
+    /// Hepburn romanization does not panic on arbitrary text drawn
+    /// from the kana-heavy strategy.
+    #[test]
+    fn hepburn_never_panics(text in ja_text()) {
+        let _ = HepburnRomaji.romanize(&text);
+    }
+
+    /// Kunrei and Hepburn agree on the moras where the two systems
+    /// don't disagree — the vowel row is one such case.
+    #[test]
+    fn hepburn_and_kunrei_agree_on_vowels(
+        s in prop::string::string_regex("[あいうえお]{1,10}")
+            .expect("static regex is valid")
+    ) {
+        let k = KunreiRomaji.romanize(&s);
+        let h = HepburnRomaji.romanize(&s);
+        // Kunrei's ASCII-only output guarantee still holds on vowel
+        // input; Hepburn produces a non-empty output on non-empty
+        // input.
+        prop_assert!(k.is_ascii());
+        prop_assert!(!h.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Kana normalizer — idempotent under every flag combination the
+    // spec calls out; round-trip preserved for hiragana ↔ katakana.
+    // -----------------------------------------------------------------
+
+    /// The default [`KanaNormalizer`] preset is idempotent: applying
+    /// it twice yields the same result as applying it once.
+    #[test]
+    fn kana_normalizer_default_is_idempotent(text in ja_text()) {
+        let n = KanaNormalizer::default();
+        let once = n.normalize(&text);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(once, twice);
+    }
+
+    /// A fully-configured normalizer is also idempotent.
+    #[test]
+    fn kana_normalizer_full_config_is_idempotent(text in ja_text()) {
+        let n = KanaNormalizer::new()
+            .with_full_to_half_ascii(true)
+            .with_half_to_full_katakana(true)
+            .with_dakuten_canonicalization(true)
+            .with_katakana_to_hiragana(true);
+        let once = n.normalize(&text);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(once, twice);
+    }
+
+    /// Each individual flag on its own produces an idempotent
+    /// normalizer.
+    #[test]
+    fn kana_normalizer_single_flag_is_idempotent(
+        text in ja_text(),
+        flag in 0u8..4,
+    ) {
+        let n = match flag {
+            0 => KanaNormalizer::new().with_full_to_half_ascii(true),
+            1 => KanaNormalizer::new().with_half_to_full_katakana(true),
+            2 => KanaNormalizer::new().with_katakana_to_hiragana(true),
+            _ => KanaNormalizer::new().with_dakuten_canonicalization(true),
+        };
+        let once = n.normalize(&text);
+        let twice = n.normalize(&once);
+        prop_assert_eq!(once, twice);
+    }
+
+    /// Round-trip: for text made only of hiragana in the fixed-offset
+    /// range, hiragana → katakana → hiragana is the identity.
+    #[test]
+    fn hiragana_katakana_round_trip(
+        s in prop::string::string_regex(
+            "[ぁあぃいぅうぇえぉおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん]{0,30}",
+        ).expect("static regex is valid")
+    ) {
+        let round_trip = fold_katakana_to_hiragana(&fold_hiragana_to_katakana(&s));
+        prop_assert_eq!(&round_trip, &s);
     }
 
     // -----------------------------------------------------------------

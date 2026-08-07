@@ -1,6 +1,6 @@
 //! Integration tests for the Japanese [`Language`] implementation.
 
-use stringcheese_ja::JAPANESE;
+use stringcheese_ja::{JAPANESE, JAPANESE_WITH_HEPBURN, Japanese, JapaneseWithHepburn};
 use stringcheese_lang::Language;
 
 #[test]
@@ -111,4 +111,55 @@ fn phonetic_encoder_returns_none_on_kanaless_input() {
 #[test]
 fn collator_is_none_by_default() {
     assert!(JAPANESE.collator().is_none());
+}
+
+// -----------------------------------------------------------------
+// Hepburn variant pack.
+// -----------------------------------------------------------------
+
+#[test]
+fn hepburn_variant_reports_same_code_and_name() {
+    assert_eq!(JAPANESE_WITH_HEPBURN.code(), "ja");
+    assert_eq!(JAPANESE_WITH_HEPBURN.name(), "Japanese");
+}
+
+#[test]
+fn hepburn_variant_shares_stopwords_stemmer_and_tokenizer() {
+    // Identical stopword table.
+    assert_eq!(JAPANESE_WITH_HEPBURN.stopwords(), JAPANESE.stopwords());
+    // Same stemmer behavior on the plural marker.
+    assert_eq!(JAPANESE_WITH_HEPBURN.stem("私たち"), "私");
+    // Same tokenizer output.
+    let toks: Vec<&str> = JAPANESE_WITH_HEPBURN
+        .tokenize("彼はJavaScriptを勉強しています")
+        .collect();
+    assert_eq!(toks, ["彼は", "JavaScript", "を", "勉強しています"]);
+}
+
+#[test]
+fn hepburn_variant_phonetic_encoder_is_hepburn_romaji() {
+    let enc = JAPANESE_WITH_HEPBURN
+        .phonetic_encoder()
+        .expect("Hepburn variant ships a phonetic encoder");
+    assert_eq!(enc.name(), "hepburn-romaji");
+    assert_eq!(enc.encode("さくら"), Some((String::from("sakura"), None)));
+    assert_eq!(
+        enc.encode("シ"),
+        Some((String::from("shi"), None)),
+        "Hepburn(シ) should be shi (differs from Kunrei's si)"
+    );
+    assert_eq!(
+        enc.encode("とうきょう"),
+        Some((String::from("tōkyō"), None)),
+        "Modified Hepburn writes おう as ō"
+    );
+}
+
+#[test]
+fn with_hepburn_encoder_const_constructor_matches_singleton() {
+    // The const-fn factory and the exported constant produce the
+    // same pack value.
+    const PACK: JapaneseWithHepburn = Japanese::with_hepburn_encoder();
+    assert_eq!(PACK, JAPANESE_WITH_HEPBURN);
+    assert_eq!(PACK.code(), "ja");
 }
