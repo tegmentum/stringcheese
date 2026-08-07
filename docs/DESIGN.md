@@ -177,6 +177,7 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-bench` | Criterion benchmarks + allocation-counting harness |
 | `stringcheese-lang` | Language-pack infrastructure: `Language` trait, `Stemmer` / `Collator` / `LanguagePhoneticEncoder` plugin points, `Stopwords` and `SimpleTokenizer` helpers |
 | `stringcheese-en` | English pack: ~150-word stopword list, Porter (1980) stemmer, simple tokenizer, Soundex phonetic hookup |
+| `stringcheese-de` | German pack: ~200-word stopword list, Snowball German stemmer, simple tokenizer, Kölner Phonetik (Postel 1969) hookup |
 | `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
 | `stringcheese-icu-*` | WIT interfaces + SCUD data packs for i18n (planned) |
 
