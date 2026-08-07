@@ -135,6 +135,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(all(feature = "alloc", feature = "icu-collator"))]
+pub mod cldr_collator;
 #[cfg(feature = "alloc")]
 pub mod collator;
 #[cfg(feature = "alloc")]
@@ -148,6 +150,10 @@ pub mod stopwords;
 #[cfg(all(test, feature = "std", not(target_family = "wasm")))]
 mod properties;
 
+#[cfg(all(feature = "alloc", feature = "icu-collator"))]
+pub use cldr_collator::{
+    CldrCollatorOptions, ENGLISH_CLDR_COLLATOR, EnglishCldrCollator, Strength,
+};
 #[cfg(feature = "alloc")]
 pub use collator::EnglishCollator;
 #[cfg(feature = "alloc")]
@@ -200,6 +206,8 @@ mod pack {
         phonetic::SoundexAdapter,
     };
 
+    #[cfg(feature = "icu-collator")]
+    use crate::cldr_collator::ENGLISH_CLDR_COLLATOR;
     use crate::stopwords::STOPWORDS;
     use crate::{
         CONTRACTION_TOKENIZER, ENGLISH_DICTIONARY_COLLATOR, PORTER_STEMMER, PORTER2_STEMMER,
@@ -223,6 +231,26 @@ mod pack {
         /// in its [`STANDARD`](crate::ContractionTokenizer::STANDARD)
         /// configuration.
         Contraction,
+    }
+
+    /// Which collator this [`English`] instance uses.
+    ///
+    /// Same closed-set pattern as [`EnglishTokenizerChoice`]. The
+    /// [`Cldr`](Self::Cldr) variant is only available when the
+    /// crate's `icu-collator` Cargo feature is on; a build without
+    /// that feature carries only the [`Ascii`](Self::Ascii) variant
+    /// and cannot construct a CLDR-backed pack.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum EnglishCollatorChoice {
+        /// The default ASCII dictionary-order collator
+        /// ([`EnglishCollator::DICTIONARY`](crate::EnglishCollator::DICTIONARY)).
+        Ascii,
+        /// The CLDR-tailored collator backed by ICU4X — the
+        /// [`EnglishCldrCollator`](crate::EnglishCldrCollator)
+        /// wrapper's [`ENGLISH_CLDR_COLLATOR`](crate::ENGLISH_CLDR_COLLATOR)
+        /// default instance.
+        #[cfg(feature = "icu-collator")]
+        Cldr,
     }
 
     /// The English language pack.
@@ -252,17 +280,21 @@ mod pack {
     pub struct English {
         stemmer: &'static (dyn Stemmer + 'static),
         tokenizer: EnglishTokenizerChoice,
+        collator: EnglishCollatorChoice,
     }
 
     impl English {
         /// Construct an `English` pack with the default stemmer
-        /// ([`Porter`](crate::Porter), 1980) and the baseline
-        /// [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer).
+        /// ([`Porter`](crate::Porter), 1980), the baseline
+        /// [`SimpleTokenizer`](stringcheese_lang::SimpleTokenizer),
+        /// and the ASCII dictionary-order
+        /// [`EnglishCollator`](crate::EnglishCollator).
         #[must_use]
         pub const fn new() -> Self {
             Self {
                 stemmer: &PORTER_STEMMER,
                 tokenizer: EnglishTokenizerChoice::Simple,
+                collator: EnglishCollatorChoice::Ascii,
             }
         }
 
@@ -316,6 +348,40 @@ mod pack {
             self.tokenizer = EnglishTokenizerChoice::Contraction;
             self
         }
+
+        /// Return an `English` pack using the ASCII
+        /// [`EnglishCollator::DICTIONARY`](crate::EnglishCollator::DICTIONARY)
+        /// collator.
+        ///
+        /// This is the default; the method exists so a caller who
+        /// composed a [`with_cldr_collator`](Self::with_cldr_collator)
+        /// pack can undo that choice.
+        #[must_use]
+        pub const fn with_ascii_collator(mut self) -> Self {
+            self.collator = EnglishCollatorChoice::Ascii;
+            self
+        }
+
+        /// Return an `English` pack whose
+        /// [`Language::collator`](stringcheese_lang::Language::collator)
+        /// hands back the CLDR-tailored
+        /// [`EnglishCldrCollator`](crate::EnglishCldrCollator) backed by
+        /// ICU4X.
+        ///
+        /// Reach for the [`ENGLISH_WITH_CLDR_COLLATOR`](crate::ENGLISH_WITH_CLDR_COLLATOR)
+        /// constant if you want the default pack with the CLDR
+        /// collator; this builder method lets a caller compose the
+        /// CLDR collator with a non-default stemmer or tokenizer.
+        ///
+        /// Only available when the `icu-collator` Cargo feature is
+        /// enabled. See the [`cldr_collator`](crate::cldr_collator)
+        /// module docs for the size trade-off.
+        #[cfg(feature = "icu-collator")]
+        #[must_use]
+        pub const fn with_cldr_collator(mut self) -> Self {
+            self.collator = EnglishCollatorChoice::Cldr;
+            self
+        }
     }
 
     impl Default for English {
@@ -364,7 +430,11 @@ mod pack {
         }
 
         fn collator(&self) -> Option<&dyn Collator> {
-            Some(&ENGLISH_DICTIONARY_COLLATOR)
+            match self.collator {
+                EnglishCollatorChoice::Ascii => Some(&ENGLISH_DICTIONARY_COLLATOR),
+                #[cfg(feature = "icu-collator")]
+                EnglishCollatorChoice::Cldr => Some(&ENGLISH_CLDR_COLLATOR),
+            }
         }
     }
 
@@ -402,8 +472,25 @@ mod pack {
     /// [`ContractionTokenizer::NORMALIZED`](crate::ContractionTokenizer::NORMALIZED)
     /// directly rather than going through the [`Language`] trait.
     pub const ENGLISH_WITH_CONTRACTIONS: English = English::new().with_contraction_tokenizer();
+
+    /// The singleton [`English`] language pack whose
+    /// [`Language::collator`](stringcheese_lang::Language::collator)
+    /// hands back the CLDR-tailored
+    /// [`EnglishCldrCollator`](crate::EnglishCldrCollator) instead of
+    /// the default ASCII
+    /// [`EnglishCollator`](crate::EnglishCollator).
+    ///
+    /// Identical to [`ENGLISH`](crate::ENGLISH) in every respect
+    /// except its collator. Only available when the crate's
+    /// `icu-collator` Cargo feature is enabled — see the
+    /// [`cldr_collator`](crate::cldr_collator) module docs for the
+    /// size trade-off and the rationale for gating.
+    #[cfg(feature = "icu-collator")]
+    pub const ENGLISH_WITH_CLDR_COLLATOR: English = English::new().with_cldr_collator();
 }
 
+#[cfg(all(feature = "alloc", feature = "icu-collator"))]
+pub use pack::ENGLISH_WITH_CLDR_COLLATOR;
 #[cfg(feature = "alloc")]
 pub use pack::{ENGLISH, ENGLISH_PORTER2, ENGLISH_WITH_CONTRACTIONS, English};
 
