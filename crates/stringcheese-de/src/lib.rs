@@ -33,15 +33,18 @@
 //! * **Modest stopword list.** ~200 entries drawn from the
 //!   NLTK / Snowball German stopword tradition. No domain-specific
 //!   jargon; no archaic forms; no Swiss `ss`-only spellings.
-//! * **Default Unicode collation.** German requires a locale tailoring
-//!   for proper alphabetical sort (DIN 5007-1 treats `ä` as `a`,
-//!   DIN 5007-2 as `ae`; the Duden and phone-book conventions
-//!   disagree). This crate declines to pick a convention for callers
-//!   and returns `None` from
-//!   [`Language::collator`](stringcheese_lang::Language::collator);
-//!   callers who need dictionary-style ordering should implement their
-//!   own [`Collator`](stringcheese_lang::Collator) with an explicit
-//!   variant choice.
+//! * **DIN 5007 collation (opt-in).** German dictionary-order collation
+//!   is a locale-tailored problem: DIN 5007-1 treats `ä` as `a` and
+//!   `ß` as `ss` (the Duden / dictionary ordering), while DIN 5007-2
+//!   treats `ä` as `ae` and keeps `ß = ss` (the phone-book ordering).
+//!   Callers who need one of the conventions reach for
+//!   [`GERMAN_WITH_DIN5007_DICTIONARY`] or
+//!   [`GERMAN_WITH_DIN5007_PHONEBOOK`]; the default [`GERMAN`] pack
+//!   declines to pick a convention and returns `None` from
+//!   [`Language::collator`](stringcheese_lang::Language::collator),
+//!   preserving backwards compatibility with the pre-DIN-5007
+//!   releases. See the [`collator`] module for the two variants and
+//!   the identity [`GermanCollator::ASCII`] fallback.
 //!
 //! # Deferred to a follow-up wave
 //!
@@ -54,11 +57,26 @@
 //!   is enough for word-level segmentation but treats each compound as
 //!   a single token. A dedicated `GermanTokenizer` with dictionary
 //!   support is on the roadmap.
-//! * **DIN 5007 collator.** The two DIN 5007 variants (umlauts as base
-//!   vowels vs. as `ae`/`oe`/`ue` expansions) each require a small
-//!   sort-key builder plus a caller-facing enum to select the variant.
-//!   Deferred to a follow-up that adds all Latin-alphabet locale
-//!   collators together.
+//! * **CLDR-tailored German collation.** The DIN 5007 collator
+//!   shipped here handles the two canonical German conventions
+//!   (dictionary and phone-book) on ASCII + umlaut + `ß` input; a
+//!   proper [Unicode Collation Algorithm][uca] tailoring for German
+//!   would depend on ICU-backed data tables this pack deliberately
+//!   does not ship. Callers who need CLDR-conformant German collation
+//!   should reach for `icu_collator` (via a
+//!   [`stringcheese_lang::Collator`] impl of their own), the same
+//!   trade-off `stringcheese-en` makes with its `icu-collator`
+//!   Cargo feature.
+//! * **Regional / Austrian and Swiss ordering variants.** Austrian
+//!   telephone directories occasionally follow rules distinct from
+//!   Germany's DIN 5007-2 (e.g. treating `ä`, `ö`, `ü` as extra
+//!   letters after `z`), and Swiss German never uses `ß` at all
+//!   (`ss` is written literally). Neither is shipped; callers who
+//!   need those conventions build a [`Collator`](stringcheese_lang::Collator)
+//!   of their own.
+//!
+//! [uca]: https://unicode.org/reports/tr10/
+//!
 //! * **Historical / regional stopword variants.** Middle High German,
 //!   Bavarian, or Swiss spellings are absent; the list targets modern
 //!   standard German only.
@@ -81,9 +99,11 @@
 //!
 //! - [`snowball`] — the [`SnowballDe`] stemmer.
 //! - [`phonetic`] — the [`KoelnerPhonetik`] encoder.
+//! - [`collator`] — the [`GermanCollator`] DIN 5007 comparator.
 //! - [`stopwords`] — the [`STOPWORDS`] list.
-//! - The [`German`] type and the [`GERMAN`] constant live in this
-//!   crate's root.
+//! - The [`German`] type and the [`GERMAN`] / [`GERMAN_WITH_DIN5007_DICTIONARY`] /
+//!   [`GERMAN_WITH_DIN5007_PHONEBOOK`] constants live in this crate's
+//!   root.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // `deny` rather than `forbid` because the `stringcheese_lang::
@@ -99,6 +119,8 @@
 extern crate alloc;
 
 #[cfg(feature = "alloc")]
+pub mod collator;
+#[cfg(feature = "alloc")]
 pub mod phonetic;
 #[cfg(feature = "alloc")]
 pub mod snowball;
@@ -108,10 +130,32 @@ pub mod stopwords;
 mod properties;
 
 #[cfg(feature = "alloc")]
+pub use collator::{GermanCollator, GermanCollatorVariant};
+#[cfg(feature = "alloc")]
 pub use phonetic::KoelnerPhonetik;
 #[cfg(feature = "alloc")]
 pub use snowball::SnowballDe;
 pub use stopwords::STOPWORDS;
+
+/// The DIN 5007-1 (dictionary / Duden) [`GermanCollator`] preset,
+/// exposed as an ergonomic `const` re-export of
+/// [`GermanCollator::DIN_5007_DICTIONARY`].
+///
+/// This is what [`GERMAN_WITH_DIN5007_DICTIONARY`]'s
+/// [`Language::collator`](stringcheese_lang::Language::collator)
+/// accessor returns.
+#[cfg(feature = "alloc")]
+pub const GERMAN_DIN5007_DICTIONARY_COLLATOR: GermanCollator = GermanCollator::DIN_5007_DICTIONARY;
+
+/// The DIN 5007-2 (phonebook) [`GermanCollator`] preset, exposed as
+/// an ergonomic `const` re-export of
+/// [`GermanCollator::DIN_5007_PHONEBOOK`].
+///
+/// This is what [`GERMAN_WITH_DIN5007_PHONEBOOK`]'s
+/// [`Language::collator`](stringcheese_lang::Language::collator)
+/// accessor returns.
+#[cfg(feature = "alloc")]
+pub const GERMAN_DIN5007_PHONEBOOK_COLLATOR: GermanCollator = GermanCollator::DIN_5007_PHONEBOOK;
 
 // -----------------------------------------------------------------------
 // The German language pack.
@@ -122,22 +166,130 @@ mod pack {
     use alloc::borrow::Cow;
     use alloc::boxed::Box;
 
-    use stringcheese_lang::{Language, LanguagePhoneticEncoder, SimpleTokenizer};
+    use stringcheese_lang::{Collator, Language, LanguagePhoneticEncoder, SimpleTokenizer};
 
     use crate::phonetic::KoelnerPhonetik;
     use crate::snowball::SnowballDe;
     use crate::stopwords::STOPWORDS;
+    use crate::{GERMAN_DIN5007_DICTIONARY_COLLATOR, GERMAN_DIN5007_PHONEBOOK_COLLATOR};
+
+    /// Which collator this [`German`] instance uses.
+    ///
+    /// Modeled as an `enum` (rather than a `&'static dyn Collator`
+    /// reference) so the pack stays `Copy`, its constant constructors
+    /// stay `const`-usable, and the shipped collators stay a closed
+    /// set. The [`None`](Self::None) variant is the default — it
+    /// preserves the pre-DIN-5007 behaviour where [`German`] declined
+    /// to pick between the two conventions and returned `None` from
+    /// [`Language::collator`](stringcheese_lang::Language::collator).
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum GermanCollatorChoice {
+        /// No collator wired — [`Language::collator`] returns `None`
+        /// and callers fall back to Unicode code-point ordering. This
+        /// is the default for [`GERMAN`](crate::GERMAN) so the pack
+        /// stays backwards-compatible with the pre-DIN-5007 release.
+        None,
+        /// The DIN 5007-1 dictionary / Duden collator
+        /// ([`GermanCollator::DIN_5007_DICTIONARY`](crate::GermanCollator::DIN_5007_DICTIONARY)).
+        Din5007Variant1,
+        /// The DIN 5007-2 phonebook collator
+        /// ([`GermanCollator::DIN_5007_PHONEBOOK`](crate::GermanCollator::DIN_5007_PHONEBOOK)).
+        Din5007Variant2,
+        /// The identity fallback
+        /// ([`GermanCollator::ASCII`](crate::GermanCollator::ASCII))
+        /// — no umlaut expansion, no case folding.
+        Ascii,
+    }
 
     /// The German language pack.
     ///
-    /// Zero-sized; construct as [`German`] and reuse the value freely
-    /// across threads and calls, or grab the crate-level [`GERMAN`](crate::GERMAN)
-    /// constant.
+    /// Carries a collator choice; the default (used by the
+    /// [`GERMAN`](crate::GERMAN) constant) declines to pick a
+    /// collation convention and returns `None` from
+    /// [`Language::collator`](stringcheese_lang::Language::collator).
+    /// Callers who want one of the DIN 5007 conventions grab
+    /// [`GERMAN_WITH_DIN5007_DICTIONARY`](crate::GERMAN_WITH_DIN5007_DICTIONARY)
+    /// or [`GERMAN_WITH_DIN5007_PHONEBOOK`](crate::GERMAN_WITH_DIN5007_PHONEBOOK),
+    /// or compose their own via
+    /// [`with_din5007_variant1`](German::with_din5007_variant1) /
+    /// [`with_din5007_variant2`](German::with_din5007_variant2) /
+    /// [`with_ascii_collator`](German::with_ascii_collator).
+    ///
+    /// Two `German` values with different collator choices are
+    /// otherwise identical — same stopwords, same stemmer, same
+    /// tokenizer, same phonetic encoder, same code/name.
     ///
     /// See the [crate-level docs](crate) for the implementation
     /// choices and the roadmap.
-    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-    pub struct German;
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct German {
+        collator: GermanCollatorChoice,
+    }
+
+    impl German {
+        /// Construct a `German` pack with the default no-collator
+        /// choice (matches the pre-DIN-5007 release).
+        #[must_use]
+        pub const fn new() -> Self {
+            Self {
+                collator: GermanCollatorChoice::None,
+            }
+        }
+
+        /// Return a `German` pack whose
+        /// [`Language::collator`](stringcheese_lang::Language::collator)
+        /// hands back the DIN 5007-1 dictionary / Duden collator
+        /// ([`GermanCollator::DIN_5007_DICTIONARY`](crate::GermanCollator::DIN_5007_DICTIONARY)).
+        ///
+        /// Reach for the [`GERMAN_WITH_DIN5007_DICTIONARY`](crate::GERMAN_WITH_DIN5007_DICTIONARY)
+        /// constant if you want the default pack with the DIN 5007-1
+        /// collator; this builder method lets a caller compose the
+        /// collator with a non-default state (currently there is none
+        /// — the pack ships one stemmer and one tokenizer — but the
+        /// builder shape matches every other `stringcheese-<lang>`
+        /// pack).
+        #[must_use]
+        pub const fn with_din5007_variant1(mut self) -> Self {
+            self.collator = GermanCollatorChoice::Din5007Variant1;
+            self
+        }
+
+        /// Return a `German` pack whose
+        /// [`Language::collator`](stringcheese_lang::Language::collator)
+        /// hands back the DIN 5007-2 phonebook collator
+        /// ([`GermanCollator::DIN_5007_PHONEBOOK`](crate::GermanCollator::DIN_5007_PHONEBOOK)).
+        ///
+        /// Reach for the [`GERMAN_WITH_DIN5007_PHONEBOOK`](crate::GERMAN_WITH_DIN5007_PHONEBOOK)
+        /// constant if you want the default pack with the DIN 5007-2
+        /// collator.
+        #[must_use]
+        pub const fn with_din5007_variant2(mut self) -> Self {
+            self.collator = GermanCollatorChoice::Din5007Variant2;
+            self
+        }
+
+        /// Return a `German` pack whose
+        /// [`Language::collator`](stringcheese_lang::Language::collator)
+        /// hands back the identity
+        /// [`GermanCollator::ASCII`](crate::GermanCollator::ASCII)
+        /// collator (equivalent to raw [`str::cmp`]).
+        ///
+        /// Useful as a baseline for tests or when a caller wants a
+        /// locale-neutral comparator carried through the
+        /// [`Language`](stringcheese_lang::Language) trait rather than
+        /// plumbed separately.
+        #[must_use]
+        pub const fn with_ascii_collator(mut self) -> Self {
+            self.collator = GermanCollatorChoice::Ascii;
+            self
+        }
+    }
+
+    impl Default for German {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 
     /// The static Kölner Phonetik adapter [`German`] hands back from
     /// [`phonetic_encoder`](Language::phonetic_encoder).
@@ -147,6 +299,12 @@ mod pack {
     /// can return a reference with the required `'static`-friendly
     /// lifetime through a trait object.
     static KOELNER: KoelnerPhonetik = KoelnerPhonetik;
+
+    /// The static [`GermanCollator::ASCII`](crate::GermanCollator::ASCII)
+    /// preset, kept as a `static` so
+    /// [`Language::collator`](stringcheese_lang::Language::collator)
+    /// can return a reference through a trait object.
+    static ASCII_COLLATOR: crate::GermanCollator = crate::GermanCollator::ASCII;
 
     impl Language for German {
         fn code(&self) -> &'static str {
@@ -172,20 +330,49 @@ mod pack {
         fn phonetic_encoder(&self) -> Option<&dyn LanguagePhoneticEncoder> {
             Some(&KOELNER)
         }
+
+        fn collator(&self) -> Option<&dyn Collator> {
+            match self.collator {
+                GermanCollatorChoice::None => None,
+                GermanCollatorChoice::Din5007Variant1 => Some(&GERMAN_DIN5007_DICTIONARY_COLLATOR),
+                GermanCollatorChoice::Din5007Variant2 => Some(&GERMAN_DIN5007_PHONEBOOK_COLLATOR),
+                GermanCollatorChoice::Ascii => Some(&ASCII_COLLATOR),
+            }
+        }
     }
 
     /// The singleton [`German`] language pack.
     ///
     /// Callers reach for this constant rather than constructing
-    /// [`German`] every time — the type is zero-sized, so the two
-    /// forms are equivalent, but the constant is the intended entry
-    /// point and matches the pattern every other `stringcheese-<lang>`
-    /// pack follows.
-    pub const GERMAN: German = German;
+    /// [`German`] every time — the two forms are equivalent, but the
+    /// constant is the intended entry point and matches the pattern
+    /// every other `stringcheese-<lang>` pack follows.
+    ///
+    /// This is the no-collator default; see
+    /// [`GERMAN_WITH_DIN5007_DICTIONARY`](crate::GERMAN_WITH_DIN5007_DICTIONARY)
+    /// and [`GERMAN_WITH_DIN5007_PHONEBOOK`](crate::GERMAN_WITH_DIN5007_PHONEBOOK)
+    /// for the two DIN 5007 conventions.
+    pub const GERMAN: German = German::new();
+
+    /// The singleton [`German`] language pack wired with the DIN
+    /// 5007-1 dictionary / Duden collator
+    /// ([`GermanCollator::DIN_5007_DICTIONARY`](crate::GermanCollator::DIN_5007_DICTIONARY)).
+    ///
+    /// Identical to [`GERMAN`](crate::GERMAN) in every respect except
+    /// its collator.
+    pub const GERMAN_WITH_DIN5007_DICTIONARY: German = German::new().with_din5007_variant1();
+
+    /// The singleton [`German`] language pack wired with the DIN
+    /// 5007-2 phonebook collator
+    /// ([`GermanCollator::DIN_5007_PHONEBOOK`](crate::GermanCollator::DIN_5007_PHONEBOOK)).
+    ///
+    /// Identical to [`GERMAN`](crate::GERMAN) in every respect except
+    /// its collator.
+    pub const GERMAN_WITH_DIN5007_PHONEBOOK: German = German::new().with_din5007_variant2();
 }
 
 #[cfg(feature = "alloc")]
-pub use pack::{GERMAN, German};
+pub use pack::{GERMAN, GERMAN_WITH_DIN5007_DICTIONARY, GERMAN_WITH_DIN5007_PHONEBOOK, German};
 
 // Opt this pack into the shared `stringcheese_lang::registry` — a
 // distributed slice populated at link time so callers picking a

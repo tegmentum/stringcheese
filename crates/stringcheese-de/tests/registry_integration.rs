@@ -4,6 +4,13 @@
 //! in `stringcheese-de/src/lib.rs` is the sole opt-in — if it stops
 //! firing (for instance, if a linker strips the registration
 //! `static`), this test flips red.
+//!
+//! Gated off `target_family = "wasm"` — the `stringcheese_lang::registry`
+//! module is itself only compiled on non-wasm targets (linkme's
+//! `distributed_slice` has no wasm branch), so a wasm test build
+//! would fail to resolve the import.
+
+#![cfg(not(target_family = "wasm"))]
 
 use stringcheese_lang::registry;
 

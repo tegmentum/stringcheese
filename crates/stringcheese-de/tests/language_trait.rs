@@ -1,6 +1,8 @@
 //! Integration tests for the German [`Language`] implementation.
 
-use stringcheese_de::GERMAN;
+use std::cmp::Ordering;
+
+use stringcheese_de::{GERMAN, GERMAN_WITH_DIN5007_DICTIONARY, GERMAN_WITH_DIN5007_PHONEBOOK};
 use stringcheese_lang::Language;
 
 #[test]
@@ -74,6 +76,39 @@ fn phonetic_encoder_is_koelner_phonetik() {
 
 #[test]
 fn collator_is_none_by_default() {
-    // See the crate-level docs — the DIN 5007 collator is a follow-up.
+    // The default pack declines to pick a DIN 5007 convention;
+    // callers opt in via GERMAN_WITH_DIN5007_DICTIONARY or
+    // GERMAN_WITH_DIN5007_PHONEBOOK.
     assert!(GERMAN.collator().is_none());
+}
+
+#[test]
+fn din5007_dictionary_pack_wires_variant1() {
+    let c = GERMAN_WITH_DIN5007_DICTIONARY
+        .collator()
+        .expect("dictionary pack ships a collator");
+    // Bär (=Bar under DIN-1) sorts equal to Bar.
+    assert_eq!(c.compare("Bär", "Bar"), Ordering::Equal);
+    // Straße (=Strasse) sorts equal to Strasse.
+    assert_eq!(c.compare("Straße", "Strasse"), Ordering::Equal);
+    // Classic Müller / Munk / Muster ordering.
+    let mut ws = ["Muster", "Müller", "Munk"];
+    ws.sort_by(|a, b| c.compare(a, b));
+    assert_eq!(ws, ["Müller", "Munk", "Muster"]);
+}
+
+#[test]
+fn din5007_phonebook_pack_wires_variant2() {
+    let c = GERMAN_WITH_DIN5007_PHONEBOOK
+        .collator()
+        .expect("phonebook pack ships a collator");
+    // Bär (=Baer under DIN-2) sorts equal to Baer and before Bar.
+    assert_eq!(c.compare("Bär", "Baer"), Ordering::Equal);
+    assert_eq!(c.compare("Bär", "Bar"), Ordering::Less);
+    // Straße (=Strasse) sorts equal to Strasse under both variants.
+    assert_eq!(c.compare("Straße", "Strasse"), Ordering::Equal);
+    // Under phonebook, Müller (=Mueller) sorts before Muller.
+    let mut ws = ["Muller", "Muster", "Müller", "Munk"];
+    ws.sort_by(|a, b| c.compare(a, b));
+    assert_eq!(ws, ["Müller", "Muller", "Munk", "Muster"]);
 }

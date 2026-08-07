@@ -3,9 +3,12 @@
 //! Gated on `feature = "std"` and off wasm — same gating pattern as
 //! every other property-test module in the workspace.
 
-use proptest::prelude::*;
-use stringcheese_lang::Language;
+use core::cmp::Ordering;
 
+use proptest::prelude::*;
+use stringcheese_lang::{Collator, Language};
+
+use crate::collator::GermanCollator;
 use crate::phonetic::KoelnerPhonetik;
 use crate::snowball::SnowballDe;
 use crate::{GERMAN, STOPWORDS};
@@ -33,6 +36,12 @@ fn german_word() -> impl Strategy<Value = String> {
 fn encodable_word() -> impl Strategy<Value = String> {
     // Force at least one non-H, non-whitespace ASCII letter.
     prop::string::string_regex("[a-gi-zA-GI-Z]{1,20}").expect("static regex is valid")
+}
+
+/// Strategy for a mixed-case ASCII+umlaut+ß string 0..=30 chars — the
+/// kinds of things the DIN 5007 collator has to order.
+fn collatable_de() -> impl Strategy<Value = String> {
+    prop::string::string_regex("[a-zA-ZäöüÄÖÜß ]{0,30}").expect("static regex is valid")
 }
 
 proptest! {
@@ -130,5 +139,105 @@ proptest! {
                 code
             );
         }
+    }
+
+    // ---- GermanCollator contract (DIN 5007-1 dictionary) -----------
+
+    /// The DIN 5007-1 collator is *total*: every call returns one of
+    /// `Less`, `Equal`, or `Greater` (matching `Ordering`'s enum
+    /// shape) and never panics.
+    #[test]
+    fn din5007_v1_collator_is_total(a in collatable_de(), b in collatable_de()) {
+        let c = GermanCollator::DIN_5007_DICTIONARY;
+        let ord = c.compare(&a, &b);
+        prop_assert!(matches!(ord, Ordering::Less | Ordering::Equal | Ordering::Greater));
+    }
+
+    /// The DIN 5007-1 collator is *antisymmetric*:
+    /// `compare(a, b) == compare(b, a).reverse()`.
+    #[test]
+    fn din5007_v1_collator_is_antisymmetric(a in collatable_de(), b in collatable_de()) {
+        let c = GermanCollator::DIN_5007_DICTIONARY;
+        prop_assert_eq!(c.compare(&a, &b), c.compare(&b, &a).reverse());
+    }
+
+    /// The DIN 5007-1 collator is *reflexive*: `compare(x, x) == Equal`.
+    #[test]
+    fn din5007_v1_collator_is_reflexive(a in collatable_de()) {
+        let c = GermanCollator::DIN_5007_DICTIONARY;
+        prop_assert_eq!(c.compare(&a, &a), Ordering::Equal);
+    }
+
+    /// The DIN 5007-1 collator is *transitive*: if `a <= b` and
+    /// `b <= c` then `a <= c`. Sampled on triples of small strings.
+    #[test]
+    fn din5007_v1_collator_is_transitive(
+        a in collatable_de(),
+        b in collatable_de(),
+        c in collatable_de(),
+    ) {
+        let coll = GermanCollator::DIN_5007_DICTIONARY;
+        let ab = coll.compare(&a, &b);
+        let bc = coll.compare(&b, &c);
+        let ac = coll.compare(&a, &c);
+        if ab != Ordering::Greater && bc != Ordering::Greater {
+            prop_assert_ne!(ac, Ordering::Greater);
+        }
+        if ab != Ordering::Less && bc != Ordering::Less {
+            prop_assert_ne!(ac, Ordering::Less);
+        }
+    }
+
+    // ---- GermanCollator contract (DIN 5007-2 phonebook) ------------
+
+    /// The DIN 5007-2 collator is *total*.
+    #[test]
+    fn din5007_v2_collator_is_total(a in collatable_de(), b in collatable_de()) {
+        let c = GermanCollator::DIN_5007_PHONEBOOK;
+        let ord = c.compare(&a, &b);
+        prop_assert!(matches!(ord, Ordering::Less | Ordering::Equal | Ordering::Greater));
+    }
+
+    /// The DIN 5007-2 collator is *antisymmetric*.
+    #[test]
+    fn din5007_v2_collator_is_antisymmetric(a in collatable_de(), b in collatable_de()) {
+        let c = GermanCollator::DIN_5007_PHONEBOOK;
+        prop_assert_eq!(c.compare(&a, &b), c.compare(&b, &a).reverse());
+    }
+
+    /// The DIN 5007-2 collator is *reflexive*.
+    #[test]
+    fn din5007_v2_collator_is_reflexive(a in collatable_de()) {
+        let c = GermanCollator::DIN_5007_PHONEBOOK;
+        prop_assert_eq!(c.compare(&a, &a), Ordering::Equal);
+    }
+
+    /// The DIN 5007-2 collator is *transitive*.
+    #[test]
+    fn din5007_v2_collator_is_transitive(
+        a in collatable_de(),
+        b in collatable_de(),
+        c in collatable_de(),
+    ) {
+        let coll = GermanCollator::DIN_5007_PHONEBOOK;
+        let ab = coll.compare(&a, &b);
+        let bc = coll.compare(&b, &c);
+        let ac = coll.compare(&a, &c);
+        if ab != Ordering::Greater && bc != Ordering::Greater {
+            prop_assert_ne!(ac, Ordering::Greater);
+        }
+        if ab != Ordering::Less && bc != Ordering::Less {
+            prop_assert_ne!(ac, Ordering::Less);
+        }
+    }
+
+    // ---- GermanCollator::ASCII identity check ----------------------
+
+    /// The ASCII-preset collator agrees with raw `str::cmp` — a
+    /// witness for the "identity fallback" claim in the module docs.
+    #[test]
+    fn ascii_preset_matches_str_cmp(a in collatable_de(), b in collatable_de()) {
+        let c = GermanCollator::ASCII;
+        prop_assert_eq!(c.compare(&a, &b), a.cmp(&b));
     }
 }
