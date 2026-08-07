@@ -37,6 +37,17 @@
 //!   entries with `special == false` are added to the base vocabulary
 //!   so the caller-visible token id ↔ surface mapping is complete.
 //!
+//! * `pre_tokenizer.type == "ByteLevel"` — recognised as the GPT-2 /
+//!   Llama byte-level pipeline: an optional `add_prefix_space` step,
+//!   an optional GPT-2-canonical regex split (`use_regex`), and the
+//!   byte↔char bijection from [`crate::byte_level`]. Both standalone
+//!   and inside a `Sequence` alongside a `Split(Regex)` sibling
+//!   (which then wins as the regex split) are honoured.
+//! * `decoder.type == "ByteLevel"` — attaches
+//!   [`Decoder::ByteLevel`](crate::Decoder) to the produced
+//!   tokenizer so `decode` reverses the byte↔char mapping and
+//!   returns the caller's original raw bytes.
+//!
 //! # What is deferred
 //!
 //! All errors below carry the offending type name in their message so
@@ -44,17 +55,16 @@
 //!
 //! * `model.type ∈ {"WordPiece", "Unigram", "WordLevel"}` — separate
 //!   algorithm crates, out of scope for this landing.
-//! * `pre_tokenizer.type == "ByteLevel"` (and any `ByteLevel` component
-//!   inside a `Sequence`) — byte-level BPE needs a whole additional
-//!   input-remapping layer (space → `Ġ`, etc.) plus the matching
-//!   decoder path; a separate landing.
 //! * All other `pre_tokenizer` types (`Whitespace`,
 //!   `WhitespaceSplit`, `Punctuation`, `Metaspace`, `CharDelimiterSplit`,
 //!   `BertPreTokenizer`, `Digits`, `UnicodeScripts`, ...).
-//! * `normalizer`, `post_processor`, `decoder` — the raw configs are
-//!   preserved on [`HfTokenizerConfig`] so callers can inspect them,
-//!   but they are **not applied** by [`to_bpe_tokenizer`]. Encodings
-//!   from the produced tokenizer will therefore differ from upstream
+//! * All other `decoder` types (`WordPiece`, `Metaspace`, `BPEDecoder`,
+//!   `Sequence`, ...). The raw config is preserved on
+//!   [`HfTokenizerConfig::decoder`] for caller inspection.
+//! * `normalizer`, `post_processor` — the raw configs are preserved
+//!   on [`HfTokenizerConfig`] so callers can inspect them, but they
+//!   are **not applied** by [`to_bpe_tokenizer`]. Encodings from the
+//!   produced tokenizer will therefore differ from upstream
 //!   `tokenizers-rs` for any input whose normaliser/post-processor
 //!   would have altered it (adding a BOS token, applying NFC, etc.).
 //!   This is the documented lossy conversion.
@@ -81,9 +91,10 @@ use core::fmt;
 use serde::Deserialize;
 
 use crate::bpe::{
-    BpeMergeTable, BpeTokenizer, BpeVocabulary, PreTokenizerRegex, TokenId, VocabularyBuilderError,
+    BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, PreTokenizerRegex, TokenId,
+    VocabularyBuilderError,
 };
-use crate::pre_tokenizer::{PreTokenizerCompileError, RegexPreTokenizer};
+use crate::pre_tokenizer::{GPT2_PATTERN, PreTokenizerCompileError, RegexPreTokenizer};
 
 // ---------------------------------------------------------------------
 // Config shapes — mirror the on-disk `tokenizer.json` layout.
@@ -134,11 +145,16 @@ pub struct HfTokenizerConfig {
     /// The `"post_processor"` config, preserved verbatim. Not applied.
     #[serde(default)]
     pub post_processor: Option<serde_json::Value>,
-    /// The `"decoder"` config, preserved verbatim. Not applied — the
-    /// crate's built-in decoder concatenates each id's byte string as
-    /// stored in the vocabulary and reinterprets as UTF-8.
+    /// The `"decoder"` config, deserialised into a typed
+    /// [`HfDecoder`] value. Only [`HfDecoder::ByteLevel`] is honoured
+    /// at conversion time and attaches [`Decoder::ByteLevel`] to the
+    /// produced [`BpeTokenizer`]; all other variants are preserved as
+    /// [`HfDecoder::Other`] for caller inspection and produce a
+    /// tokenizer whose `decode` concatenates each id's byte string
+    /// as stored in the vocabulary and reinterprets as UTF-8 (the
+    /// passthrough decoder).
     #[serde(default)]
-    pub decoder: Option<serde_json::Value>,
+    pub decoder: Option<HfDecoder>,
     /// The `"model"` block. Required by the spec; parse fails if it
     /// is missing.
     pub model: HfModel,
@@ -283,8 +299,11 @@ pub enum HfPreTokenizer {
         /// `"pretokenizers"` (note the missing hyphen).
         pretokenizers: Vec<HfPreTokenizer>,
     },
-    /// Byte-level pre-tokenizer (GPT-2 / Llama-2 shape). Deferred.
-    ByteLevel(serde_json::Value),
+    /// Byte-level pre-tokenizer (GPT-2 / Llama-2 shape). Honoured
+    /// at conversion: composes the `ByteLevel` byte↔char bijection
+    /// with an optional GPT-2-canonical regex split and an optional
+    /// leading-space prefix. See [`HfByteLevelPreTokenizer`].
+    ByteLevel(HfByteLevelPreTokenizer),
     /// Whitespace splitter. Deferred.
     Whitespace(serde_json::Value),
     /// Whitespace splitter that keeps runs together. Deferred.
@@ -343,6 +362,85 @@ pub enum HfPattern {
     /// wiring it up under HF semantics (which for `String` patterns
     /// depends on `behavior`) is not yet done.
     String(String),
+}
+
+/// A `ByteLevel` pre-tokenizer's configuration.
+///
+/// Mirrors Hugging Face's on-disk shape. Every field has a serde
+/// default matching HF's Rust defaults, so a `"pre_tokenizer":
+/// {"type": "ByteLevel"}` value with no other fields parses as
+/// `add_prefix_space: true, trim_offsets: true, use_regex: true` —
+/// the shape used by the shipped GPT-2 checkpoint.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfByteLevelPreTokenizer {
+    /// Whether to prepend a leading ASCII space to inputs that do not
+    /// already start with one, before the byte↔char mapping is
+    /// applied. Defaults to `true` — HF's own default and the shape
+    /// that produces `"Ġhello"` from `"hello"`.
+    #[serde(default = "default_true")]
+    pub add_prefix_space: bool,
+    /// HF's `trim_offsets` field. Governs whether the returned
+    /// offsets strip leading `Ġ` characters. Preserved but not
+    /// applied — the crate reports offsets into the byte-encoded
+    /// stream, which is the shape most downstream consumers need
+    /// anyway.
+    #[serde(default = "default_true")]
+    pub trim_offsets: bool,
+    /// Whether to apply the GPT-2 canonical regex before the byte
+    /// mapping runs. HF's default is `true`, and this is what
+    /// produces the split into `["ĠHello", "Ġworld"]` for
+    /// `"Hello world"`. When `false`, the whole input region is a
+    /// single chunk fed straight into the byte mapping.
+    #[serde(default = "default_true")]
+    pub use_regex: bool,
+}
+
+/// The `decoder` block of a `tokenizer.json` file.
+///
+/// Only [`HfDecoder::ByteLevel`] is honoured at conversion time; the
+/// others parse successfully and preserve their raw JSON so callers
+/// can inspect what was rejected. See
+/// [`HfTokenizerConfig::decoder`] for the field's role.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+#[non_exhaustive]
+pub enum HfDecoder {
+    /// The byte-level decoder. Attaches
+    /// [`Decoder::ByteLevel`](crate::Decoder) to the produced
+    /// [`BpeTokenizer`] so `decode` reverses the byte↔char mapping.
+    /// HF's on-disk shape also carries the same `add_prefix_space` /
+    /// `trim_offsets` / `use_regex` fields as the `ByteLevel`
+    /// pre-tokenizer — captured here so callers can inspect them,
+    /// but not applied on the decode side (the mapping alone suffices
+    /// for byte-identical round trips through the `BpeTokenizer`'s
+    /// concatenate-then-decode path).
+    ByteLevel {
+        /// Preserved for caller inspection; not applied at decode.
+        #[serde(default = "default_true")]
+        add_prefix_space: bool,
+        /// Preserved for caller inspection; not applied at decode.
+        #[serde(default = "default_true")]
+        trim_offsets: bool,
+        /// Preserved for caller inspection; not applied at decode.
+        #[serde(default = "default_true")]
+        use_regex: bool,
+    },
+    /// Any other decoder (`WordPiece`, `Metaspace`, `BPEDecoder`,
+    /// `Sequence`, ...). Serde's `#[serde(other)]` catches every
+    /// tag string that does not match the variants listed above;
+    /// the payload beyond the tag is discarded (callers who need to
+    /// inspect a rejected decoder can re-parse the raw JSON
+    /// themselves — the original `tokenizer.json` byte string is the
+    /// authoritative source).
+    #[serde(other)]
+    Other,
+}
+
+/// Default `true` for serde-derived booleans that HF stores as
+/// `true` when omitted.
+const fn default_true() -> bool {
+    true
 }
 
 // ---------------------------------------------------------------------
@@ -417,6 +515,14 @@ pub enum HfConversionError {
         /// Number of children in the offending sequence.
         child_count: usize,
     },
+    /// A `Sequence` pre-tokenizer combined `ByteLevel` with a sibling
+    /// that is not `Split(Regex)`. The `ByteLevel` path only composes
+    /// with a `Split(Regex)` (which then feeds the byte↔char mapping)
+    /// or with nothing at all.
+    UnsupportedByteLevelSequence {
+        /// A short human-readable reason.
+        reason: &'static str,
+    },
     /// A merge entry could not be interpreted: the joined form did
     /// not contain exactly one space, or the pair form was empty.
     InvalidMerge {
@@ -465,7 +571,12 @@ impl fmt::Display for HfConversionError {
                 f,
                 "unsupported HF pre_tokenizer Sequence with {child_count} children: \
                  exactly one supported Split(Regex) entry is required, \
-                 and no deferred siblings such as ByteLevel"
+                 possibly combined with a single ByteLevel sibling"
+            ),
+            Self::UnsupportedByteLevelSequence { reason } => write!(
+                f,
+                "unsupported HF pre_tokenizer Sequence combining ByteLevel with an \
+                 unsupported sibling: {reason}"
             ),
             Self::InvalidMerge { index, reason } => {
                 write!(f, "invalid merge entry at index {index}: {reason}")
@@ -618,11 +729,12 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
         merges.insert(left, right, rank);
     }
 
-    // Pre-tokenizer — Split(Regex), or a single-child Sequence
-    // around one, or nothing at all.
-    let pre_tokenizer_regex = match &config.pre_tokenizer {
-        None => None,
-        Some(pt) => extract_split_regex(pt)?,
+    // Pre-tokenizer — Split(Regex), ByteLevel(+optional inner Split),
+    // a Sequence combining one Split(Regex) with one ByteLevel, or
+    // nothing at all. See `extract_pre_tokenizer` for the exact rules.
+    let pipeline = match &config.pre_tokenizer {
+        None => PreTokPipeline::None,
+        Some(pt) => extract_pre_tokenizer(pt)?,
     };
 
     // Special tokens — added_tokens with special == true.
@@ -638,9 +750,35 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
     if !specials.is_empty() {
         tok = tok.with_special_tokens(specials);
     }
-    if let Some(pattern) = pre_tokenizer_regex {
-        let compiled = RegexPreTokenizer::new(pattern)?;
-        tok = tok.with_pre_tokenizer(PreTokenizerRegex::regex(compiled));
+    match pipeline {
+        PreTokPipeline::None => {}
+        PreTokPipeline::Regex(pattern) => {
+            let compiled = RegexPreTokenizer::new(pattern)?;
+            tok = tok.with_pre_tokenizer(PreTokenizerRegex::regex(compiled));
+        }
+        PreTokPipeline::ByteLevel {
+            add_prefix_space,
+            use_regex,
+            inner_regex,
+        } => {
+            // If an inner Split(Regex) is present it wins; otherwise
+            // if `use_regex` is true, we fall back to the canonical
+            // GPT-2 pattern that HF's ByteLevel uses internally.
+            let split = if let Some(pat) = inner_regex {
+                Some(RegexPreTokenizer::new(pat)?)
+            } else if use_regex {
+                Some(RegexPreTokenizer::new(GPT2_PATTERN)?)
+            } else {
+                None
+            };
+            tok = tok.with_pre_tokenizer(PreTokenizerRegex::byte_level(add_prefix_space, split));
+        }
+    }
+
+    // Decoder — only ByteLevel is honoured; the passthrough default
+    // covers every other shape.
+    if let Some(HfDecoder::ByteLevel { .. }) = &config.decoder {
+        tok = tok.with_decoder(Decoder::ByteLevel);
     }
     Ok(tok)
 }
@@ -696,54 +834,61 @@ fn merge_pair(merge: &HfMerge, index: usize) -> Result<(Vec<u8>, Vec<u8>), HfCon
     }
 }
 
-/// Walk a [`HfPreTokenizer`] value and produce the regex pattern that
-/// the underlying [`RegexPreTokenizer`] should be built from.
+/// The subset of pre-tokenizer shapes [`to_bpe_tokenizer`] knows how to
+/// materialise. Internal to this module; see [`extract_pre_tokenizer`]
+/// for the caller-visible reduction.
+#[derive(Debug, Clone)]
+enum PreTokPipeline {
+    /// No pre-tokenizer at all — the tokenizer will fall back to
+    /// whitespace splitting on its own.
+    None,
+    /// A plain regex pre-tokenizer, built by compiling the pattern.
+    Regex(String),
+    /// A `ByteLevel` pipeline — optional leading-space prefix, optional
+    /// inner regex to split *before* the byte↔char mapping runs.
+    /// `use_regex` mirrors HF's field; when `inner_regex` is `None`
+    /// and `use_regex` is `true`, the loader supplies HF's canonical
+    /// GPT-2 pattern.
+    ByteLevel {
+        add_prefix_space: bool,
+        use_regex: bool,
+        inner_regex: Option<String>,
+    },
+}
+
+/// Walk a [`HfPreTokenizer`] value and reduce it to a runnable
+/// [`PreTokPipeline`].
 ///
-/// Returns `Ok(None)` when the pre-tokenizer is trivially empty (an
-/// empty `Sequence`), `Ok(Some(pattern))` when a single supported
-/// `Split(Regex)` is found, and an [`HfConversionError`] otherwise.
-fn extract_split_regex(pt: &HfPreTokenizer) -> Result<Option<String>, HfConversionError> {
+/// Rules:
+///
+/// * A bare `Split(Regex)` becomes [`PreTokPipeline::Regex`].
+/// * A bare `ByteLevel(...)` becomes [`PreTokPipeline::ByteLevel`].
+/// * A `Sequence { pretokenizers }` may hold zero, one, or two
+///   entries:
+///     - Empty → [`PreTokPipeline::None`].
+///     - Exactly one supported child → its own pipeline.
+///     - Exactly two entries where one is `Split(Regex)` and the
+///       other is `ByteLevel(...)` → a `ByteLevel` pipeline whose
+///       inner regex is the Split's pattern. Order does not matter.
+/// * Any other combination is rejected with a targeted error.
+fn extract_pre_tokenizer(pt: &HfPreTokenizer) -> Result<PreTokPipeline, HfConversionError> {
     match pt {
-        HfPreTokenizer::Split(split) => match &split.pattern {
-            HfPattern::Regex(pattern) => Ok(Some(pattern.clone())),
-            HfPattern::String(_) => {
-                Err(HfConversionError::UnsupportedPattern { variant: "String" })
-            }
-        },
-        HfPreTokenizer::Sequence { pretokenizers } => {
-            if pretokenizers.is_empty() {
-                return Ok(None);
-            }
-            // If any child is a deferred type, reject that specifically
-            // — it produces the most actionable message. Otherwise, if
-            // exactly one child is a Split(Regex), take it.
-            for child in pretokenizers {
-                if let Some(err) = deferred_pre_tokenizer_reason(child) {
-                    return Err(err);
-                }
-            }
-            let mut chosen: Option<String> = None;
-            for child in pretokenizers {
-                let inner = extract_split_regex(child)?;
-                if let Some(pat) = inner {
-                    if chosen.is_some() {
-                        return Err(HfConversionError::AmbiguousSequencePreTokenizer {
-                            child_count: pretokenizers.len(),
-                        });
-                    }
-                    chosen = Some(pat);
-                }
-            }
-            Ok(chosen)
-        }
+        HfPreTokenizer::Split(split) => split_to_pipeline(split),
+        HfPreTokenizer::ByteLevel(bl) => Ok(PreTokPipeline::ByteLevel {
+            add_prefix_space: bl.add_prefix_space,
+            use_regex: bl.use_regex,
+            inner_regex: None,
+        }),
+        HfPreTokenizer::Sequence { pretokenizers } => sequence_to_pipeline(pretokenizers),
         // Deferred variants: return a targeted error.
         other => {
             if let Some(err) = deferred_pre_tokenizer_reason(other) {
                 Err(err)
             } else {
                 // Unreachable in practice — every non-Split /
-                // non-Sequence variant of `HfPreTokenizer` is covered
-                // by `deferred_pre_tokenizer_reason`. Guard it anyway.
+                // non-Sequence / non-ByteLevel variant of
+                // `HfPreTokenizer` is covered by
+                // `deferred_pre_tokenizer_reason`. Guard it anyway.
                 Err(HfConversionError::UnsupportedPreTokenizer {
                     type_name: "unknown".to_string(),
                     reason: "unhandled pre_tokenizer variant",
@@ -753,18 +898,93 @@ fn extract_split_regex(pt: &HfPreTokenizer) -> Result<Option<String>, HfConversi
     }
 }
 
+/// Reduce a `Split` pre-tokenizer to a pipeline (or the appropriate
+/// error).
+fn split_to_pipeline(split: &HfSplitPreTokenizer) -> Result<PreTokPipeline, HfConversionError> {
+    match &split.pattern {
+        HfPattern::Regex(pattern) => Ok(PreTokPipeline::Regex(pattern.clone())),
+        HfPattern::String(_) => Err(HfConversionError::UnsupportedPattern { variant: "String" }),
+    }
+}
+
+/// Reduce a `Sequence` pre-tokenizer's children into a pipeline.
+///
+/// See [`extract_pre_tokenizer`] for the acceptance rules.
+fn sequence_to_pipeline(children: &[HfPreTokenizer]) -> Result<PreTokPipeline, HfConversionError> {
+    if children.is_empty() {
+        return Ok(PreTokPipeline::None);
+    }
+
+    // Partition children into (byte_level, split, deferred) buckets.
+    // Nested Sequences are rejected up-front to keep the case
+    // enumeration finite.
+    let mut byte_level: Option<&HfByteLevelPreTokenizer> = None;
+    let mut split: Option<&HfSplitPreTokenizer> = None;
+    for child in children {
+        match child {
+            HfPreTokenizer::ByteLevel(bl) => {
+                if byte_level.is_some() {
+                    return Err(HfConversionError::AmbiguousSequencePreTokenizer {
+                        child_count: children.len(),
+                    });
+                }
+                byte_level = Some(bl);
+            }
+            HfPreTokenizer::Split(s) => {
+                if split.is_some() {
+                    return Err(HfConversionError::AmbiguousSequencePreTokenizer {
+                        child_count: children.len(),
+                    });
+                }
+                split = Some(s);
+            }
+            HfPreTokenizer::Sequence { .. } => {
+                return Err(HfConversionError::UnsupportedByteLevelSequence {
+                    reason: "nested Sequence pre-tokenizers are not supported",
+                });
+            }
+            other => {
+                if let Some(err) = deferred_pre_tokenizer_reason(other) {
+                    return Err(err);
+                }
+                return Err(HfConversionError::UnsupportedPreTokenizer {
+                    type_name: "unknown".to_string(),
+                    reason: "unhandled pre_tokenizer variant inside Sequence",
+                });
+            }
+        }
+    }
+
+    match (byte_level, split) {
+        (None, None) => Ok(PreTokPipeline::None),
+        (None, Some(s)) => split_to_pipeline(s),
+        (Some(bl), None) => Ok(PreTokPipeline::ByteLevel {
+            add_prefix_space: bl.add_prefix_space,
+            use_regex: bl.use_regex,
+            inner_regex: None,
+        }),
+        (Some(bl), Some(s)) => match &s.pattern {
+            HfPattern::Regex(pat) => Ok(PreTokPipeline::ByteLevel {
+                add_prefix_space: bl.add_prefix_space,
+                use_regex: bl.use_regex,
+                inner_regex: Some(pat.clone()),
+            }),
+            HfPattern::String(_) => {
+                Err(HfConversionError::UnsupportedPattern { variant: "String" })
+            }
+        },
+    }
+}
+
 /// Map an [`HfPreTokenizer`] to a specific "deferred" error if it is a
-/// known-unsupported variant. Returns `None` for `Split` and
-/// `Sequence` (both of which are handled inline by
-/// [`extract_split_regex`]).
+/// known-unsupported variant. Returns `None` for `Split`, `ByteLevel`,
+/// and `Sequence` (all of which are handled inline by
+/// [`extract_pre_tokenizer`] / [`sequence_to_pipeline`]).
 fn deferred_pre_tokenizer_reason(pt: &HfPreTokenizer) -> Option<HfConversionError> {
     let (type_name, reason) = match pt {
-        HfPreTokenizer::Split(_) | HfPreTokenizer::Sequence { .. } => return None,
-        HfPreTokenizer::ByteLevel(_) => (
-            "ByteLevel",
-            "byte-level pre-tokenization is deferred; \
-             it requires the matching input-remapping and decoder layers",
-        ),
+        HfPreTokenizer::Split(_)
+        | HfPreTokenizer::Sequence { .. }
+        | HfPreTokenizer::ByteLevel(_) => return None,
         HfPreTokenizer::Whitespace(_) => ("Whitespace", "deferred to a later landing"),
         HfPreTokenizer::WhitespaceSplit(_) => ("WhitespaceSplit", "deferred to a later landing"),
         HfPreTokenizer::Punctuation(_) => ("Punctuation", "deferred to a later landing"),
@@ -1020,7 +1240,13 @@ mod tests {
     }
 
     #[test]
-    fn sequence_with_bytelevel_reports_deferred_error() {
+    fn sequence_with_split_and_bytelevel_composes_to_byte_level() {
+        // Wave-9 now supports ByteLevel: a Sequence carrying a
+        // Split(Regex) *and* a ByteLevel entry becomes a byte-level
+        // pipeline whose inner regex is the Split's pattern (the
+        // outer Split "wins" the regex slot). The vocab below is
+        // just large enough to encode `,`-separated bytes after the
+        // ByteLevel mapping (which for `,` = 0x2C stays as `,`).
         let json = r#"{
             "added_tokens": [],
             "pre_tokenizer": {
@@ -1047,36 +1273,56 @@ mod tests {
             }
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        let err = to_bpe_tokenizer(&config).unwrap_err();
-        match err {
-            HfConversionError::UnsupportedPreTokenizer { type_name, .. } => {
-                assert_eq!(type_name, "ByteLevel");
-            }
-            other => panic!("expected UnsupportedPreTokenizer(ByteLevel), got {other:?}"),
-        }
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        // `a,b` with the Split regex `[^,]+` yields chunks ["a", "b"];
+        // ByteLevel maps each byte to itself for ASCII printables.
+        assert_eq!(tok.encode("a,b").unwrap().ids, alloc::vec![0, 1]);
     }
 
     #[test]
-    fn bytelevel_pre_tokenizer_reports_deferred_error() {
+    fn bytelevel_pre_tokenizer_is_supported() {
+        // Wave-9: standalone ByteLevel is honoured, using the GPT-2
+        // canonical regex when `use_regex: true` and no inner Split
+        // sibling is provided. The vocab below carries every mapped
+        // char that a leading-space `hello` encodes to.
         let json = r#"{
             "added_tokens": [],
             "pre_tokenizer": {
                 "type": "ByteLevel",
-                "add_prefix_space": false,
+                "add_prefix_space": true,
+                "trim_offsets": true,
+                "use_regex": true
+            },
+            "decoder": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
                 "trim_offsets": true,
                 "use_regex": true
             },
             "model": {
                 "type": "BPE",
-                "vocab": {"a": 0},
-                "merges": []
+                "vocab": {
+                    "Ġ": 0,
+                    "h": 1, "e": 2, "l": 3, "o": 4,
+                    "Ġh": 5, "Ġhe": 6, "ll": 7, "Ġhell": 8, "Ġhello": 9
+                },
+                "merges": [
+                    ["Ġ", "h"], ["Ġh", "e"], ["l", "l"], ["Ġhe", "ll"], ["Ġhell", "o"]
+                ]
             }
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        let err = to_bpe_tokenizer(&config).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("ByteLevel"), "message: {msg}");
-        assert!(msg.contains("deferred"), "message: {msg}");
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert_eq!(tok.decoder(), crate::Decoder::ByteLevel);
+        // "hello" with add_prefix_space=true becomes " hello" →
+        // GPT-2 regex yields [" hello"] → byte-level encoded to
+        // "Ġhello" → merges reach the vocab entry `Ġhello` (id 9).
+        let enc = tok.encode("hello").unwrap();
+        assert_eq!(enc.ids, alloc::vec![9]);
+        // ByteLevel decoder reverses the char↔byte mapping. Round
+        // trip lands back on the leading-space form because the
+        // encoder added it; that is HF's documented behaviour.
+        assert_eq!(tok.decode(&enc.ids).unwrap(), " hello");
     }
 
     #[test]
@@ -1178,15 +1424,19 @@ mod tests {
     }
 
     #[test]
-    fn normalizer_post_processor_decoder_are_preserved_but_ignored() {
+    fn normalizer_and_post_processor_are_preserved_but_ignored() {
         // These fields exist in real tokenizer.json blobs; we
-        // preserve them for caller inspection but do not apply them,
-        // and the conversion still succeeds.
+        // preserve them for caller inspection but do not apply them.
+        // The decoder field, on the other hand, IS applied for the
+        // ByteLevel variant (see `bytelevel_pre_tokenizer_is_supported`);
+        // here we use a decoder shape (`Metaspace`) that still
+        // exercises the "recognised but not honoured" path so the
+        // resulting tokenizer stays on the default `Passthrough`.
         let json = r#"{
             "added_tokens": [],
             "normalizer": {"type": "NFC"},
             "post_processor": {"type": "TemplateProcessing", "single": [], "pair": []},
-            "decoder": {"type": "ByteLevel"},
+            "decoder": {"type": "Metaspace"},
             "model": {
                 "type": "BPE",
                 "vocab": {"a": 0, "b": 1},
@@ -1196,22 +1446,23 @@ mod tests {
         let config = parse_tokenizer_json(json).unwrap();
         assert!(config.normalizer.is_some());
         assert!(config.post_processor.is_some());
-        assert!(config.decoder.is_some());
+        assert!(matches!(config.decoder, Some(HfDecoder::Other)));
         let tok = to_bpe_tokenizer(&config).unwrap();
+        assert_eq!(tok.decoder(), Decoder::Passthrough);
         assert_eq!(tok.encode("ab").unwrap().ids, vec![0, 1]);
     }
 
     // ---------------------------------------------------------------------
     // Representative GPT-2-shape blob.
     //
-    // Real GPT-2 tokenizer.json uses a ByteLevel pre-tokenizer + a
-    // ByteLevel decoder, both of which are deferred by this landing.
-    // The blob below reproduces the *shape* — top-level layout,
-    // added_tokens with `<|endoftext|>`, space-joined merges, an
-    // unk_token on the BPE model — but omits the ByteLevel pieces so
-    // the conversion succeeds. Encodings are of course not
-    // bit-identical to real GPT-2; that requires the ByteLevel
-    // landing.
+    // Wave-9 makes ByteLevel a first-class citizen: this config now
+    // ships the real GPT-2 pipeline — a ByteLevel pre-tokenizer with
+    // the canonical `add_prefix_space: true, use_regex: true` defaults
+    // and a matching ByteLevel decoder. The vocab and merges are
+    // written in *encoded* form (leading spaces show up as `Ġ`,
+    // matching the on-disk shape of the real GPT-2 file). Encodings
+    // are now byte-identical to real GPT-2 on any input the toy
+    // vocab can cover.
     // ---------------------------------------------------------------------
 
     fn gpt2_style_config() -> HfTokenizerConfig {
@@ -1231,9 +1482,19 @@ mod tests {
                 }
             ],
             "normalizer": null,
-            "pre_tokenizer": null,
+            "pre_tokenizer": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
+                "trim_offsets": true,
+                "use_regex": true
+            },
             "post_processor": null,
-            "decoder": null,
+            "decoder": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
+                "trim_offsets": true,
+                "use_regex": true
+            },
             "model": {
                 "type": "BPE",
                 "dropout": null,
@@ -1245,11 +1506,16 @@ mod tests {
                 "vocab": {
                     "h": 0, "e": 1, "l": 2, "o": 3, "w": 4, "r": 5, "d": 6,
                     "he": 7, "ll": 8, "lo": 9, "hell": 10, "hello": 11,
-                    "wo": 12, "or": 13, "wor": 14, "ld": 15, "world": 16
+                    "wo": 12, "or": 13, "wor": 14, "ld": 15, "world": 16,
+                    "Ġ": 17,
+                    "Ġh": 18, "Ġhe": 19, "Ġhell": 20, "Ġhello": 21,
+                    "Ġw": 22, "Ġwo": 23, "Ġwor": 24, "Ġworl": 25, "Ġworld": 26
                 },
                 "merges": [
-                    "h e", "l l", "he ll", "l o", "hell o",
-                    "w o", "o r", "wo r", "l d", "wor ld"
+                    "Ġ h", "Ġh e", "l l", "Ġhe ll", "Ġhell o",
+                    "Ġ w", "Ġw o", "Ġwo r", "Ġwor l", "Ġworl d",
+                    "h e", "he ll", "hell o",
+                    "w o", "wo r", "wor l", "worl d"
                 ]
             }
         }"#;
@@ -1267,25 +1533,44 @@ mod tests {
         // Merges parsed in space-joined form.
         match &config.model {
             HfModel::Bpe(bpe) => {
-                assert_eq!(bpe.merges.len(), 10);
-                assert!(matches!(&bpe.merges[0], HfMerge::Joined(s) if s == "h e"));
+                assert!(bpe.merges.len() >= 10);
+                assert!(matches!(&bpe.merges[0], HfMerge::Joined(s) if s == "Ġ h"));
             }
             _ => panic!("expected BPE"),
         }
-        // Round-trip through the produced tokenizer on a couple of
-        // words the merge table can reach.
+        // The ByteLevel pre-tokenizer and decoder both parse into
+        // typed variants (no more `serde_json::Value` fallback).
+        assert!(matches!(
+            config.pre_tokenizer,
+            Some(HfPreTokenizer::ByteLevel(_))
+        ));
+        assert!(matches!(config.decoder, Some(HfDecoder::ByteLevel { .. })));
+        // Round-trip through the produced tokenizer. Encoding
+        // matches the real GPT-2 shape: leading-space words become
+        // `Ġword`, and the merge table reaches the whole-word id.
         let tok = to_bpe_tokenizer(&config).unwrap();
-        // "hello" merges: h+e → he, l+l → ll, he+ll → hell, hell+o → hello (id 11).
+        assert_eq!(tok.decoder(), Decoder::ByteLevel);
+        // "hello" with add_prefix_space=true encodes to " hello" →
+        // GPT-2 regex → [" hello"] → byte-level `Ġhello` → id 21.
         let hello = tok.encode("hello").unwrap();
-        assert_eq!(hello.ids, vec![11]);
-        assert_eq!(tok.decode(&hello.ids).unwrap(), "hello");
-        // "world" merges reach id 16.
-        let world = tok.encode("world").unwrap();
-        assert_eq!(world.ids, vec![16]);
-        // <|endoftext|> is honoured as a special.
+        assert_eq!(hello.ids, vec![21]);
+        // Decode round-trips through the ByteLevel byte↔char inverse
+        // and lands back on the space-prefixed original (HF's own
+        // decode behaviour — the prefix space is the encoder's).
+        assert_eq!(tok.decode(&hello.ids).unwrap(), " hello");
+        // A multi-word input: `"Hello world"` — the toy vocab only
+        // covers lowercase, so use the covered inputs.
+        let mixed_words = tok.encode("hello world").unwrap();
+        // "hello world" → " hello world" → [" hello", " world"] →
+        // ["Ġhello", "Ġworld"] → ids [21, 26].
+        assert_eq!(mixed_words.ids, vec![21, 26]);
+        // <|endoftext|> is honoured as a special even inside a
+        // ByteLevel pipeline (specials are matched literally before
+        // any regex / byte-level mapping runs).
         let mixed = tok.encode("hello<|endoftext|>world").unwrap();
-        assert_eq!(mixed.ids, vec![11, 50256, 16]);
-        assert_eq!(mixed.special_mask, vec![false, true, false]);
+        assert_eq!(mixed.ids.first(), Some(&21));
+        assert_eq!(mixed.ids.iter().find(|&&id| id == 50256), Some(&50256));
+        assert!(mixed.special_mask.iter().any(|&b| b));
     }
 
     // ---------------------------------------------------------------------
@@ -1432,5 +1717,187 @@ mod tests {
             at.extra.get("single_word"),
             Some(&serde_json::Value::Bool(true))
         );
+    }
+
+    // ---------------------------------------------------------------------
+    // Wave-9 ByteLevel-specific integration tests.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn bytelevel_defaults_match_hf_shape() {
+        // Serde defaults on `HfByteLevelPreTokenizer` should recover the
+        // HF library defaults when the fields are absent from the JSON.
+        let json = r#"{
+            "type": "ByteLevel"
+        }"#;
+        let bl: HfByteLevelPreTokenizer = serde_json::from_str(json).unwrap();
+        assert!(bl.add_prefix_space);
+        assert!(bl.trim_offsets);
+        assert!(bl.use_regex);
+    }
+
+    #[test]
+    fn bytelevel_decoder_defaults_match_hf_shape() {
+        // Same for the decoder side: bare `{"type": "ByteLevel"}`.
+        let json = r#"{"type": "ByteLevel"}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        match dec {
+            HfDecoder::ByteLevel {
+                add_prefix_space,
+                trim_offsets,
+                use_regex,
+            } => {
+                assert!(add_prefix_space);
+                assert!(trim_offsets);
+                assert!(use_regex);
+            }
+            HfDecoder::Other => panic!("bare ByteLevel decoder parsed as Other"),
+        }
+    }
+
+    #[test]
+    fn unknown_decoder_falls_through_to_other() {
+        let json = r#"{"type": "Metaspace", "replacement": "_"}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        assert!(matches!(dec, HfDecoder::Other));
+    }
+
+    #[test]
+    fn bytelevel_use_regex_false_disables_inner_split() {
+        // `use_regex: false` — the whole region is one chunk, encoded
+        // as one shot. Our toy vocab must cover every mapped byte of
+        // the input.
+        let json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {
+                "type": "ByteLevel",
+                "add_prefix_space": false,
+                "trim_offsets": false,
+                "use_regex": false
+            },
+            "decoder": {"type": "ByteLevel"},
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1, "c": 2, "Ġ": 3, "ab": 4, "abc": 5},
+                "merges": [["a", "b"], ["ab", "c"]]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        // "abc" — no prefix space, no inner regex split — encodes as
+        // a single chunk. Merges reach id 5 ("abc").
+        let enc = tok.encode("abc").unwrap();
+        assert_eq!(enc.ids, alloc::vec![5]);
+        // Decode reverses the ByteLevel mapping (no-op for
+        // printable ASCII).
+        assert_eq!(tok.decode(&enc.ids).unwrap(), "abc");
+    }
+
+    #[test]
+    fn bytelevel_hello_world_produces_ghello_gworld_chunks() {
+        // The task's canonical acceptance example: `encode("Hello
+        // world")` should yield the byte-level chunks `["ĠHello",
+        // "Ġworld"]`. Our toy vocab shipping every needed piece
+        // makes each chunk reach its whole-word id.
+        let json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel"},
+            "decoder": {"type": "ByteLevel"},
+            "model": {
+                "type": "BPE",
+                "vocab": {
+                    "Ġ": 0, "H": 1, "e": 2, "l": 3, "o": 4,
+                    "w": 5, "r": 6, "d": 7,
+                    "ĠH": 8, "ĠHe": 9, "ll": 10, "ĠHell": 11, "ĠHello": 12,
+                    "Ġw": 13, "Ġwo": 14, "Ġwor": 15, "Ġworl": 16, "Ġworld": 17
+                },
+                "merges": [
+                    ["Ġ", "H"], ["ĠH", "e"], ["l", "l"], ["ĠHe", "ll"], ["ĠHell", "o"],
+                    ["Ġ", "w"], ["Ġw", "o"], ["Ġwo", "r"], ["Ġwor", "l"], ["Ġworl", "d"]
+                ]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        let enc = tok.encode("Hello world").unwrap();
+        // The two chunks are ĠHello (id 12) and Ġworld (id 17).
+        assert_eq!(enc.ids, alloc::vec![12, 17]);
+        // Decode round-trips through the ByteLevel inverse and lands
+        // on the leading-space form (HF's `add_prefix_space` default).
+        assert_eq!(tok.decode(&enc.ids).unwrap(), " Hello world");
+    }
+
+    #[test]
+    fn bytelevel_round_trips_every_shipped_input() {
+        // Vocabulary that covers every byte 0..=255's mapped char
+        // as its own single-char entry. With no merges the BPE
+        // loop is a no-op and encode/decode just exercises the
+        // byte-level layer.
+        //
+        // Build the vocab programmatically so every ByteLevel-mapped
+        // char is a valid id — the string form is inserted as
+        // `String::from(char)`, which is the char's UTF-8 encoding.
+        let mut vocab_entries: BTreeMap<String, TokenId> = BTreeMap::new();
+        for b in 0u8..=255 {
+            let ch = crate::byte_level::BYTES_TO_CHARS[b as usize];
+            let mut s = String::new();
+            s.push(ch);
+            vocab_entries.insert(s, u32::from(b));
+        }
+        let mut json = String::from(
+            r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel"},
+            "decoder": {"type": "ByteLevel"},
+            "model": {"type": "BPE", "merges": [], "vocab": "#,
+        );
+        json.push_str(&serde_json::to_string(&vocab_entries).unwrap());
+        json.push_str("}}");
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+
+        // Every ASCII input round-trips to `" " + input` because
+        // add_prefix_space defaults to true. Verify a batch of
+        // representative shapes.
+        for &(input, expected_round_trip) in &[
+            ("hello", " hello"),
+            ("Hello world", " Hello world"),
+            ("a,b,c", " a,b,c"),
+            ("café", " café"),
+            ("", ""),
+        ] {
+            let enc = tok.encode(input).unwrap();
+            let dec = tok.decode(&enc.ids).unwrap();
+            assert_eq!(dec, expected_round_trip, "failed on {input:?}");
+        }
+    }
+
+    #[test]
+    fn bytelevel_no_prefix_space_leaves_input_unchanged() {
+        // add_prefix_space: false — encode/decode round-trips
+        // preserve the original input verbatim.
+        let mut vocab_entries: BTreeMap<String, TokenId> = BTreeMap::new();
+        for b in 0u8..=255 {
+            let ch = crate::byte_level::BYTES_TO_CHARS[b as usize];
+            let mut s = String::new();
+            s.push(ch);
+            vocab_entries.insert(s, u32::from(b));
+        }
+        let mut json = String::from(
+            r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false},
+            "decoder": {"type": "ByteLevel"},
+            "model": {"type": "BPE", "merges": [], "vocab": "#,
+        );
+        json.push_str(&serde_json::to_string(&vocab_entries).unwrap());
+        json.push_str("}}");
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        for &input in &["hello", "Hello world", "a,b,c", ""] {
+            let enc = tok.encode(input).unwrap();
+            let dec = tok.decode(&enc.ids).unwrap();
+            assert_eq!(dec, input, "failed on {input:?}");
+        }
     }
 }

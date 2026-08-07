@@ -80,6 +80,13 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 mod bpe;
 
+// ByteLevel byte↔Unicode bijection. Small, dependency-free, `alloc`-only
+// module used by both the encode-side pre-tokenizer wiring in
+// [`bpe`] and the decode-side wrapper in the HF loader (`src/hf.rs`).
+// See its module docs for the mapping's provenance.
+#[cfg(feature = "alloc")]
+pub mod byte_level;
+
 // The Phase 2b regex-based pre-tokenizer lives in its own module so
 // the (heavier) `fancy-regex` backend only compiles when `std` is
 // enabled — the `no_std` build of this crate keeps its footprint at
@@ -95,7 +102,8 @@ pub mod hf;
 
 #[cfg(feature = "alloc")]
 pub use bpe::{
-    BpeMergeTable, BpeTokenizer, BpeVocabulary, PreTokenizerRegex, TokenId, VocabularyBuilderError,
+    BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, PreTokenizerRegex, TokenId,
+    VocabularyBuilderError,
 };
 
 #[cfg(feature = "std")]

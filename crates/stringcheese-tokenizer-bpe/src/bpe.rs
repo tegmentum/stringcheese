@@ -189,7 +189,7 @@ impl BpeVocabulary {
 
 /// A pre-tokenizer pattern.
 ///
-/// Two shapes are supported:
+/// Three shapes are supported:
 ///
 /// * [`Self::Literal`] — split at every occurrence of a fixed
 ///   separator string. The separator is discarded; adjacent matches
@@ -203,6 +203,17 @@ impl BpeVocabulary {
 ///   needed to reproduce tiktoken / Hugging Face pre-tokenization; only
 ///   available when the `std` feature is on because the underlying
 ///   `fancy-regex` backend requires `std::error::Error`.
+/// * [`Self::ByteLevel`] — the byte-level pipeline used by GPT-2 and
+///   Llama-family byte-level BPE: optionally prefix a leading space,
+///   optionally split by a regex first, then map every input byte to
+///   a printable Unicode char via
+///   [`byte_level::encode_bytes`](crate::byte_level::encode_bytes)
+///   before the BPE merge loop runs. See that module's docs for the
+///   bijection this leans on. The nested `split` regex is optional so
+///   callers can drop it (matching Hugging Face's `use_regex: false`
+///   flag on the `ByteLevel` pre-tokenizer). Only available when the
+///   `std` feature is on because it composes with
+///   [`RegexPreTokenizer`](crate::pre_tokenizer::RegexPreTokenizer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PreTokenizerRegex {
@@ -215,6 +226,27 @@ pub enum PreTokenizerRegex {
     /// dropped (matching tiktoken / HF `re.findall(...)` semantics).
     #[cfg(feature = "std")]
     Regex(crate::pre_tokenizer::RegexPreTokenizer),
+    /// Byte-level pipeline (GPT-2 / Llama): optionally prefix a space,
+    /// optionally regex-split first, then remap every byte through
+    /// [`byte_level::BYTES_TO_CHARS`](crate::byte_level::BYTES_TO_CHARS).
+    /// The vocabulary and merges seen by the BPE core must be stored
+    /// in *encoded* form (`" hello"` → `"Ġhello"`), which is what
+    /// Hugging Face's `tokenizer.json` ships.
+    #[cfg(feature = "std")]
+    ByteLevel {
+        /// If `true`, prepend `' '` (ASCII space) to the input region
+        /// before splitting. Default in Hugging Face's `ByteLevel`
+        /// config is `true`; the pre-tokenizer then produces
+        /// `"Ġhello"` for an input of `"hello"`.
+        add_prefix_space: bool,
+        /// Optional regex to split the (possibly prefixed) input
+        /// before byte-encoding. Hugging Face wraps its own copy of
+        /// the GPT-2 regex here when `use_regex: true`; supplying
+        /// [`RegexPreTokenizer::gpt2()`](crate::pre_tokenizer::RegexPreTokenizer::gpt2)
+        /// reproduces that behaviour. When `None`, the entire input
+        /// region is byte-encoded as a single chunk.
+        split: Option<crate::pre_tokenizer::RegexPreTokenizer>,
+    },
 }
 
 impl PreTokenizerRegex {
@@ -231,6 +263,51 @@ impl PreTokenizerRegex {
     pub fn regex(regex: crate::pre_tokenizer::RegexPreTokenizer) -> Self {
         Self::Regex(regex)
     }
+
+    /// Builds a byte-level pre-tokenizer.
+    ///
+    /// Callers who want to reproduce Hugging Face's default `ByteLevel`
+    /// (used by GPT-2, `RoBERTa`, and every `ByteLevel`-based Llama
+    /// derivative) should pass `add_prefix_space = true` and
+    /// `Some(RegexPreTokenizer::gpt2())`.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn byte_level(
+        add_prefix_space: bool,
+        split: Option<crate::pre_tokenizer::RegexPreTokenizer>,
+    ) -> Self {
+        Self::ByteLevel {
+            add_prefix_space,
+            split,
+        }
+    }
+}
+
+/// Decoder applied to the concatenated byte string produced by
+/// [`BpeTokenizer::decode`] before it is interpreted as UTF-8.
+///
+/// Two variants:
+///
+/// * [`Self::Passthrough`] — the default. Concatenate every token's
+///   byte-string and interpret the result as UTF-8. Matches tiktoken
+///   and any raw-byte BPE.
+/// * [`Self::ByteLevel`] — after concatenation, treat the buffer as
+///   UTF-8 and reverse the `ByteLevel` mapping via
+///   [`byte_level::decode_chars`](crate::byte_level::decode_chars).
+///   Every char in the range `U+0000..=U+0143` is looked up in the
+///   inverse table; unknown chars are passed through as their own
+///   UTF-8 bytes so the decoder never panics on an input that was not
+///   encoded by [`PreTokenizerRegex::ByteLevel`]. This is the shape
+///   required to round-trip GPT-2 / Llama byte-level tokenizers back
+///   to their original raw input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Decoder {
+    /// No post-processing: emit the concatenated byte string as UTF-8.
+    #[default]
+    Passthrough,
+    /// Reverse the byte-level char↔byte mapping before UTF-8 decoding.
+    ByteLevel,
 }
 
 /// A BPE tokenizer over a caller-supplied merge table and vocabulary.
@@ -267,6 +344,7 @@ pub struct BpeTokenizer {
     vocab: BpeVocabulary,
     special_tokens: BTreeMap<String, TokenId>,
     pre_tokenizer_pattern: Option<PreTokenizerRegex>,
+    decoder: Decoder,
 }
 
 impl BpeTokenizer {
@@ -278,6 +356,7 @@ impl BpeTokenizer {
             vocab,
             special_tokens: BTreeMap::new(),
             pre_tokenizer_pattern: None,
+            decoder: Decoder::Passthrough,
         }
     }
 
@@ -299,6 +378,22 @@ impl BpeTokenizer {
         self
     }
 
+    /// Attaches (or replaces) the decoder strategy applied by
+    /// [`decode`](Self::decode) after concatenating the pieces' byte
+    /// strings and before interpreting the buffer as UTF-8.
+    ///
+    /// Callers who ship a tokenizer whose vocab is in *encoded* form
+    /// (Hugging Face byte-level BPE — every vocabulary surface string
+    /// has already been run through the `ByteLevel` byte↔char mapping)
+    /// must set [`Decoder::ByteLevel`] so `decode` reverses the map
+    /// and gives back the caller's original input. See the [`Decoder`]
+    /// enum's docs for the full semantics.
+    #[must_use]
+    pub fn with_decoder(mut self, decoder: Decoder) -> Self {
+        self.decoder = decoder;
+        self
+    }
+
     /// Read-only access to the merge table.
     #[must_use]
     pub fn merges(&self) -> &BpeMergeTable {
@@ -315,6 +410,12 @@ impl BpeTokenizer {
     #[must_use]
     pub fn special_tokens(&self) -> &BTreeMap<String, TokenId> {
         &self.special_tokens
+    }
+
+    /// Read-only access to the configured decoder strategy.
+    #[must_use]
+    pub fn decoder(&self) -> Decoder {
+        self.decoder
     }
 
     // ---- internal encoding pipeline ----
@@ -411,19 +512,50 @@ impl BpeTokenizer {
         }
 
         // Pre-tokenize into "words" (or one word for the whole region).
+        // Byte-level pre-tokenization owns its transformed strings, so
+        // `pre_tokenize` returns `Cow<str>` values — most paths borrow
+        // straight from `region`; the byte-level path allocates one
+        // owned `String` per chunk with the byte↔char mapping applied.
         let words = pre_tokenize(region, self.pre_tokenizer_pattern.as_ref());
+        // Whether the pre-tokenizer is ByteLevel — decides the piece
+        // seed strategy below. Encoded ByteLevel chars are up to 2
+        // UTF-8 bytes each, so seeding per byte would split `Ġ` in
+        // half; we seed per char instead so multi-byte encoded chars
+        // stay atomic.
+        let byte_level = matches!(
+            self.pre_tokenizer_pattern,
+            Some(PreTokenizerRegex::ByteLevel { .. })
+        );
+
         for word in words {
             let word_start_in_region = word.offset;
-            let word_bytes = word.text.as_bytes();
+            let word_text: &str = word.text.as_ref();
+            let word_bytes = word_text.as_bytes();
 
-            // Seed pieces: one per byte.
+            // Seed pieces: one per byte in the default path, one per
+            // *char* in the byte-level path (see comment above).
             let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
-            for (i, &b) in word_bytes.iter().enumerate() {
-                pieces.push(PieceRef {
-                    bytes: alloc::vec![b],
-                    start: i,
-                    len: 1,
-                });
+            if byte_level {
+                let mut byte_cursor: usize = 0;
+                for c in word_text.chars() {
+                    let len = c.len_utf8();
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    pieces.push(PieceRef {
+                        bytes: s.as_bytes().to_vec(),
+                        start: byte_cursor,
+                        len,
+                    });
+                    byte_cursor += len;
+                }
+            } else {
+                for (i, &b) in word_bytes.iter().enumerate() {
+                    pieces.push(PieceRef {
+                        bytes: alloc::vec![b],
+                        start: i,
+                        len: 1,
+                    });
+                }
             }
 
             merge_fn(self, &mut pieces);
@@ -661,7 +793,19 @@ impl Tokenizer for BpeTokenizer {
                 return Err(TokenizerError::UnknownToken(format_id(id)));
             }
         }
-        String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8)
+        match self.decoder {
+            Decoder::Passthrough => String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8),
+            Decoder::ByteLevel => {
+                // A byte-level vocabulary stores its surface strings in
+                // *encoded* form (e.g. `"Ġhello"`), which is valid
+                // UTF-8. Interpret the concatenation, then reverse the
+                // ByteLevel byte↔char bijection to recover the caller's
+                // original raw bytes, then re-decode as UTF-8.
+                let encoded = String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8)?;
+                let raw = crate::byte_level::decode_chars(&encoded);
+                String::from_utf8(raw).map_err(|_| TokenizerError::InvalidUtf8)
+            }
+        }
     }
 
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
@@ -731,9 +875,16 @@ impl PartialOrd for HeapEntry {
 type MergeLoopFn = fn(&BpeTokenizer, &mut Vec<PieceRef>);
 
 /// Text plus (byte) offset within its enclosing region.
+///
+/// Most pre-tokenizer paths borrow their chunks straight out of the
+/// input; the byte-level path owns its transformed strings (the char
+/// bijection changes the underlying bytes), so `text` is a
+/// [`Cow<str>`](alloc::borrow::Cow) that picks the cheaper form
+/// automatically. Callers can just use `word.text.as_ref()` — the
+/// `Cow` deref-s to `&str`.
 struct Word<'a> {
     offset: usize,
-    text: &'a str,
+    text: alloc::borrow::Cow<'a, str>,
 }
 
 fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<Word<'a>> {
@@ -746,9 +897,23 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
     #[cfg(feature = "std")]
     if let Some(PreTokenizerRegex::Regex(pre)) = pattern {
         for (offset, text) in pre.split(text) {
-            out.push(Word { offset, text });
+            out.push(Word {
+                offset,
+                text: alloc::borrow::Cow::Borrowed(text),
+            });
         }
         return out;
+    }
+    // Byte-level pipeline lives in its own helper so `pre_tokenize`
+    // stays under clippy's `too_many_lines` threshold. See
+    // [`pre_tokenize_byte_level`] for the full step list.
+    #[cfg(feature = "std")]
+    if let Some(PreTokenizerRegex::ByteLevel {
+        add_prefix_space,
+        split,
+    }) = pattern
+    {
+        return pre_tokenize_byte_level(text, *add_prefix_space, split.as_ref());
     }
     match pattern {
         Some(PreTokenizerRegex::Literal(sep)) if !sep.is_empty() => {
@@ -777,7 +942,7 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
                 if cursor > start {
                     out.push(Word {
                         offset: start,
-                        text: &text[start..cursor],
+                        text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
                     });
                 }
             }
@@ -816,7 +981,7 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
                 if cursor > start {
                     out.push(Word {
                         offset: start,
-                        text: &text[start..cursor],
+                        text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
                     });
                 }
             }
@@ -824,7 +989,10 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
             // emit nothing; if the text was pure non-whitespace we
             // emit one word.
             if out.is_empty() && !text.is_empty() && text.chars().any(|c| !c.is_whitespace()) {
-                out.push(Word { offset: 0, text });
+                out.push(Word {
+                    offset: 0,
+                    text: alloc::borrow::Cow::Borrowed(text),
+                });
             }
         }
     }
@@ -832,6 +1000,61 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
     // and the input is entirely non-whitespace, we've already handled
     // that above. If the input is entirely whitespace, `out` stays
     // empty and we emit nothing — which is what tiktoken does too.
+    out
+}
+
+/// Byte-level pre-tokenizer helper — split out of [`pre_tokenize`] so
+/// the parent function stays under clippy's `too_many_lines` threshold.
+///
+/// Steps, in order:
+///
+/// 1. Optionally prepend an ASCII space to `text` (Hugging Face's
+///    `add_prefix_space: true` default). Skipped if the input already
+///    starts with a space so the prefix is idempotent.
+/// 2. Split the (possibly-prefixed) source with `split`, or if `None`
+///    take the whole source as a single chunk.
+/// 3. Map every byte of each chunk through the byte↔char bijection
+///    (`byte_level::encode_bytes`). This produces an owned `String`
+///    per chunk; the resulting [`Word`]'s `Cow<str>` is `Owned`.
+///
+/// Offsets on the returned words are w.r.t. the possibly-prefixed
+/// source — see the callers of [`pre_tokenize`] for how those flow
+/// into the reported [`Encoding::offsets`](stringcheese_tokenizer::Encoding::offsets).
+#[cfg(feature = "std")]
+fn pre_tokenize_byte_level<'a>(
+    text: &'a str,
+    add_prefix_space: bool,
+    split: Option<&crate::pre_tokenizer::RegexPreTokenizer>,
+) -> Vec<Word<'a>> {
+    // Compose the (possibly prefixed) source. Use `Cow` again so the
+    // no-prefix path avoids the allocation.
+    let source: alloc::borrow::Cow<'a, str> = if add_prefix_space && !text.starts_with(' ') {
+        let mut s = String::with_capacity(text.len() + 1);
+        s.push(' ');
+        s.push_str(text);
+        alloc::borrow::Cow::Owned(s)
+    } else {
+        alloc::borrow::Cow::Borrowed(text)
+    };
+    let source_ref: &str = source.as_ref();
+    let chunks: Vec<(usize, &str)> = if let Some(pre) = split {
+        pre.split(source_ref)
+    } else if source_ref.is_empty() {
+        Vec::new()
+    } else {
+        alloc::vec![(0usize, source_ref)]
+    };
+    let mut out = Vec::with_capacity(chunks.len());
+    for (offset, chunk) in chunks {
+        let encoded = crate::byte_level::encode_bytes(chunk);
+        if encoded.is_empty() {
+            continue;
+        }
+        out.push(Word {
+            offset,
+            text: alloc::borrow::Cow::Owned(encoded),
+        });
+    }
     out
 }
 
