@@ -36,6 +36,14 @@
 //! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`.
 //! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`.
 //! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`.
+//! * `wasm_simd128` — wasm SIMD128-gated Hyyrö-OSA wide-block for
+//!   `64 < m ≤ 128`. Two `u64` lanes per `v128`, same shape as
+//!   SSE2/NEON but with lane-extract/insert used for the cross-lane
+//!   carry (wasm SIMD has no direct `_mm_slli_si128`-style
+//!   whole-register byte shift on the u64 lane dimension). Compiled
+//!   only on `wasm32` and only when the `simd128` target-feature is
+//!   enabled — wasm-SIMD feature detection is a compile-time gate,
+//!   not a runtime one.
 //!
 //! The three arch-specific backends currently share the scalar
 //! implementation under a `#[target_feature(enable = "...")]` context;
@@ -71,6 +79,9 @@ pub mod x86_sse2;
 
 #[cfg(target_arch = "aarch64")]
 pub mod aarch64_neon;
+
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub mod wasm_simd128;
 
 /// Minimum input length below which the SIMD backend is not worth the
 /// setup cost.
@@ -144,6 +155,20 @@ pub fn distance(a: &[u8], b: &[u8]) -> u32 {
             return unsafe { aarch64_neon::distance(a, b) };
         }
     }
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        // SAFETY: wasm-SIMD feature detection is a compile-time gate,
+        // not a runtime one — the `target_feature = "simd128"` cfg on
+        // this block is the same predicate that guards
+        // `wasm_simd128`'s module-level compilation, so if this branch
+        // is compiled the intrinsics inside are guaranteed legal for
+        // any engine that accepts the module.
+        return unsafe { wasm_simd128::distance(a, b) };
+    }
+    #[allow(
+        unreachable_code,
+        reason = "the wasm32+simd128 cfg-branch above returns unconditionally when compiled; on hosts where that branch is stripped this call is the fallthrough"
+    )]
     scalar::distance(a, b)
 }
 
