@@ -4,7 +4,7 @@
 //! because it lives under [`crate::fingerprint::rabin`], which is
 //! itself `alloc`-gated for the streaming hash's roll-out table.
 //!
-//! # The rolling recurrence is strictly sequential
+//! # Real vectorized `GF(2)` reduction on hardware carry-less multiply
 //!
 //! Rabin's per-byte update over `GF(2)` polynomial arithmetic is
 //!
@@ -14,21 +14,57 @@
 //! ```
 //!
 //! Each step depends on the previous state via the shift and the
-//! high-byte-driven table lookup, so there is no natural per-byte SIMD
-//! parallelism at the update level. Baseline SSE2/NEON/wasm-SIMD do not
-//! surface a `pclmulqdq`-style GF(2) carry-less multiply on all
-//! variants; `pclmulqdq` on `x86_64` is gated by the `pclmulqdq`
-//! target-feature and is documented follow-up work for a genuinely
-//! SIMD-accelerated `GF(2)` reduction.
+//! high-byte-driven table lookup, so there is no natural *per-byte*
+//! SIMD parallelism at the update level. Unrolled over any 8-byte
+//! run, however, the recurrence collapses to the closed form
 //!
-//! The backends here therefore consume the byte slice sequentially
-//! inside a `#[target_feature]` context — the same shape
-//! [`crate::fingerprint::gear::simd`] uses. The **byte-identical
-//! contract** is what this initial cut preserves: every backend returns
-//! the same `u64` digest a scalar
-//! [`RollingHash::roll`][crate::fingerprint::RollingHash::roll] loop
-//! over the same input would produce. The differential tests below
-//! anchor every backend to that reference.
+//! ```text
+//! state_{k+8} = state_k * x^64 + u64_be(bytes[k..k+8])   (mod P)
+//! ```
+//!
+//! and — since `P(x) = x^64 + LOW_P` with `LOW_P = 0x1B` — the
+//! reduction `state_k * x^64 mod P` is exactly one carry-less
+//! multiply, followed by a four-bit second fold through the same
+//! byte-indexed `SHIFT_TABLE` the streaming path already builds. The
+//! arch backends here express that step in hardware:
+//!
+//! * `x86_sse2` — `pclmulqdq` gated. `_mm_clmulepi64_si128` performs
+//!   the 8-byte block fold in one instruction; the second fold reduces
+//!   the at-most-four-bit high half via a `SHIFT_TABLE[high]` scalar
+//!   lookup. Runtime-detects `pclmulqdq` on entry and falls back to
+//!   the portable scalar core when absent.
+//! * `x86_avx2` — AVX2-gated entry point that delegates into the
+//!   SSE2 sibling's `pclmulqdq` kernel when `pclmulqdq` is present
+//!   (still one carry-less multiply per 8-byte block, same real
+//!   vectorized reduction as the SSE2 branch) and falls back to
+//!   scalar otherwise. A `VPCLMULQDQ` 2-way parallel path is
+//!   deferred until the workspace MSRV moves past 1.89 — see the
+//!   AVX2 file's docs for the derivation waiting there.
+//! * `aarch64_neon` — `PMULL` gated (runtime-detected as `"aes"` on
+//!   the ARMv8-A crypto extension, which groups `AES`, `PMULL`,
+//!   `SHA-1`, and `SHA-2`). `vmull_p64` supplies the 8-byte block
+//!   fold's carry-less multiply; the second fold is the same
+//!   `SHIFT_TABLE` scalar lookup. Runtime-detects `aes` on entry and
+//!   falls back to a NEON-context scalar core when the crypto
+//!   extension is absent.
+//! * `wasm_simd128` — wasm SIMD128 has no carry-less multiply
+//!   primitive on integer lanes, so this backend ships as the scalar
+//!   core inside a `simd128` target-feature context. See the file's
+//!   docs for the ISA constraint that keeps the fold on the scalar
+//!   path.
+//!
+//! # Effective-slice window truncation
+//!
+//! The streaming Rabin-hash's roll-out-table cancellation guarantees
+//! that the digest after feeding `L` bytes with window `W` depends
+//! only on the last `min(L, W)` bytes when `W > 0`, and on every
+//! byte when `W == 0` (degenerate no-eviction mode). The vectorized
+//! kernels exploit this: they truncate the input up front to the
+//! effective slice, then process it from `state = 0` via the block
+//! form. The truncation is byte-identical to the streaming reference
+//! by construction; every backend's differential tests anchor the
+//! full pipeline (truncation + block fold + scalar tail) against a
+//! scalar `RollingHash::roll` loop over the un-truncated input.
 //!
 //! # Public surface
 //!
@@ -72,11 +108,15 @@ pub fn digest_of_slice(window: usize, bytes: &[u8]) -> u64 {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
-            // SAFETY: is_x86_feature_detected!("avx2") returned true.
+            // SAFETY: is_x86_feature_detected!("avx2") returned true;
+            // the AVX2 entry point checks `vpclmulqdq`/`pclmulqdq`
+            // internally and falls back accordingly.
             return unsafe { x86_avx2::digest_of_slice(window, bytes) };
         }
         if is_x86_feature_detected!("sse2") {
-            // SAFETY: is_x86_feature_detected!("sse2") returned true.
+            // SAFETY: is_x86_feature_detected!("sse2") returned true;
+            // the SSE2 entry point checks `pclmulqdq` internally and
+            // falls back to scalar when absent.
             return unsafe { x86_sse2::digest_of_slice(window, bytes) };
         }
     }
@@ -84,7 +124,8 @@ pub fn digest_of_slice(window: usize, bytes: &[u8]) -> u64 {
     {
         if std::arch::is_aarch64_feature_detected!("neon") {
             // SAFETY: is_aarch64_feature_detected!("neon") returned
-            // true.
+            // true; the NEON entry point checks `aes` (PMULL proxy)
+            // internally and falls back to scalar when absent.
             return unsafe { aarch64_neon::digest_of_slice(window, bytes) };
         }
     }
@@ -184,6 +225,23 @@ mod tests {
                     "size={size} window={window}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn dispatcher_matches_scalar_reference_across_window_zero() {
+        // Window `0` is the degenerate no-eviction mode — every byte
+        // contributes to the state. Verify the effective-slice
+        // truncation in the vector kernels short-circuits correctly
+        // to "keep the whole slice" in that case.
+        for &size in &[0usize, 1, 7, 8, 9, 63, 64, 65, 128, 1024] {
+            let input: alloc::vec::Vec<u8> =
+                (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
+            assert_eq!(
+                digest_of_slice(0, &input),
+                scalar_reference(0, &input),
+                "window=0 size={size}"
+            );
         }
     }
 }
