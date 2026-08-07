@@ -4,28 +4,67 @@
 //! because it lives under [`crate::fingerprint::polynomial`], which is
 //! itself `alloc`-gated for the streaming hash's circular buffer.
 //!
-//! # The rolling recurrence is strictly sequential
+//! # Real vectorized kernel via block reformulation
 //!
-//! The polynomial hash's per-byte update is
+//! The polynomial hash's per-byte recurrence
 //!
 //! ```text
 //! state = (state * BASE + byte - leaving * BASE^window) mod PRIME
 //! ```
 //!
-//! Each step depends on the previous state via the multiplication, and
-//! the modular reduction on `u128` intermediate products has no natural
-//! per-byte SIMD form on baseline SSE2/NEON/wasm-SIMD. Baseline vector
-//! ISAs do not surface a 64×64 → 128 multiply lane primitive (AVX-512
-//! IFMA is the first ISA that does, and requires runtime detection that
-//! is out of scope for this initial cut). This backend therefore
-//! consumes the byte slice sequentially inside a `#[target_feature]`
-//! context — the same shape [`crate::fingerprint::gear::simd`] uses.
+//! is strictly sequential — each step depends on the previous via the
+//! `state * BASE` scale. Unrolled over any `k`-byte run from
+//! `state_0`, however, it collapses into the closed form
 //!
-//! The **byte-identical contract** is what this initial cut preserves:
-//! every backend returns the same `u64` digest a scalar
+//! ```text
+//! state_k = state_0 * BASE^k + Σ_{i=0..k}  bytes[i] * BASE^(k-1-i)  (mod PRIME)
+//! ```
+//!
+//! and the streaming hash's window-eviction identity guarantees the
+//! digest after feeding `L >= window` bytes depends only on the last
+//! `window` bytes — the same digest is reproduced by feeding just that
+//! tail into a fresh `state = 0`. See the sibling
+//! [`crate::fingerprint::rabin::simd`] backend for the effective-slice
+//! truncation derivation shared with this kernel.
+//!
+//! Once the effective slice is chosen, the backends fold in
+//! `BLOCK_LEN = 16`-byte blocks: the running-state scale becomes a
+//! single per-block `state * PK_BLOCK` where `PK_BLOCK = BASE^16 mod
+//! PRIME`, and the trailing sum vectorizes across lanes. Each
+//! per-byte coefficient `pk = BASE^(15-i) mod PRIME` fits in 61 bits
+//! — too wide for a straight 32-bit lane multiply — so the scalar
+//! reference precomputes it split into `pk_hi = pk >> 32` (≤ 29 bits)
+//! and `pk_lo = pk & 0xFFFF_FFFF` (32 bits). A byte × coefficient
+//! product then expresses as two independent 32×32 → 64 multiplies,
+//! both fitting in a u64 lane, that every arch backend issues through
+//! its native widening multiply intrinsic:
+//!
+//! * `x86_avx2` — 4-lane `_mm256_mul_epu32` (`VPMULUDQ`), one AVX2
+//!   fused multiply-accumulate pair per 4 bytes. AVX2 is baseline for
+//!   the widest x86 dispatch here; `avx512ifma` (`_mm256_madd52lo_epu64`)
+//!   would collapse the split into a single fused instruction and is
+//!   listed as deferred future work in the AVX2 file's docs.
+//! * `x86_sse2` — 2-lane `_mm_mul_epu32` (`PMULUDQ`), the SSE2
+//!   baseline sibling. No runtime sub-feature detection is required
+//!   because `PMULUDQ` is part of SSE2 itself.
+//! * `aarch64_neon` — 2-lane `vmull_u32`, the NEON widening 32×32 →
+//!   64 multiply. NEON is baseline for `aarch64`, so no
+//!   sub-feature dispatch is needed.
+//! * `wasm_simd128` — 2-lane `i64x2_mul`; wasm SIMD128 does not
+//!   surface a dedicated 32×32 → 64 widening multiply, but with both
+//!   inputs bounded to 32 bits the low-64 result of `i64x2_mul` is
+//!   bit-identical to the widening product — see the file's docs for
+//!   the bound derivation.
+//!
+//! # Byte-identical contract
+//!
+//! Every backend returns the same `u64` digest a scalar
 //! [`RollingHash::roll`][crate::fingerprint::RollingHash::roll] loop
 //! over the same input would produce. The differential tests below
-//! anchor every backend to that reference.
+//! and inside each arch file anchor every backend to that reference
+//! across short inputs, block boundaries (15/16/17/31/32/33/63/64/65/
+//! 127/128/129), window-sized inputs, larger blobs, and the
+//! degenerate `window = 0` no-eviction mode.
 //!
 //! # Public surface
 //!
@@ -181,6 +220,23 @@ mod tests {
                     "size={size} window={window}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn dispatcher_matches_scalar_reference_across_window_zero() {
+        // Window `0` is the degenerate no-eviction mode — every byte
+        // contributes to the state. Verify the effective-slice
+        // truncation in the vector kernels short-circuits correctly
+        // to "keep the whole slice" in that case.
+        for &size in &[0usize, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 128, 1024] {
+            let input: alloc::vec::Vec<u8> =
+                (0..size).map(|i| (i as u8).wrapping_mul(17)).collect();
+            assert_eq!(
+                digest_of_slice(0, &input),
+                scalar_reference(0, &input),
+                "window=0 size={size}"
+            );
         }
     }
 }
