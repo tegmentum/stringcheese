@@ -4,11 +4,11 @@
 //!
 //! Hugging Face's [`tokenizers`](https://huggingface.co/docs/tokenizers)
 //! crate ships a JSON serialisation of a `Tokenizer` value:
-//! normaliser, pre-tokenizer, model (BPE / WordPiece / Unigram /
-//! WordLevel), post-processor, and decoder, each with its own type-tagged
+//! normaliser, pre-tokenizer, model (BPE / `WordPiece` / Unigram /
+//! `WordLevel`), post-processor, and decoder, each with its own type-tagged
 //! config record. Every model on the Hub that ships tokenizer
 //! configuration ships a `tokenizer.json` conforming to this spec —
-//! Llama, Mistral, Qwen, DeepSeek, Phi, GPT-J, GPT-Neo, and so on.
+//! Llama, Mistral, Qwen, `DeepSeek`, Phi, GPT-J, GPT-Neo, and so on.
 //!
 //! This module implements the **BPE slice** of that parser:
 //!
