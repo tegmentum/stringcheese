@@ -100,7 +100,15 @@
 //!   crate's root.
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
+// `deny(unsafe_code)` rather than `forbid(unsafe_code)` because the
+// `stringcheese_lang::register_language!` macro expands to a linkme
+// `#[distributed_slice]` static that emits `#[unsafe(link_section = "...")]`
+// (Rust 2024 form) — `forbid` cannot be relaxed by inner attributes and
+// would break the build. The macro emits an explicit
+// `#[allow(unsafe_code)]` at the sole registration site; the rest of
+// this crate is still lint-enforced no-`unsafe`. Same pattern as the
+// other language packs.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
