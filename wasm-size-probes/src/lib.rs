@@ -204,6 +204,18 @@ pub extern "C" fn probe_stringcheese_unicode() -> usize {
         acc ^= words(s).count();
         acc ^= sentences(s).count();
     }
+    // Optional: enable the `unicode-with-line-breaking` probe feature
+    // (see `Cargo.toml`) to additionally reach `line_breaks`, forcing
+    // LTO to retain the `Line_Break` property table `unicode-linebreak`
+    // ships. Not part of the gated baseline for the same reason as
+    // `unicode-with-segmentation` — the tracked number reflects the
+    // minimum useful surface, and this feature is individually
+    // toggleable by size-conscious wasm callers.
+    #[cfg(feature = "unicode-with-line-breaking")]
+    {
+        use stringcheese_unicode::line_breaks;
+        acc ^= line_breaks(s).count();
+    }
     black_box(acc)
 }
 

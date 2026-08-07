@@ -86,6 +86,16 @@ unicode-with-segmentation = [
     "stringcheese-unicode/word-segmentation",
     "stringcheese-unicode/sentence-segmentation",
 ]
+# Experimental variant: additionally enables the UAX #14 line-breaking
+# surface (`line-breaking` feature on `stringcheese-unicode`) so a probe
+# that references `line_breaks` can measure the `Line_Break` property
+# table cost `unicode-linebreak` pulls in. Not gated by CI; use locally
+# only. Measured impact today: roughly +22 KB on top of the minimum
+# surface baseline.
+unicode-with-line-breaking = [
+    "probe-stringcheese-unicode",
+    "stringcheese-unicode/line-breaking",
+]
 probe-stringcheese-phonetic = ["dep:stringcheese-phonetic"]
 probe-stringcheese-cdc      = ["dep:stringcheese-cdc"]
 probe-stringcheese-index    = ["dep:stringcheese-index"]

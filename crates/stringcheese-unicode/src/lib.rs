@@ -23,6 +23,12 @@
 //! - **UAX #29 sentence segmentation** via [`mod@sentences`] (gated on
 //!   `feature = "sentence-segmentation"`, default on), with a matching
 //!   materialized [`SentenceSequence`].
+//! - **UAX #14 line breaking** via [`mod@line_breaks`] (gated on
+//!   `feature = "line-breaking"`, default on), with a matching
+//!   materialized [`LineBreakSequence`]. Complements the UAX #29
+//!   word- and sentence-segmentation surfaces by identifying the
+//!   *soft-wrap* opportunities a downstream word-wrapper uses to fit
+//!   text into a column.
 //! - **Diacritic stripping** via [`diacritics`] (NFD → drop combining
 //!   marks → NFC). This is a lossy operation; see the module documentation
 //!   for what it does and does not cover.
@@ -87,6 +93,13 @@
 //!   [`mod@sentences`] module (UAX #29 sentence iteration and
 //!   `SentenceSequence`). Independently toggleable from
 //!   `word-segmentation` so callers can shed either surface.
+//! - `line-breaking` (default: on) — enables the [`mod@line_breaks`]
+//!   module (UAX #14 line-break opportunities, `LineBreakSequence`,
+//!   and `line_breaks`). Pulls in the `unicode-linebreak` crate and
+//!   its `Line_Break` property table. Independently toggleable so a
+//!   caller who only needs word-wrap opportunities can enable this
+//!   without paying for the `Word_Break` / `Sentence_Break` tables,
+//!   and vice versa.
 //!
 //! The wasm-size gate documented in `docs/wasm-binary-size.md` measures
 //! the `--no-default-features --features std` configuration — the
@@ -95,7 +108,7 @@
 //!
 //! # Dependency footprint
 //!
-//! Three third-party crates:
+//! Four third-party crates:
 //!
 //! - [`unicode-normalization`](https://docs.rs/unicode-normalization) —
 //!   NFC/NFD/NFKC/NFKD and the `is_combining_mark` predicate used by
@@ -113,6 +126,11 @@
 //!   box; the smaller `unicode-case-mapping` implements only *simple*
 //!   folding and cannot express the ß → ss expansion the design calls
 //!   out.
+//! - [`unicode-linebreak`](https://docs.rs/unicode-linebreak) —
+//!   UAX #14 line-break opportunity detection (soft wrap points plus
+//!   mandatory line terminators). Small, `#![no_std]`, tracks
+//!   Unicode 15.0.0. Preferred over `xi-unicode` (see the module
+//!   documentation for the tradeoff).
 //!
 //! Every dependency is declared with `default-features = false` and only
 //! the features this crate uses are re-enabled.
@@ -129,6 +147,8 @@ pub mod case_folding;
 pub mod diacritics;
 #[cfg(feature = "alloc")]
 pub mod graphemes;
+#[cfg(all(feature = "alloc", feature = "line-breaking"))]
+pub mod line_breaks;
 #[cfg(feature = "alloc")]
 pub mod normalization;
 #[cfg(feature = "alloc")]
@@ -157,6 +177,8 @@ pub use case_folding::{
 pub use diacritics::strip_diacritics;
 #[cfg(feature = "alloc")]
 pub use graphemes::{GraphemeSequence, graphemes};
+#[cfg(all(feature = "alloc", feature = "line-breaking"))]
+pub use line_breaks::{LineBreak, LineBreakSequence, line_breaks};
 #[cfg(feature = "alloc")]
 pub use normalization::{Normalization, nfc, nfd, nfkc, nfkd};
 #[cfg(feature = "alloc")]

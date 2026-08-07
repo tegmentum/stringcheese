@@ -62,10 +62,11 @@ kind = "library"
 probe_feature = "probe-stringcheese-unicode"
 # 190 KB reflects the minimum-useful wasm surface: `--features std`
 # alone, which excludes `case-fold`, `compiled-case-data`,
-# `word-segmentation`, and `sentence-segmentation`. That is the
-# configuration a size-conscious wasm caller actually ships; a caller
-# who wants the full default surface (case folding with baked ICU
-# data + UAX #29 word/sentence segmentation) pays roughly 273 KB.
+# `word-segmentation`, `sentence-segmentation`, and `line-breaking`.
+# That is the configuration a size-conscious wasm caller actually
+# ships; a caller who wants the full default surface (case folding
+# with baked ICU data + UAX #29 word/sentence segmentation +
+# UAX #14 line-break opportunities) pays roughly 295 KB.
 # See `docs/wasm-binary-size.md` for the composition breakdown and the
 # rationale for measuring the minimum rather than the maximum.
 #
@@ -74,6 +75,7 @@ probe_feature = "probe-stringcheese-unicode"
 #   * case-fold + compiled-case-data → +110 KB (ICU casemap tables)
 #   * word-segmentation + sentence-segmentation → +60 KB
 #     (unicode-segmentation's Word_Break / Sentence_Break tables)
+#   * line-breaking → +22 KB (unicode-linebreak's Line_Break table)
 #
 # The residual 190 KB is dominated by `unicode-normalization`'s
 # NFC/NFD/NFKC/NFKD tables — that crate does not yet expose feature

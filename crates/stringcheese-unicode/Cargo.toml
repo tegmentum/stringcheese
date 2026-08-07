@@ -16,7 +16,7 @@ keywords = ["comparison", "unicode", "normalization", "grapheme"]
 # `case_fold`, `simple_case_fold`, `case_fold_turkic`, the full
 # [`PreprocessingPipeline`] surface, and the baked-in ICU data all
 # working out of the box. Backwards-compat matters.
-default = ["std", "case-fold", "compiled-case-data", "word-segmentation", "sentence-segmentation"]
+default = ["std", "case-fold", "compiled-case-data", "word-segmentation", "sentence-segmentation", "line-breaking"]
 # When enabled, the crate uses the standard library. Also implies `alloc`.
 std = [
     "alloc",
@@ -68,6 +68,17 @@ word-segmentation = []
 # from `word-segmentation` so callers can pay for exactly the
 # `Sentence_Break` / `Word_Break` tables they actually reach.
 sentence-segmentation = []
+# Enables the [`line_breaks`] module — UAX #14 line-breaking algorithm.
+# Wraps the `unicode-linebreak` crate's `linebreaks` iterator plus a
+# materialized [`LineBreakSequence`] indexable in `O(1)`. Pulls in
+# the `unicode-linebreak` dependency and its `Line_Break` property
+# table (~22 KB in a `wasm-opt -Oz` build over the minimum-useful
+# surface baseline). Independently toggleable from
+# `word-segmentation` / `sentence-segmentation` so callers can pay
+# for exactly the segmentation surfaces they reach — a caller that
+# only needs word-wrapping opportunities can enable `line-breaking`
+# alone.
+line-breaking = ["dep:unicode-linebreak"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -88,6 +99,20 @@ unicode-segmentation = { version = "1", default-features = false, features = ["n
 #     entirely. `compiled_data` is toggled by the `compiled-case-data`
 #     feature; see the feature table above.
 icu_casemap = { version = "1", default-features = false, optional = true }
+# `unicode-linebreak` — UAX #14 line-break opportunity detection.
+#     Small (`#![no_std]`) single-purpose crate from `axelf4/unicode-
+#     linebreak`, tracking Unicode 15.0.0. Preferred over `xi-unicode`
+#     for three reasons: (1) its `BreakOpportunity` enum
+#     (`Mandatory` / `Allowed`) is a 1:1 match for the `LineBreak`
+#     surface this crate exposes, so no lossy mapping layer is needed;
+#     (2) it is explicitly `#![no_std]` with no `std`/`alloc` feature
+#     required at all, matching this crate's `no_std + alloc` posture;
+#     (3) `xi-unicode` is a byproduct of the archived `xi-editor`
+#     project and is no longer under active maintenance. Optional and
+#     gated on the `line-breaking` feature so size-conscious wasm
+#     callers who do not need the Line_Break table can shed the
+#     dependency entirely.
+unicode-linebreak = { version = "0.1", optional = true }
 
 [dev-dependencies]
 
