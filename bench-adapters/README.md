@@ -53,12 +53,12 @@ Every adapter in this subtree — whatever language it targets — MUST:
 | Rust         | shipping (v0.1)     | `bench-adapters/rust/`     | `strsim` 0.11, `rapidfuzz` 0.5        |
 | Python       | shipping (v0.2)     | `bench-adapters/python/`   | `python-Levenshtein`, `jellyfish`, `rapidfuzz` |
 | JavaScript   | shipping (v0.2)     | `bench-adapters/js/`       | `fastest-levenshtein`, `js-levenshtein`, `natural`, `string-similarity` |
+| Go           | shipping (v0.3)     | `bench-adapters/go/`       | `agnivade/levenshtein` 1.2, `hbollon/go-edlib` 1.7 |
 | Java         | planned (v0.2)      | `bench-adapters/java/`     | Apache Commons Text                    |
 | C++          | planned (v0.3)      | `bench-adapters/cpp/`      | `rapidfuzz-cpp`, `edlib`              |
-| Go           | planned (v0.3)      | `bench-adapters/go/`       | `agnivade/levenshtein`, `xrash/smetrics` |
 
-The Rust, Python, and JavaScript slots ship in v0.1/v0.2. The
-remaining slots are recorded here so that the directory layout is
+The Rust, Python, JavaScript, and Go slots ship in v0.1/v0.2/v0.3.
+The remaining slots are recorded here so that the directory layout is
 committed early and the sequencing matches `docs/DESIGN.md`'s
 "Implementation Sequence".
 
@@ -109,6 +109,26 @@ pytest --benchmark-only
 
 See `bench-adapters/python/README.md` for prerequisites, per-adapter
 matrix, FFI-cost caveats, and interpretation notes.
+
+## Running Go adapters
+
+The Go adapter loads the same wasm component. wazero (the pure-Go
+runtime the adapter uses) does not yet run Component Model wasm
+directly, so the adapter shells out to `wasm-tools component
+unbundle` on first construction to extract the core module. Install
+`wasm-tools` once (`cargo install wasm-tools`) if it is not already
+on PATH.
+
+```
+cd component/rust-host && cargo component build --release
+cd bench-adapters/go
+go mod download
+go test -bench=. -benchmem ./bench/...
+```
+
+See `bench-adapters/go/README.md` for prerequisites, per-adapter
+matrix, FFI-cost caveats, and the wazero / Component Model gap
+writeup.
 
 ## Non-goals
 

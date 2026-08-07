@@ -1,0 +1,24 @@
+# Go build artefacts — none normally produced from a library+bench
+# module, but keep the safeguards in place.
+*.exe
+*.test
+*.out
+
+# Go coverage / benchmark output — anything a developer generates
+# locally with `go test -coverprofile=` or a comparison tool like
+# benchstat's baseline dumps.
+coverage.out
+coverage.txt
+*.bench
+benchmarks/
+
+# IDE / editor scratch
+.idea/
+.vscode/
+.env
+
+# The extracted core-wasm cache produced by `wasm-tools component
+# unbundle` at first run. It lives under component/rust-host/target/
+# already covered by that crate's .gitignore, but we defensively
+# ignore it here too in case a future test copies it into this tree.
+unbundled-module*.wasm
