@@ -66,7 +66,19 @@ extern crate alloc;
 #[cfg(feature = "alloc")]
 mod bpe;
 
+// The Phase 2b regex-based pre-tokenizer lives in its own module so
+// the (heavier) `fancy-regex` backend only compiles when `std` is
+// enabled — the `no_std` build of this crate keeps its footprint at
+// the `PreTokenizerRegex::Literal` fallback.
+#[cfg(feature = "std")]
+mod pre_tokenizer;
+
 #[cfg(feature = "alloc")]
 pub use bpe::{
     BpeMergeTable, BpeTokenizer, BpeVocabulary, PreTokenizerRegex, TokenId, VocabularyBuilderError,
+};
+
+#[cfg(feature = "std")]
+pub use pre_tokenizer::{
+    GPT2_PATTERN, PreTokenizerCompileError, RegexPreTokenizer, TIKTOKEN_CANONICAL_PATTERN,
 };

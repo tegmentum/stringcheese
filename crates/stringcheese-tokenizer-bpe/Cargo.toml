@@ -13,7 +13,10 @@ keywords = ["tokenizer", "bpe", "nlp", "tiktoken", "wasm"]
 [features]
 default = ["std"]
 # When enabled, the crate uses the standard library. Implies `alloc`.
-std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std"]
+# Also enables the regex-based pre-tokenizer (see
+# `src/pre_tokenizer.rs`), which requires the `fancy-regex` backend
+# and hence a full `std` environment.
+std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std", "dep:fancy-regex"]
 # When enabled, the crate exposes its heap-allocating public surface.
 # The BPE algorithm inherently allocates (per-word piece sequences,
 # vocabulary tables, merge maps); the crate compiles to an empty
@@ -23,6 +26,15 @@ alloc = ["stringcheese-core/alloc", "stringcheese-tokenizer/alloc"]
 [dependencies]
 stringcheese-core = { workspace = true }
 stringcheese-tokenizer = { workspace = true }
+
+# Regex backend for the Phase 2b pre-tokenizer. `fancy-regex` is the
+# only mainstream Rust regex crate that supports both Unicode general
+# categories (`\p{L}`, `\p{N}`) *and* look-around (`(?!\S)`) — both
+# required to compile tiktoken's canonical `cl100k_base` /
+# `o200k_base` pre-tokenizer pattern verbatim. See
+# `src/pre_tokenizer.rs` for the full rationale. Only compiled when
+# `std` is enabled (fancy-regex itself requires the standard library).
+fancy-regex = { version = "0.14", default-features = false, features = ["std", "unicode"], optional = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
