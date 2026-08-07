@@ -16,6 +16,8 @@ members = [
     "crates/stringcheese-en",
     "crates/stringcheese-de",
     "crates/stringcheese-fr",
+    "crates/stringcheese-tokenizer",
+    "crates/stringcheese-tokenizer-bpe",
 ]
 exclude = [
     "fuzz",
@@ -55,6 +57,8 @@ stringcheese-lang = { version = "0.1.0", path = "crates/stringcheese-lang", defa
 stringcheese-en = { version = "0.1.0", path = "crates/stringcheese-en", default-features = false }
 stringcheese-de = { version = "0.1.0", path = "crates/stringcheese-de", default-features = false }
 stringcheese-fr = { version = "0.1.0", path = "crates/stringcheese-fr", default-features = false }
+stringcheese-tokenizer = { version = "0.1.0", path = "crates/stringcheese-tokenizer", default-features = false }
+stringcheese-tokenizer-bpe = { version = "0.1.0", path = "crates/stringcheese-tokenizer-bpe", default-features = false }
 
 [profile.release]
 lto = "thin"

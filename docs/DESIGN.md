@@ -180,6 +180,9 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-de` | German pack: ~200-word stopword list, Snowball German stemmer, simple tokenizer, Kölner Phonetik (Postel 1969) hookup |
 | `stringcheese-fr` | French pack: ~200-word stopword list, Snowball French stemmer, elision-aware tokenizer, PHONEX phonetic hookup |
 | `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
+| `stringcheese-tokenizer` | Tokenizer/segmenter trait crate + built-in tokenizers (whitespace, delimiter, identifier, grapheme, n-gram). Foundation for downstream subword algorithm crates and model packs. See [docs/design/tokenizers.md](./design/tokenizers.md). |
+| `stringcheese-tokenizer-bpe` | Data-neutral Byte-Pair Encoding (Sennrich, Haddow, Birch 2016) algorithm crate — caller supplies merge table and vocabulary. Substrate for the planned `stringcheese-tokenizer-tiktoken` and `-huggingface` model packs. |
+| `stringcheese-tokenizer-*` | Additional subword-tokenizer algorithm crates (planned: `-wordpiece`, `-sentencepiece`) and pre-configured model packs (planned: `-tiktoken`, `-huggingface`) |
 | `stringcheese-icu-*` | WIT interfaces + SCUD data packs for i18n (planned) |
 
 The scope boundary is a coherent commitment, not a fence against

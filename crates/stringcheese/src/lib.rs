@@ -96,6 +96,23 @@ pub use stringcheese_manip as manip;
 /// at compile or runtime.
 pub use stringcheese_lang as lang;
 
+/// The tokenizer/segmenter trait crate + built-in tokenizers
+/// (whitespace, delimiter, identifier, grapheme, n-gram). Re-exported
+/// unchanged from the `stringcheese-tokenizer` crate.
+///
+/// # Downstream algorithm crates are opt-in
+///
+/// The facade re-exports the trait crate here so a caller who only
+/// needs the built-in segmenters (whitespace, delimiter, identifier,
+/// grapheme, n-gram) never has to add a second dependency. Data-heavy
+/// downstream algorithm crates are per-algorithm, opt-in dependencies:
+/// `stringcheese-tokenizer-bpe`, and the planned `-wordpiece`,
+/// `-sentencepiece`, `-tiktoken`, and `-huggingface` model packs, are
+/// pulled in by callers who need them. Callers who don't pay nothing —
+/// not a byte of vocabulary data, not an entry in a merge table — at
+/// compile or runtime.
+pub use stringcheese_tokenizer as tokenizer;
+
 /// Metadata about this release.
 pub mod meta {
     /// The `stringcheese` crate's semantic version.

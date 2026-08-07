@@ -1,0 +1,38 @@
+[package]
+name = "stringcheese-tokenizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tokenizer and segmenter traits plus built-in Unicode whitespace, delimiter, identifier, grapheme, and n-gram tokenizers for the StringCheese toolkit."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["tokenizer", "segmenter", "nlp", "unicode", "wasm"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-core/std", "stringcheese-unicode/std"]
+# When enabled, the crate exposes its heap-allocating public surface.
+# Every built-in tokenizer and the trait output types require this;
+# without it the crate compiles as an empty no-alloc surface for
+# embedded builds that only need to link against the substrate crates.
+alloc = ["stringcheese-core/alloc", "stringcheese-unicode/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+stringcheese-unicode = { workspace = true, default-features = false }
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

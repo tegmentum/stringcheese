@@ -1,0 +1,38 @@
+[package]
+name = "stringcheese-tokenizer-bpe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Data-neutral Byte-Pair Encoding (BPE) tokenizer for the StringCheese toolkit — caller supplies merges and vocabulary."
+categories = ["algorithms", "text-processing", "no-std"]
+keywords = ["tokenizer", "bpe", "nlp", "tiktoken", "wasm"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std"]
+# When enabled, the crate exposes its heap-allocating public surface.
+# The BPE algorithm inherently allocates (per-word piece sequences,
+# vocabulary tables, merge maps); the crate compiles to an empty
+# surface without this feature.
+alloc = ["stringcheese-core/alloc", "stringcheese-tokenizer/alloc"]
+
+[dependencies]
+stringcheese-core = { workspace = true }
+stringcheese-tokenizer = { workspace = true }
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

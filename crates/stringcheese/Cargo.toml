@@ -23,6 +23,7 @@ std = [
     "stringcheese-index/std",
     "stringcheese-align/std",
     "stringcheese-lang/std",
+    "stringcheese-tokenizer/std",
 ]
 alloc = [
     "stringcheese-core/alloc",
@@ -34,6 +35,7 @@ alloc = [
     "stringcheese-index/alloc",
     "stringcheese-align/alloc",
     "stringcheese-lang/alloc",
+    "stringcheese-tokenizer/alloc",
 ]
 
 [dependencies]
@@ -49,6 +51,11 @@ stringcheese-align = { workspace = true }
 # etc.) are opt-in and NOT re-exported by this facade — callers pick
 # languages by direct dependency.
 stringcheese-lang = { workspace = true }
+# Tokenizer/segmenter trait crate + built-in tokenizers. Downstream
+# algorithm crates (`stringcheese-tokenizer-bpe`, planned `-wordpiece`
+# and `-sentencepiece`) and pre-configured model packs (`-tiktoken`,
+# `-huggingface`) are opt-in per the umbrella pattern.
+stringcheese-tokenizer = { workspace = true }
 
 [lints]
 workspace = true

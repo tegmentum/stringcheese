@@ -793,6 +793,7 @@ dependencies = [
  "stringcheese-lang",
  "stringcheese-manip",
  "stringcheese-phonetic",
+ "stringcheese-tokenizer",
  "stringcheese-unicode",
 ]
 
@@ -907,6 +908,24 @@ dependencies = [
  "proptest",
  "stringcheese-core",
  "stringcheese-corpus",
+]
+
+[[package]]
+name = "stringcheese-tokenizer"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-core",
+ "stringcheese-unicode",
+]
+
+[[package]]
+name = "stringcheese-tokenizer-bpe"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-core",
+ "stringcheese-tokenizer",
 ]
 
 [[package]]
