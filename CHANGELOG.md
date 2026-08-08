@@ -11,6 +11,163 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **HuggingFace `Metaspace` pre-tokenizer + `Precompiled` normalizer
+  passthrough in `stringcheese-tokenizer-bpe`.** Completes the missing
+  SentencePiece pieces that pair with wave 12's Unigram model support,
+  making Llama, Mistral, T5, and XLM-RoBERTa tokenizer.json files fully
+  loadable end-to-end. `Metaspace` implements the HF-canonical rule set:
+  replace ASCII space with `▁` (U+2581, "lower one-eighth block"), then
+  optional prepend controlled by `prepend_scheme` (`always` /
+  `first` / `never`), then optional `split` with SentencePiece
+  `MergedWithNext` semantics so each output piece begins with `▁`. New
+  typed `HfPreTokenizer::Metaspace { replacement, prepend_scheme, split }`
+  variant with HF-canonical serde defaults replaces the previous
+  `serde_json::Value` catch-all; `HfPrependScheme` deserializes with
+  `#[serde(rename_all = "lowercase")]`. `Precompiled` charsmap is
+  parsed into `Normalizer::Precompiled { charsmap_base64: String }` so
+  real Llama tokenizer.json files stop erroring; the runtime apply is a
+  documented passthrough with a TODO for full SentencePiece charsmap
+  execution. `Precompiled` inside a normalizer `Sequence` (the real
+  SentencePiece shape, e.g. Prepend + Replace + Precompiled) parses
+  correctly. 13 Metaspace tests + 6 Precompiled tests. Public
+  `to_runtime_metaspace` helper exported.
+
+- **`stringcheese-is` — Icelandic language pack.** New workspace crate,
+  registered as BCP-47 `"is"`. **Completes the Nordic quintet** (sv,
+  nb, nn, da, is). Since Icelandic has no official Snowball algorithm,
+  ships a rule-based longest-match suffix stripper with
+  `MIN_STEM_CHARS ≥ 3` (per-suffix override to `≥ 4` on the bare `-t`
+  neuter suffix — `hest → hes` over-strip fixed) covering: definite-
+  article suffix inventory (`-inum`/`-inni` masc/fem dat sg def, `-inn`
+  masc nom sg def, `-nir` masc nom pl def, `-nar` fem/masc acc pl def,
+  `-num` dat pl def, `-nni` fem dat sg def alt, `-nu` fem acc/dat sg
+  def, `-ið` neut sg def, `-in` fem nom sg / neut nom pl def), noun
+  case inventory (`-ur` masc nom sg, `-ar` nom pl / fem gen sg, `-ir`
+  fem/masc weak nom pl, `-um` dat pl universal, `-s` masc/neut gen sg,
+  `-i` dat sg universal, `-a` gen pl / weak neut), verb personal
+  endings (`-um` 1pl, `-uð` 2pl archaic past, `-ir` 2sg, `-ið` 2pl,
+  `-a` inf/3pl), adjective agreement (`-ur`/`-ir`/`-um`/`-a`/`-t`).
+  Iterates to convergence: `hesturinn → hestur → hest` in one call.
+  PHONEX-is (`"phonex-is"`) with `þ → th`, `ð → dh`, `æ → ae`,
+  `ö → oe`, `hv → kv` (Modern Icelandic hv-/kv- merger), silent `h`,
+  long-vowel accent folds. `Vec<char>` arithmetic throughout since
+  every Icelandic-specific scalar is multi-byte. ~90-word stopword
+  list (paradigms of `vera`/`hafa`/`skulu`/`vilja`/`geta`/`mega`).
+  Documented over-strips: `hestunum → hestu` (would need `-unum`),
+  `konunni → konu` — full lemma-quality needs a lexicon.
+
+- **`stringcheese-be` — Belarusian language pack.** New workspace crate,
+  registered as BCP-47 `"be"`. Belarusian is **East Slavic** (Narkamaŭka
+  orthography targeted) — carries the letter `ў` (short u) distinctive
+  from Russian/Ukrainian. 87-word Cyrillic stopword list. Apostrophe-
+  aware tokenizer preserving `сям'я`/`аб'ект`/`пад'езд`. Light suffix-
+  stripping stemmer over `Vec<char>` with RV region guard + theme-vowel
+  guard on past-tense `-ў`, `-ла`, `-ло`, `-лі`. Suffix table
+  deliberately omits `-аў`, `-аць`, `-яць` — they would race against
+  the theme-vowel-guarded past-tense `-ў` and infinitive `-ць` on words
+  like `чытаў`/`чытаць` and steal the longer match, over-stemming verbs
+  to `чыт` instead of `чыта`. PHONEX-be (`"phonex-be"`) with digraph
+  rewrites `дж → J`, `дз → Z` and short-u `ў → W` grouped with the
+  labial class alongside `в`/`б`/`п`/`ф`. Belarusian carries `ё` as a
+  distinct vowel (no `ё → е` fold, unlike Russian conventions). PHONEX
+  gates on Cyrillic-block presence — returns `None` for ASCII-only
+  input or lone soft-sign `ь`.
+
+- **`stringcheese-mk` — Macedonian language pack.** New workspace crate,
+  registered as BCP-47 `"mk"`. **Fourth Cyrillic-script pack** (ru, uk,
+  bg, sr, mk). Macedonian is **South Slavic** — closest relative to
+  Bulgarian, sharing the near-total loss of noun declension. Signature
+  feature: **three-way postposed definite article** with proximity
+  distinction — proximal `-ов`/`-ва`/`-во`/`-ве` (near speaker), medial
+  `-от`/`-та`/`-то`/`-те` (neutral), distal `-он`/`-на`/`-но`/`-не`
+  (distant / far from speaker). All 12 forms stripped in the first
+  cascade step, followed by plural (`-ови`/`-еви`/`-ња`), verb personal
+  endings (`-ам`/`-аш`/`-ат`/`-ме`/`-те`/`-ав`), and bare-vowel
+  (`-а`/`-и`/`-о`/`-у`) passes. `Vec<char>` arithmetic throughout.
+  155-word stopword list. PHONEX-mk (`"phonex-mk"`) folds the seven
+  Macedonian-specific letters (`ѓ`/`ќ`/`љ`/`њ`/`џ`/`ѕ`/`ј`) into
+  Slavic-Soundex consonant classes.
+
+- **`stringcheese-th` — Thai language pack.** New workspace crate,
+  registered as BCP-47 `"th"`. **First Thai-script pack** — Thai
+  scalars U+0E00..=U+0E7F are 3 bytes in UTF-8, all arithmetic on
+  `Vec<char>`. Thai is fully **analytic** (no case, no plural, no
+  verb-tense inflection) — the stemmer is near-identity: strips a
+  small closed set of nominalizer/agent prefixes
+  `การ-`/`ความ-`/`ผู้-`/`นัก-`/`เครื่อง-` (2-scalar min-stem guard)
+  and folds exact word-level reduplication `XX → X`; everything else
+  passes through, matching `stringcheese-zh`'s design. **Word
+  segmentation is heuristic-only** — true Thai word segmentation
+  requires a dictionary + statistical/neural model (ICU's Thai break
+  iterator, PyThaiNLP's `newmm`, `attacut`, `deepcut`) and is
+  **deferred** to a future `stringcheese-th-newmm` sibling; the base
+  pack ships a naive syllable-cluster segmenter (11-variant `CharType`
+  covering consonants, pre-vowels U+0E40..=U+0E44, vowel marks, tone
+  marks, signs, digits) that ends clusters at the second consonant —
+  so `ไทย` splits as `ไท` + `ย`. Tokenizer models Thai's pre-vowel
+  convention: the five leading vowels `เ`/`แ`/`โ`/`ใ`/`ไ` are typed
+  **before** the consonant they modify, so `เป็น` captures as
+  pre-vowel + consonant + vowel-mark. PHONEX-th (`"phonex-th"`) drops
+  tone marks/vowel marks/signs, folds consonants by RTGS families
+  (velars `ก ข ฃ ค ฅ ฆ → K`, sibilants `ซ ศ ษ ส → S`, dentals
+  `ต ถ ท ธ ฐ ฑ ฒ ฏ → T`, nasals `ง ณ น → N`, liquid `ร → R`,
+  `ล ฬ → L`, glide `ญ ย → Y`, glottal `ห ฮ → H` dropped), then
+  standard Soundex-shape 4-char reduction. ~55-word stopword list.
+
+- **`stringcheese-id` — Indonesian (Bahasa Indonesia) language pack.**
+  New workspace crate, registered as BCP-47 `"id"`. **First Malayo-
+  Polynesian / Austronesian pack in the workspace** — every prior
+  pack is Indo-European, Sino-Tibetan, Japonic, Koreanic, Semitic,
+  Uralic, Turkic, Dravidian, or Austroasiatic. Simplified
+  **Nazief-Adriani stemmer** (Nazief & Adriani, Universitas Indonesia
+  1996 — the canonical Indonesian IR stemmer) shipped WITHOUT the
+  reference algorithm's root-word dictionary, calibrated to over-stem
+  rarely rather than under-stem. Five-step ordered cascade: stopword
+  short-circuit → particle suffix (`-lah`/`-kah`/`-tah`/`-pun`) →
+  possessive (`-ku`/`-mu`/`-nya`) → derivational suffix
+  (`-kan`/`-an`/`-i`) → derivational prefix with `me-`/`pe-` consonant
+  restoration reversing nasal assimilation (`mem-`+vowel restore `p`:
+  `memilih → pilih`; `men-`+vowel restore `t`: `menulis → tulis`;
+  `meny-`+vowel restore `s`: `menyapu → sapu`; `me-`+sonorant strips
+  bare: `melihat → lihat`). `meng-` ambiguity resolved as **no-elision**:
+  `mengambil → ambil` (correct), `mengirim → irim` (documented
+  over-strip, locked into a `documented_over_strips_are_locked_in`
+  test). Confix-inhibition rules protect against over-strips:
+  `ber-`/`di-`/`ter-` + `-an` refuses `-an` strip (so `berjalan →
+  jalan`, not `jal`); possessive-stripped state refuses `-an` (so
+  `tanganku → tangan`, not `tang`); prefix-stripped state refuses `-i`
+  (so `menari → tari`, not `tar`); commit-on-shape rule prevents bare
+  `me-`/`pe-`+sonorant handler firing on words like `pergi` where the
+  3-letter prefix shape is present but residue is too short. 3-char
+  minimum-stem floor. PHONEX-id (`"phonex-id"`) with digraph rewrites
+  `ny → N`, `ng → G` (folded to `G` class 2 rather than `N` class 5 —
+  preserves `bunga` vs. `bunda` distinction), `sy → S`, `kh → K`.
+  ~90-word ASCII stopword list.
+
+- **`stringcheese-ta` — Tamil language pack.** New workspace crate,
+  registered as BCP-47 `"ta"`. **First Dravidian pack** (non-Indo-
+  European, non-Uralic, non-Sino-Tibetan) — third Brahmic-script pack
+  (after Hindi/Devanagari and Bengali). Tamil scalars U+0B80..=U+0BFF
+  are 3 bytes in UTF-8, all arithmetic on `Vec<char>`. Tamil is
+  agglutinative like Finnish/Korean with rich case/verb morphology.
+  Longest-match suffix stripper (2-scalar min-stem guard) covering:
+  plural `-கள்`, all 8 case suffixes (`-ஐ` accusative, `-ஆல்`
+  instrumental, `-கு` dative, `-இன்` genitive, `-இல்` locative,
+  `-ஓடு`/`-உடன்` sociative, `-வரை` allative), verb personal endings
+  (`-கிறேன்`/`-கிறாய்`/`-கிறார்`/`-கிறோம்`/`-கிறீர்கள்`/`-கிறார்கள்`),
+  tense markers before personal ending (`-கிறு`/`-கின்று`/`-வ`),
+  interrogative particles (`-ஆ`/`-ஏ`). Suffix table lists both
+  independent-vowel forms (`-ஆல்`) and matra surface variants
+  (`-ால்`) that appear after consonant stems. Property test:
+  convergence within 16 iterations. PHONEX-ta (`"phonex-ta"`) via
+  ISO 15919 transliteration → 4-char Soundex-shape key with
+  Tamil-appropriate consonant classes; folds Tamil-specific
+  alveolar/retroflex distinctions (`ன → N` alveolar-n, `ற → R`
+  alveolar-tap, `ழ → L` retroflex approximant — the famous "ḻ" of
+  "tamiḻ"). Tamil has a **single stop-consonant series** (unlike
+  Devanagari's 4-way voiced/aspirated distinction), simplifying the
+  phonetic map. ~50-word stopword list.
+
 - **HuggingFace `Unigram` model support in `stringcheese-tokenizer-bpe`.**
   Adds `HfUnigramModel` + `HfModel::Unigram` variant and a new
   `UnigramTokenizer` runtime executing Viterbi forward-DP over Unicode
