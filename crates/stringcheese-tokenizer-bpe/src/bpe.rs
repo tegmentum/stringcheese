@@ -487,6 +487,7 @@ impl BpeTokenizer {
     /// Apply the configured normalizer to `text`, or pass it through
     /// unchanged. Kept as a helper so the encode paths share one
     /// well-documented call site.
+    #[cfg_attr(not(feature = "hf-normalizer"), allow(clippy::unused_self))]
     fn normalize_text<'a>(&self, text: &'a str) -> alloc::borrow::Cow<'a, str> {
         #[cfg(feature = "hf-normalizer")]
         if let Some(n) = &self.normalizer {

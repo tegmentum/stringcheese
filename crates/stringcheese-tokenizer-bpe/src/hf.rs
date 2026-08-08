@@ -53,8 +53,11 @@
 //! All errors below carry the offending type name in their message so
 //! callers can diagnose immediately.
 //!
-//! * `model.type ∈ {"WordPiece", "Unigram", "WordLevel"}` — separate
-//!   algorithm crates, out of scope for this landing.
+//! * `model.type == "WordLevel"` — a separate algorithm landing, out of
+//!   scope for the current wave. `Unigram` is materialised via
+//!   [`to_unigram_tokenizer`] into a [`UnigramTokenizer`] whose
+//!   `encode` runs the Viterbi forward-DP over the vocabulary's log
+//!   probabilities; see that type's docs for the algorithm.
 //! * All other `pre_tokenizer` types (`Whitespace`,
 //!   `WhitespaceSplit`, `Punctuation`, `Metaspace`, `CharDelimiterSplit`,
 //!   `BertPreTokenizer`, `Digits`, `UnicodeScripts`, ...).
@@ -217,9 +220,12 @@ pub enum HfModel {
     /// [`crate::wordpiece::WordPieceTokenizer`] for the runtime.
     #[serde(rename = "WordPiece")]
     WordPiece(HfWordPieceModel),
-    /// `Unigram` model. Deferred — separate algorithm landing.
+    /// A SentencePiece-style `Unigram` language model — Kudo (2018),
+    /// used by Llama, Mistral, T5, and XLM-RoBERTa. See
+    /// [`HfUnigramModel`] for the fields and [`UnigramTokenizer`] for
+    /// the runtime.
     #[serde(rename = "Unigram")]
-    Unigram(serde_json::Value),
+    Unigram(HfUnigramModel),
     /// Simple word-level model (a plain vocabulary lookup). Deferred.
     #[serde(rename = "WordLevel")]
     WordLevel(serde_json::Value),
@@ -312,6 +318,35 @@ pub struct HfBpeModel {
     /// token is already in the vocabulary. Preserved but not applied.
     #[serde(default)]
     pub ignore_merges: Option<bool>,
+}
+
+/// The Unigram-specific fields of a `model` block.
+///
+/// `SentencePiece`'s Unigram language model — Kudo (2018) — stores its
+/// vocabulary as an ordered array of `(surface, log_probability)`
+/// pairs. The token id emitted for any given piece is that piece's
+/// zero-based index in [`Self::vocab`].
+///
+/// `unk_id`, when present, is the index of a fallback token used
+/// whenever a segment of the input cannot be covered by any vocab
+/// entry: the runtime advances one character and emits `unk_id`. A
+/// config without `unk_id` will surface
+/// [`UnigramEncodeError::UntokenizableChar`] for such inputs.
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct HfUnigramModel {
+    /// The vocabulary, in id order. Each entry is a `(surface,
+    /// log_probability)` pair; the index in this vec is the token id.
+    pub vocab: Vec<(String, f64)>,
+    /// Optional fallback token id (usually the index of `"<unk>"` in
+    /// [`Self::vocab`]).
+    #[serde(default)]
+    pub unk_id: Option<usize>,
+    /// Whether byte-fallback is enabled. Preserved but not applied —
+    /// callers who need `SentencePiece`'s byte-fallback behaviour
+    /// should implement the mapping themselves.
+    #[serde(default)]
+    pub byte_fallback: Option<bool>,
 }
 
 /// One entry in `model.merges`.
@@ -763,6 +798,21 @@ pub enum HfConversionError {
         /// The `model.type` string from the source config.
         type_name: String,
     },
+    /// [`to_unigram_tokenizer`] was called on a config whose
+    /// `model.type` is not `"Unigram"`. Carries the specific type
+    /// name.
+    UnsupportedModelForUnigram {
+        /// The `model.type` string from the source config.
+        type_name: String,
+    },
+    /// A `Unigram` config's `unk_id` points past the end of its
+    /// vocabulary — the config is internally inconsistent.
+    UnigramUnkIdOutOfRange {
+        /// The declared `unk_id`.
+        unk_id: usize,
+        /// The vocabulary size.
+        vocab_size: usize,
+    },
     /// A `WordPiece` config's `unk_token` surface string is not in
     /// the vocab. Encoding would produce ids the caller cannot
     /// decode.
@@ -865,6 +915,15 @@ impl fmt::Display for HfConversionError {
                 f,
                 "to_wordpiece_tokenizer called on non-WordPiece model type {type_name:?}; \
                  use to_bpe_tokenizer or to_tokenizer instead"
+            ),
+            Self::UnsupportedModelForUnigram { type_name } => write!(
+                f,
+                "to_unigram_tokenizer called on non-Unigram model type {type_name:?}; \
+                 use to_bpe_tokenizer, to_wordpiece_tokenizer, or to_tokenizer instead"
+            ),
+            Self::UnigramUnkIdOutOfRange { unk_id, vocab_size } => write!(
+                f,
+                "Unigram model's unk_id {unk_id} is out of range for a vocabulary of size {vocab_size}"
             ),
             Self::WordPieceUnkNotInVocab { unk_token } => write!(
                 f,
@@ -1027,7 +1086,7 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
             });
         }
         HfModel::Unigram(_) => {
-            return Err(HfConversionError::UnsupportedModel {
+            return Err(HfConversionError::UnsupportedModelForBpe {
                 type_name: "Unigram".to_string(),
             });
         }
@@ -1142,9 +1201,12 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
 /// * [`HfTokenizer::WordPiece`] wraps a
 ///   [`crate::wordpiece::WordPieceTokenizer`] — every
 ///   `model.type == "WordPiece"` config lands here.
+/// * [`HfTokenizer::Unigram`] wraps a [`UnigramTokenizer`] — every
+///   `model.type == "Unigram"` config (Llama, Mistral, T5,
+///   XLM-RoBERTa) lands here.
 ///
-/// Unigram and `WordLevel` are deferred; [`to_tokenizer`] rejects
-/// those with [`HfConversionError::UnsupportedModel`].
+/// `WordLevel` is deferred; [`to_tokenizer`] rejects it with
+/// [`HfConversionError::UnsupportedModel`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HfTokenizer {
@@ -1156,6 +1218,8 @@ pub enum HfTokenizer {
     /// A [`crate::wordpiece::WordPieceTokenizer`] materialised from a
     /// `WordPiece` model.
     WordPiece(crate::wordpiece::WordPieceTokenizer),
+    /// A [`UnigramTokenizer`] materialised from a `Unigram` model.
+    Unigram(UnigramTokenizer),
 }
 
 /// Materialise an [`HfTokenizerConfig`] as a runnable [`HfTokenizer`].
@@ -1194,9 +1258,7 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
             config,
         )?))),
         HfModel::WordPiece(_) => Ok(HfTokenizer::WordPiece(to_wordpiece_tokenizer(config)?)),
-        HfModel::Unigram(_) => Err(HfConversionError::UnsupportedModel {
-            type_name: "Unigram".to_string(),
-        }),
+        HfModel::Unigram(_) => Ok(HfTokenizer::Unigram(to_unigram_tokenizer(config)?)),
         HfModel::WordLevel(_) => Err(HfConversionError::UnsupportedModel {
             type_name: "WordLevel".to_string(),
         }),
@@ -1416,6 +1478,296 @@ fn extract_wordpiece_pre_tokenizer(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Unigram runtime.
+// ---------------------------------------------------------------------
+
+/// Runtime for a SentencePiece-style `Unigram` language model — Kudo
+/// (2018). Constructed via [`to_unigram_tokenizer`] from a parsed
+/// [`HfTokenizerConfig`].
+///
+/// # Algorithm
+///
+/// [`Self::encode`] runs a Viterbi forward dynamic-programming pass
+/// over character positions of the UTF-8 input. For each position `i`
+/// (0-indexed over Unicode scalar values, with `n` being the total
+/// character count), we compute the best score reachable at `i` as
+///
+/// ```text
+/// best[i] = max over j < i of best[j] + score(input[j..i])
+/// ```
+///
+/// where `input[j..i]` is the substring covering character positions
+/// `j` through `i` and must be present in the vocabulary. `best[0]`
+/// starts at `0.0`; the final best segmentation is recovered by
+/// backtracking from `best[n]` through the stored predecessors.
+///
+/// # Unknown-token fallback
+///
+/// When no vocabulary entry can reach a position `i` from any earlier
+/// reachable position, and [`Self::unk_id`] is `Some`, the runtime
+/// falls back to a single-character `unk` transition from `i - 1` to
+/// `i`, scored by the `unk` token's own log probability minus a fixed
+/// penalty. The penalty is chosen large enough that the fallback is
+/// only ever preferred when no vocab-only path exists.
+///
+/// If `unk_id` is `None` and a position is unreachable,
+/// [`Self::encode`] returns
+/// [`UnigramEncodeError::UntokenizableChar`] pointing at the offending
+/// character.
+///
+/// # Complexity
+///
+/// `O(n · m)` where `n` is the character count and `m` is the length
+/// of the longest vocabulary entry (capped by the input length).
+#[derive(Debug, Clone)]
+pub struct UnigramTokenizer {
+    /// The vocabulary in id order — `vocab[id]` gives the surface
+    /// string and its log probability.
+    vocab: Vec<(String, f64)>,
+    /// Surface string ↔ (id, score) lookup used by the Viterbi loop.
+    lookup: BTreeMap<String, (usize, f64)>,
+    /// Optional fallback token id.
+    unk_id: Option<usize>,
+    /// Precomputed penalty added on top of the `unk` score when the
+    /// fallback fires. Chosen so a vocab-only path always wins when
+    /// one exists.
+    unk_penalty: f64,
+}
+
+impl UnigramTokenizer {
+    /// Assemble a [`UnigramTokenizer`] from raw vocabulary and
+    /// optional `unk_id`. Public so callers who already have the
+    /// pieces in hand (e.g. from a hand-written vocab) can build a
+    /// tokenizer without going through the JSON parser.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HfConversionError::UnigramUnkIdOutOfRange`] if
+    /// `unk_id` is `Some` and points past the end of `vocab`.
+    pub fn from_parts(
+        vocab: Vec<(String, f64)>,
+        unk_id: Option<usize>,
+    ) -> Result<Self, HfConversionError> {
+        if let Some(u) = unk_id {
+            if u >= vocab.len() {
+                return Err(HfConversionError::UnigramUnkIdOutOfRange {
+                    unk_id: u,
+                    vocab_size: vocab.len(),
+                });
+            }
+        }
+        let mut lookup: BTreeMap<String, (usize, f64)> = BTreeMap::new();
+        for (id, (surface, score)) in vocab.iter().enumerate() {
+            // Later duplicates lose to earlier ones — matches HF's
+            // "index of first occurrence wins" convention for the id
+            // lookup direction.
+            lookup.entry(surface.clone()).or_insert((id, *score));
+        }
+        // Penalty: make the `unk` fallback strictly worse than any
+        // vocab-only path could ever be. `10.0` in log space is
+        // SentencePiece's own default and comfortably larger than the
+        // absolute value of any real vocab score.
+        let unk_penalty = 10.0;
+        Ok(Self {
+            vocab,
+            lookup,
+            unk_id,
+            unk_penalty,
+        })
+    }
+
+    /// The vocabulary this tokenizer was built from.
+    #[must_use]
+    pub fn vocab(&self) -> &[(String, f64)] {
+        &self.vocab
+    }
+
+    /// The `unk_id`, if any.
+    #[must_use]
+    pub const fn unk_id(&self) -> Option<usize> {
+        self.unk_id
+    }
+
+    /// Run Viterbi tokenization on the given input.
+    ///
+    /// See the type-level docs for the algorithm and the fallback
+    /// behaviour when [`Self::unk_id`] is set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnigramEncodeError::UntokenizableChar`] when a
+    /// character in the input is not covered by any vocab entry and
+    /// no `unk_id` is configured.
+    pub fn encode(&self, input: &str) -> Result<Vec<usize>, UnigramEncodeError> {
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Character boundary offsets (byte indices into `input`), with
+        // a trailing sentinel at `input.len()` so `boundaries[i..i+1]`
+        // brackets the `i`-th character.
+        let mut boundaries: Vec<usize> = input.char_indices().map(|(i, _)| i).collect();
+        boundaries.push(input.len());
+        let n = boundaries.len() - 1;
+
+        // best_score[i] = best log-probability sum reachable at
+        // character position `i`; `f64::NEG_INFINITY` means unreachable.
+        let mut best_score = alloc::vec![f64::NEG_INFINITY; n + 1];
+        // best_prev[i] = (previous char position, emitted token id) for
+        // the winning transition into `i`. Sentinel for i=0 is unused.
+        let mut best_prev: Vec<(usize, usize)> = alloc::vec![(0, 0); n + 1];
+        best_score[0] = 0.0;
+
+        for i in 1..=n {
+            // Consider every earlier reachable position `j` and check
+            // whether `input[j..i]` is a vocab entry.
+            for j in 0..i {
+                if !best_score[j].is_finite() {
+                    continue;
+                }
+                let piece = &input[boundaries[j]..boundaries[i]];
+                if let Some(&(id, score)) = self.lookup.get(piece) {
+                    let candidate = best_score[j] + score;
+                    if candidate > best_score[i] {
+                        best_score[i] = candidate;
+                        best_prev[i] = (j, id);
+                    }
+                }
+            }
+            // Fallback: if `i` is unreachable and we have an `unk`
+            // token, take a single-character `unk` transition from
+            // `i - 1` (if that itself is reachable).
+            if !best_score[i].is_finite() {
+                if let Some(u) = self.unk_id {
+                    if best_score[i - 1].is_finite() {
+                        let (_, unk_score) = self.vocab[u];
+                        let candidate = best_score[i - 1] + unk_score - self.unk_penalty;
+                        best_score[i] = candidate;
+                        best_prev[i] = (i - 1, u);
+                    }
+                }
+            }
+        }
+
+        if !best_score[n].is_finite() {
+            // Locate the first unreachable character to name in the error.
+            // Walk forward until we find a position `k > 0` whose
+            // predecessor is reachable but `k` itself is not.
+            let mut char_offset = 0;
+            for k in 1..=n {
+                if !best_score[k].is_finite() && best_score[k - 1].is_finite() {
+                    char_offset = k - 1;
+                    break;
+                }
+            }
+            return Err(UnigramEncodeError::UntokenizableChar { char_offset });
+        }
+
+        // Backtrack from n to 0, collecting emitted ids in reverse.
+        let mut ids = Vec::new();
+        let mut pos = n;
+        while pos > 0 {
+            let (prev, id) = best_prev[pos];
+            ids.push(id);
+            pos = prev;
+        }
+        ids.reverse();
+        Ok(ids)
+    }
+}
+
+/// Error returned by [`UnigramTokenizer::encode`] when the input
+/// cannot be tokenized under the configured vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnigramEncodeError {
+    /// A character in the input is not covered by any vocab entry
+    /// and no `unk_id` was configured, so tokenization cannot
+    /// proceed. `char_offset` is the zero-based Unicode-scalar-value
+    /// index of the offending character.
+    UntokenizableChar {
+        /// Zero-based Unicode-scalar-value index of the offending
+        /// character.
+        char_offset: usize,
+    },
+}
+
+impl fmt::Display for UnigramEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UntokenizableChar { char_offset } => write!(
+                f,
+                "Unigram tokenizer could not tokenize character at position {char_offset}: \
+                 no matching vocab entry and no unk_id configured"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UnigramEncodeError {}
+
+/// Materialise an [`HfTokenizerConfig`] as a runnable
+/// [`UnigramTokenizer`].
+///
+/// The config's `model.type` must be `"Unigram"`; any other type
+/// surfaces [`HfConversionError::UnsupportedModelForUnigram`].
+///
+/// Ancillary features (`normalizer`, `pre_tokenizer`, `post_processor`,
+/// `decoder`) are **not applied** on the Unigram path today — the
+/// runtime encodes the raw input string. Callers who need
+/// `Metaspace`, `Precompiled` normalization, or template splicing can
+/// inspect the parsed [`HfTokenizerConfig`] and apply those layers
+/// themselves.
+///
+/// # Errors
+///
+/// * [`HfConversionError::UnsupportedModelForUnigram`] — the config's
+///   `model.type` is not `"Unigram"`.
+/// * [`HfConversionError::UnigramUnkIdOutOfRange`] — the config's
+///   `unk_id` points past the end of the vocabulary.
+///
+/// # Examples
+///
+/// ```
+/// use stringcheese_tokenizer_bpe::hf::{parse_tokenizer_json, to_unigram_tokenizer};
+///
+/// let json = r#"{
+///     "added_tokens": [],
+///     "model": {
+///         "type": "Unigram",
+///         "vocab": [["<unk>", 0.0], ["hello", -1.0], ["world", -2.0]],
+///         "unk_id": 0
+///     }
+/// }"#;
+/// let config = parse_tokenizer_json(json).unwrap();
+/// let tok = to_unigram_tokenizer(&config).unwrap();
+/// assert_eq!(tok.encode("hello").unwrap(), vec![1]);
+/// ```
+pub fn to_unigram_tokenizer(
+    config: &HfTokenizerConfig,
+) -> Result<UnigramTokenizer, HfConversionError> {
+    let uni = match &config.model {
+        HfModel::Unigram(uni) => uni,
+        HfModel::Bpe(_) => {
+            return Err(HfConversionError::UnsupportedModelForUnigram {
+                type_name: "BPE".to_string(),
+            });
+        }
+        HfModel::WordPiece(_) => {
+            return Err(HfConversionError::UnsupportedModelForUnigram {
+                type_name: "WordPiece".to_string(),
+            });
+        }
+        HfModel::WordLevel(_) => {
+            return Err(HfConversionError::UnsupportedModelForUnigram {
+                type_name: "WordLevel".to_string(),
+            });
+        }
+    };
+    UnigramTokenizer::from_parts(uni.vocab.clone(), uni.unk_id)
 }
 
 // ---------------------------------------------------------------------
@@ -2111,7 +2463,11 @@ mod tests {
     }
 
     #[test]
-    fn unigram_model_reports_deferred_error() {
+    fn unigram_model_rejected_by_to_bpe_tokenizer() {
+        // Unigram is materialised via `to_unigram_tokenizer` /
+        // `to_tokenizer`, not `to_bpe_tokenizer`. Backwards-compat:
+        // `to_bpe_tokenizer` errors with `UnsupportedModelForBpe` so
+        // callers can dispatch on the specific model type.
         let json = r#"{
             "added_tokens": [],
             "model": {
@@ -2123,10 +2479,10 @@ mod tests {
         let config = parse_tokenizer_json(json).unwrap();
         let err = to_bpe_tokenizer(&config).unwrap_err();
         match err {
-            HfConversionError::UnsupportedModel { type_name } => {
+            HfConversionError::UnsupportedModelForBpe { type_name } => {
                 assert_eq!(type_name, "Unigram");
             }
-            other => panic!("expected UnsupportedModel(Unigram), got {other:?}"),
+            other => panic!("expected UnsupportedModelForBpe(Unigram), got {other:?}"),
         }
     }
 
@@ -3323,7 +3679,7 @@ mod tests {
             HfTokenizer::WordPiece(wp) => {
                 assert_eq!(wp.encode("unaffable"), vec![200, 201, 202]);
             }
-            HfTokenizer::Bpe(_) => panic!("expected HfTokenizer::WordPiece"),
+            other => panic!("expected HfTokenizer::WordPiece, got {other:?}"),
         }
     }
 
@@ -3339,30 +3695,45 @@ mod tests {
             HfTokenizer::Bpe(bpe) => {
                 assert_eq!(bpe.encode("ab").unwrap().ids, vec![3]);
             }
-            HfTokenizer::WordPiece(_) => panic!("expected HfTokenizer::Bpe"),
+            other => panic!("expected HfTokenizer::Bpe, got {other:?}"),
         }
     }
 
     #[test]
-    fn to_tokenizer_rejects_unigram_and_wordlevel() {
-        for (json, expected) in [
-            (
-                r#"{"added_tokens":[],"model":{"type":"Unigram","vocab":[["a",0.0]],"unk_id":0}}"#,
-                "Unigram",
-            ),
-            (
-                r#"{"added_tokens":[],"model":{"type":"WordLevel","vocab":{"a":0},"unk_token":"[UNK]"}}"#,
-                "WordLevel",
-            ),
-        ] {
-            let config = parse_tokenizer_json(json).unwrap();
-            let err = to_tokenizer(&config).unwrap_err();
-            match err {
-                HfConversionError::UnsupportedModel { type_name } => {
-                    assert_eq!(type_name, expected);
-                }
-                other => panic!("expected UnsupportedModel({expected}), got {other:?}"),
+    fn to_tokenizer_rejects_wordlevel() {
+        // WordLevel remains deferred. Unigram, which used to appear
+        // in this test, is now materialised via `to_unigram_tokenizer`
+        // — see `to_tokenizer_dispatches_to_unigram_enum_variant`.
+        let json = r#"{"added_tokens":[],"model":{"type":"WordLevel","vocab":{"a":0},"unk_token":"[UNK]"}}"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let err = to_tokenizer(&config).unwrap_err();
+        match err {
+            HfConversionError::UnsupportedModel { type_name } => {
+                assert_eq!(type_name, "WordLevel");
             }
+            other => panic!("expected UnsupportedModel(WordLevel), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_tokenizer_dispatches_to_unigram_enum_variant() {
+        // A Unigram config now routes through `to_tokenizer` and
+        // produces the `HfTokenizer::Unigram` variant.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "Unigram",
+                "vocab": [["<unk>", 0.0], ["hello", -1.0]],
+                "unk_id": 0
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        match tok {
+            HfTokenizer::Unigram(uni) => {
+                assert_eq!(uni.encode("hello").unwrap(), vec![1]);
+            }
+            other => panic!("expected HfTokenizer::Unigram, got {other:?}"),
         }
     }
 
