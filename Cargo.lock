@@ -1082,6 +1082,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-id"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-lang",
+ "stringcheese-phonetic",
+]
+
+[[package]]
 name = "stringcheese-index"
 version = "0.1.0"
 dependencies = [

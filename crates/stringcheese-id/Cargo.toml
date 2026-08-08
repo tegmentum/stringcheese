@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-id"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Indonesian (Bahasa Indonesia) language pack for the StringCheese toolkit: ~90-word stopword list, simplified Nazief-Adriani-style stemmer (five-step cascade: stopword short-circuit, particle suffix `-lah`/`-kah`/`-tah`/`-pun`, possessive `-ku`/`-mu`/`-nya`, derivational suffix `-kan`/`-an`/`-i`, then prefix strip with `me-`/`pe-` consonant-assimilation restoration), simple ASCII Latin tokenizer (Indonesian uses the 26-letter Latin alphabet, no diacritics), and a light PHONEX-Indonesian Soundex-shape phonetic hookup with Indonesian digraph rewrites (`ny → N`, `ng → G`, `sy → S`, `kh → K`). Implements stringcheese-lang::Language. First Malayo-Polynesian pack in the workspace."
+categories = ["text-processing", "internationalization"]
+keywords = ["indonesian", "bahasa", "nazief-adriani", "stemmer", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The
+# Nazief-Adriani stemmer builds owned `String` output,
+# `Language::tokenize` hands back a `Box<dyn Iterator>`, and the
+# phonetic encoder returns an owned `String` key — all `alloc`-only.
+# Without this feature the crate compiles down to the stopword slice
+# and the module constants alone (enough to link against on embedded
+# targets that only want the stopword table).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
