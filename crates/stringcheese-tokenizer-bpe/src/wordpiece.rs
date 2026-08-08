@@ -1,0 +1,811 @@
+//! `WordPiece` tokenizer (Wu et al. 2016, adopted by BERT).
+//!
+//! # What this module does
+//!
+//! `WordPiece` is the subword algorithm used by BERT and its family:
+//! `DistilBERT`, `RoBERTa` (some variants), `ALBERT`, `MobileBERT`, and
+//! every `WordPiece`-based checkpoint on the Hugging Face Hub. This
+//! module ships a data-neutral runtime: the caller supplies the
+//! vocabulary and the auxiliary parameters
+//! (`unk_token` id, `continuing_subword_prefix`, and
+//! `max_input_chars_per_word`), and the tokenizer performs the
+//! greedy-longest-match algorithm on whitespace-pre-tokenized input.
+//!
+//! # Algorithm
+//!
+//! For each input *word* (already split on whitespace and punctuation
+//! by a caller-supplied pre-tokenizer):
+//!
+//! 1. If the word's character count exceeds
+//!    [`WordPieceTokenizer::max_input_chars_per_word`], emit the
+//!    unknown-token id and stop.
+//! 2. Otherwise, walk the word left-to-right and, at each position,
+//!    find the *longest* substring that appears in the vocabulary.
+//!    Subwords at position 0 are looked up as-is; every subword after
+//!    the first is prefixed with
+//!    [`WordPieceTokenizer::continuing_subword_prefix`] (usually
+//!    `"##"`).
+//! 3. If any position has no vocabulary match, the whole word emits
+//!    the unknown-token id (i.e. `WordPiece` is *all or nothing* on a
+//!    word; the partial subwords are discarded).
+//!
+//! Example: with vocab `{"un", "##aff", "##able", "[UNK]"}` and prefix
+//! `"##"`, encoding `"unaffable"` yields the ids for
+//! `["un", "##aff", "##able"]`.
+//!
+//! # Decoding
+//!
+//! Decoding is the inverse: look up each id's surface string in the
+//! vocabulary, then concatenate — dropping the `##` prefix on
+//! continuing subwords and inserting a single ASCII space before every
+//! non-continuation subword. `["un", "##aff", "##able", "cat"]`
+//! decodes to `"unaffable cat"`.
+//!
+//! # Pre-tokenization
+//!
+//! `WordPiece` expects its input to be pre-split into words. This
+//! module ships three pre-tokenizer flavours behind
+//! [`WordPiecePreTokenizer`]:
+//!
+//! * [`WordPiecePreTokenizer::Whitespace`] — split on runs of Unicode
+//!   whitespace and *also* on punctuation boundaries. Matches HF's
+//!   `Whitespace` variant, which internally does the same
+//!   letter/digit + punctuation split. This is the default.
+//! * [`WordPiecePreTokenizer::WhitespaceSplit`] — split on whitespace
+//!   only, leaving punctuation glued to the word. Matches HF's
+//!   `WhitespaceSplit` variant.
+//! * [`WordPiecePreTokenizer::Bert`] — the BERT-family pre-tokenizer:
+//!   whitespace split followed by per-word punctuation split, where
+//!   each punctuation character becomes its own word. Equivalent to
+//!   HF's `BertPreTokenizer`.
+//!
+//! # Round-trip
+//!
+//! `decode(encode(text))` is a lossy round-trip: whitespace is
+//! collapsed and the pre-tokenizer boundaries are re-emitted as single
+//! spaces. `decode(encode("Hello,  world!"))` yields
+//! `"Hello , world !"` under the BERT pre-tokenizer. This matches
+//! HF's own behaviour — recovering the exact original spacing requires
+//! offset tracking that this crate deliberately does not do on the
+//! decode side.
+//!
+//! # References
+//!
+//! * Wu, Y., Schuster, M., Chen, Z., et al. (2016). "Google's Neural
+//!   Machine Translation System: Bridging the Gap between Human and
+//!   Machine Translation." arXiv:1609.08144.
+//! * Devlin, J., Chang, M.-W., Lee, K., & Toutanova, K. (2019). "BERT:
+//!   Pre-training of Deep Bidirectional Transformers for Language
+//!   Understanding." NAACL 2019.
+
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
+
+use stringcheese_tokenizer::{Encoding, Tokenizer, TokenizerError};
+
+use crate::bpe::TokenId;
+
+/// The pre-tokenizer variant used by [`WordPieceTokenizer`] to split
+/// raw input text into words before the greedy-longest-match loop
+/// runs.
+///
+/// See the module-level documentation for the semantics of each
+/// variant. The default is
+/// [`Self::Whitespace`], which matches HF's `Whitespace` pre-tokenizer
+/// (whitespace + implicit punctuation split).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum WordPiecePreTokenizer {
+    /// Whitespace split *and* punctuation split — HF `Whitespace`.
+    /// This is the default because it is the most permissive shape
+    /// and matches what most `WordPiece` checkpoints use in practice.
+    #[default]
+    Whitespace,
+    /// Whitespace split only — HF `WhitespaceSplit`. Punctuation stays
+    /// glued to the surrounding word.
+    WhitespaceSplit,
+    /// BERT-family pre-tokenizer — HF `BertPreTokenizer`. Whitespace
+    /// split followed by per-word punctuation split (each punctuation
+    /// character becomes its own word).
+    Bert,
+}
+
+/// Error returned by [`WordPieceTokenizer::decode`] when a token id
+/// cannot be resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WordPieceDecodeError {
+    /// A token id was not present in the vocabulary and is not the
+    /// registered unknown-token id.
+    UnknownId(TokenId),
+}
+
+impl fmt::Display for WordPieceDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownId(id) => write!(f, "unknown WordPiece token id: {id}"),
+        }
+    }
+}
+
+impl std::error::Error for WordPieceDecodeError {}
+
+/// A `WordPiece` tokenizer.
+///
+/// Construct via [`WordPieceTokenizer::from_parts`]. The vocabulary
+/// must contain the unknown-token surface string (mapped to
+/// [`Self::unk_token_id`]); this is validated at construction time
+/// and returned as [`WordPieceBuildError::UnkNotInVocab`].
+///
+/// # Examples
+///
+/// Encode `"unaffable"` with a small BERT-style vocab:
+///
+/// ```
+/// use std::collections::HashMap;
+/// use stringcheese_tokenizer_bpe::wordpiece::WordPieceTokenizer;
+///
+/// let mut vocab: HashMap<String, u32> = HashMap::new();
+/// vocab.insert("[UNK]".to_string(), 0);
+/// vocab.insert("un".to_string(), 1);
+/// vocab.insert("##aff".to_string(), 2);
+/// vocab.insert("##able".to_string(), 3);
+/// let tok = WordPieceTokenizer::from_parts(vocab, 0, "##".to_string(), 100).unwrap();
+/// let ids = tok.encode("unaffable");
+/// assert_eq!(ids, vec![1, 2, 3]);
+/// ```
+#[derive(Debug, Clone)]
+pub struct WordPieceTokenizer {
+    /// Forward vocabulary: token surface string ↔ id.
+    ///
+    /// Kept as a `BTreeMap` for deterministic iteration and for the
+    /// same rationale the surrounding crate uses on
+    /// `BpeVocabulary` — it lets the crate compile against a
+    /// hypothetical `no_std + alloc`-only build without pulling
+    /// `hashbrown`.
+    vocab: BTreeMap<String, TokenId>,
+    /// Reverse vocabulary for decode. Rebuilt at construction so
+    /// [`Self::decode`] is a single lookup per id.
+    reverse: BTreeMap<TokenId, String>,
+    /// The id emitted for out-of-vocab words and for words longer than
+    /// [`Self::max_input_chars_per_word`].
+    unk_token_id: TokenId,
+    /// The surface string for the unknown token — surfaced by
+    /// [`Self::decode`] when the id is resolved through
+    /// [`Self::reverse`].
+    unk_token: String,
+    /// Prefix stamped on every subword after the first in a word.
+    /// Usually `"##"` for BERT; some variants use `""` (i.e. no
+    /// prefix — the model relies on positional encoding to
+    /// distinguish continuations).
+    continuing_subword_prefix: String,
+    /// Maximum character count of an input word. Longer words emit
+    /// [`Self::unk_token_id`] outright (matching HF's behaviour).
+    max_input_chars_per_word: usize,
+    /// How to split raw input text into words before the greedy
+    /// longest-match loop. See [`WordPiecePreTokenizer`].
+    pre_tokenizer: WordPiecePreTokenizer,
+}
+
+/// Errors that can arise when building a [`WordPieceTokenizer`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WordPieceBuildError {
+    /// The `unk_token_id` maps to a surface string that is not
+    /// registered in the vocabulary; encoding would produce ids the
+    /// caller cannot decode. The wrapped id is the offending
+    /// unknown-token id.
+    UnkNotInVocab(TokenId),
+}
+
+impl fmt::Display for WordPieceBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnkNotInVocab(id) => write!(
+                f,
+                "unknown-token id {id} is not present in the WordPiece vocabulary"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WordPieceBuildError {}
+
+impl WordPieceTokenizer {
+    /// Build a tokenizer from raw parts.
+    ///
+    /// # Parameters
+    ///
+    /// * `vocab` — the surface-string ↔ id vocabulary. Must contain a
+    ///   mapping for the unknown token (i.e. some string must map to
+    ///   `unk_token_id`); otherwise
+    ///   [`WordPieceBuildError::UnkNotInVocab`] is returned.
+    /// * `unk_token_id` — the id emitted for out-of-vocab words and
+    ///   for words longer than `max_input_chars_per_word`.
+    /// * `continuing_subword_prefix` — the string prefixed on every
+    ///   subword after the first inside a word. `"##"` for canonical
+    ///   BERT; may be `""` for variants that omit it.
+    /// * `max_input_chars_per_word` — words with more characters than
+    ///   this shortcut to the unknown-token id.
+    ///
+    /// The pre-tokenizer defaults to
+    /// [`WordPiecePreTokenizer::Whitespace`]; use
+    /// [`Self::with_pre_tokenizer`] to switch it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WordPieceBuildError::UnkNotInVocab`] if no vocabulary
+    /// entry maps to `unk_token_id`.
+    pub fn from_parts<V>(
+        vocab: V,
+        unk_token_id: TokenId,
+        continuing_subword_prefix: String,
+        max_input_chars_per_word: usize,
+    ) -> Result<Self, WordPieceBuildError>
+    where
+        V: IntoIterator<Item = (String, TokenId)>,
+    {
+        let vocab: BTreeMap<String, TokenId> = vocab.into_iter().collect();
+        // Reverse map for decode.
+        let mut reverse = BTreeMap::new();
+        for (surface, &id) in &vocab {
+            reverse.insert(id, surface.clone());
+        }
+        let Some(unk_token) = reverse.get(&unk_token_id).cloned() else {
+            return Err(WordPieceBuildError::UnkNotInVocab(unk_token_id));
+        };
+        Ok(Self {
+            vocab,
+            reverse,
+            unk_token_id,
+            unk_token,
+            continuing_subword_prefix,
+            max_input_chars_per_word,
+            pre_tokenizer: WordPiecePreTokenizer::default(),
+        })
+    }
+
+    /// Attach (or replace) the pre-tokenizer applied to raw text
+    /// before the greedy-longest-match loop runs.
+    #[must_use]
+    pub fn with_pre_tokenizer(mut self, pre_tokenizer: WordPiecePreTokenizer) -> Self {
+        self.pre_tokenizer = pre_tokenizer;
+        self
+    }
+
+    /// The registered unknown-token id.
+    #[must_use]
+    pub fn unk_token_id(&self) -> TokenId {
+        self.unk_token_id
+    }
+
+    /// The registered unknown-token surface string.
+    #[must_use]
+    pub fn unk_token(&self) -> &str {
+        &self.unk_token
+    }
+
+    /// The registered continuing-subword prefix.
+    #[must_use]
+    pub fn continuing_subword_prefix(&self) -> &str {
+        &self.continuing_subword_prefix
+    }
+
+    /// The maximum input character count per word.
+    #[must_use]
+    pub fn max_input_chars_per_word(&self) -> usize {
+        self.max_input_chars_per_word
+    }
+
+    /// The pre-tokenizer variant this tokenizer uses.
+    #[must_use]
+    pub fn pre_tokenizer(&self) -> WordPiecePreTokenizer {
+        self.pre_tokenizer
+    }
+
+    /// Read-only access to the vocabulary.
+    #[must_use]
+    pub fn vocab(&self) -> &BTreeMap<String, TokenId> {
+        &self.vocab
+    }
+
+    /// Encode `text` into a sequence of token ids.
+    ///
+    /// Runs the configured pre-tokenizer to split `text` into words,
+    /// then runs the greedy longest-match `WordPiece` loop on each
+    /// word. Returns the concatenated ids across every word.
+    #[must_use]
+    pub fn encode(&self, text: &str) -> Vec<TokenId> {
+        let mut out = Vec::new();
+        for word in self.split_words(text) {
+            self.encode_word_into(&word, &mut out);
+        }
+        out
+    }
+
+    /// Encode a single already-pre-tokenized word.
+    ///
+    /// This is the inner greedy-longest-match loop, exposed for
+    /// callers who want to drive the pre-tokenization themselves.
+    /// `word` should already be a single "word" in the caller's
+    /// pre-tokenizer definition; this function does no further
+    /// splitting.
+    #[must_use]
+    pub fn encode_word(&self, word: &str) -> Vec<TokenId> {
+        let mut out = Vec::new();
+        self.encode_word_into(word, &mut out);
+        out
+    }
+
+    /// Decode a slice of token ids back into a string.
+    ///
+    /// Continuing subwords (those whose surface string starts with
+    /// [`Self::continuing_subword_prefix`]) are glued onto the
+    /// preceding subword with the prefix stripped; every other subword
+    /// is separated from the previous one by a single ASCII space.
+    /// This matches HF's `WordPieceDecoder` behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WordPieceDecodeError::UnknownId`] if any id in
+    /// `tokens` is not registered in the vocabulary.
+    pub fn decode(&self, tokens: &[TokenId]) -> Result<String, WordPieceDecodeError> {
+        let mut out = String::new();
+        for (i, &id) in tokens.iter().enumerate() {
+            let Some(surface) = self.reverse.get(&id) else {
+                return Err(WordPieceDecodeError::UnknownId(id));
+            };
+            let prefix = &self.continuing_subword_prefix;
+            if !prefix.is_empty() && surface.starts_with(prefix.as_str()) {
+                // Continuing subword: strip the prefix, glue onto the
+                // preceding token with no separator.
+                out.push_str(&surface[prefix.len()..]);
+            } else {
+                // First subword of a new word: separate from the
+                // previous word with a single ASCII space (unless this
+                // is the first token overall).
+                if i > 0 {
+                    out.push(' ');
+                }
+                out.push_str(surface);
+            }
+        }
+        Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // Internal helpers.
+    // -----------------------------------------------------------------
+
+    /// Split `text` into words according to
+    /// [`Self::pre_tokenizer`]. Returns owned `String`s because the
+    /// BERT pre-tokenizer emits per-character punctuation chunks that
+    /// cannot always borrow contiguously from the input.
+    fn split_words(&self, text: &str) -> Vec<String> {
+        match self.pre_tokenizer {
+            WordPiecePreTokenizer::Whitespace => split_whitespace_and_punctuation(text),
+            WordPiecePreTokenizer::WhitespaceSplit => split_whitespace_only(text),
+            WordPiecePreTokenizer::Bert => bert_pre_tokenize(text),
+        }
+    }
+
+    /// Run the greedy longest-match loop on `word` and push the
+    /// resulting ids into `out`.
+    fn encode_word_into(&self, word: &str, out: &mut Vec<TokenId>) {
+        // Empty word: emit nothing. HF's own `WordPiece::tokenize`
+        // returns an empty vec for an empty input.
+        if word.is_empty() {
+            return;
+        }
+
+        // A "character" is a Unicode scalar. Count via `chars()` — HF
+        // uses the same rule (`chars().count()` in the Python
+        // reference, `.chars().count()` in the Rust reference).
+        if word.chars().count() > self.max_input_chars_per_word {
+            out.push(self.unk_token_id);
+            return;
+        }
+
+        // Byte offsets of each char boundary inside `word`. We need
+        // these because slicing a `str` is byte-indexed; walking the
+        // greedy loop over char positions requires converting to
+        // bytes at each step.
+        let boundaries: Vec<usize> = word
+            .char_indices()
+            .map(|(b, _)| b)
+            .chain(core::iter::once(word.len()))
+            .collect();
+
+        let mut subwords: Vec<TokenId> = Vec::new();
+        let mut start_char = 0usize;
+        let n = boundaries.len() - 1; // number of chars in `word`
+        while start_char < n {
+            // Longest substring starting at `start_char` that is in
+            // the vocabulary. `end_char` runs from `n` down to
+            // `start_char + 1`.
+            let mut matched: Option<TokenId> = None;
+            let mut end_char = n;
+            while end_char > start_char {
+                let sub_start = boundaries[start_char];
+                let sub_end = boundaries[end_char];
+                let raw = &word[sub_start..sub_end];
+                let candidate = if start_char == 0 {
+                    raw.to_string()
+                } else {
+                    let mut s =
+                        String::with_capacity(self.continuing_subword_prefix.len() + raw.len());
+                    s.push_str(&self.continuing_subword_prefix);
+                    s.push_str(raw);
+                    s
+                };
+                if let Some(&id) = self.vocab.get(&candidate) {
+                    matched = Some(id);
+                    break;
+                }
+                end_char -= 1;
+            }
+            let Some(id) = matched else {
+                // No match at this position: the whole word is
+                // unknown. Discard any partial subwords and emit the
+                // unknown-token id.
+                out.push(self.unk_token_id);
+                return;
+            };
+            subwords.push(id);
+            start_char = end_char;
+        }
+        out.extend(subwords);
+    }
+}
+
+impl Tokenizer for WordPieceTokenizer {
+    type Token = TokenId;
+
+    fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
+        let ids = Self::encode(self, text);
+        let mut enc = Encoding::new();
+        enc.ids = ids;
+        Ok(enc)
+    }
+
+    fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
+        Self::decode(self, tokens).map_err(|e| TokenizerError::UnknownToken(alloc::format!("{e}")))
+    }
+
+    fn count(&self, text: &str) -> Result<usize, TokenizerError> {
+        Ok(Self::encode(self, text).len())
+    }
+}
+
+// ---------------------------------------------------------------------
+// Pre-tokenizer helpers.
+// ---------------------------------------------------------------------
+
+/// Split `text` on runs of Unicode whitespace. Empty runs (leading /
+/// trailing / consecutive) collapse; no empty word is emitted.
+fn split_whitespace_only(text: &str) -> Vec<String> {
+    text.split_whitespace().map(str::to_string).collect()
+}
+
+/// Split `text` on runs of Unicode whitespace *and* on punctuation
+/// boundaries — punctuation characters attach neither to what comes
+/// before nor what comes after and are emitted as their own words.
+fn split_whitespace_and_punctuation(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for word in text.split_whitespace() {
+        split_on_punctuation_into(word, &mut out);
+    }
+    out
+}
+
+/// BERT pre-tokenizer: whitespace-split then per-word punctuation
+/// split. Semantically identical to
+/// [`split_whitespace_and_punctuation`] — the two are duplicates so
+/// each stays traceable to its HF name.
+fn bert_pre_tokenize(text: &str) -> Vec<String> {
+    split_whitespace_and_punctuation(text)
+}
+
+/// Split `word` on punctuation boundaries and push each chunk into
+/// `out`. A run of letters / digits stays whole; every punctuation
+/// character becomes its own single-character chunk.
+fn split_on_punctuation_into(word: &str, out: &mut Vec<String>) {
+    let mut current = String::new();
+    for c in word.chars() {
+        if is_punctuation(c) {
+            if !current.is_empty() {
+                out.push(core::mem::take(&mut current));
+            }
+            let mut s = String::new();
+            s.push(c);
+            out.push(s);
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+}
+
+/// Return `true` iff `c` is a punctuation character under BERT's
+/// classic rule.
+///
+/// BERT's `_is_punctuation` is broader than Unicode's `\p{P}`: any
+/// non-alphanumeric ASCII character (`!`, `#`, `-`, `~`, and so on)
+/// is treated as punctuation, *plus* every scalar the Unicode
+/// database marks under any punctuation category (`Pc`, `Pd`, `Pe`,
+/// `Pf`, `Pi`, `Po`, `Ps`). We approximate the ASCII half exhaustively
+/// via [`char::is_ascii_punctuation`] and the non-ASCII half with a
+/// short per-range check covering the common Latin-1, general
+/// punctuation, CJK punctuation, and fullwidth-ASCII-punctuation
+/// blocks — enough to keep BERT-family checkpoints functional on
+/// typical English / European / CJK input.
+///
+/// The scope is intentionally narrow: this landing targets BERT /
+/// `DistilBERT` / `RoBERTa` / `ALBERT` / `MobileBERT` inputs, which
+/// are overwhelmingly ASCII with the occasional Latin-1 punctuation
+/// character. A future landing that adds full Unicode punctuation
+/// coverage (via `unicode-properties` or similar) can widen this
+/// check without touching the pre-tokenizer plumbing.
+fn is_punctuation(c: char) -> bool {
+    // ASCII punctuation, including everything in
+    // `!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~`.
+    if c.is_ascii_punctuation() {
+        return true;
+    }
+    // Common non-ASCII punctuation blocks. The ranges cover the
+    // Latin-1 supplement's punctuation, the General Punctuation
+    // block, CJK Symbols and Punctuation, and the fullwidth ASCII
+    // punctuation lookalikes — enough for BERT-family text.
+    matches!(
+        c,
+        '\u{00A1}'
+            | '\u{00A7}'
+            | '\u{00AB}'
+            | '\u{00B6}'
+            | '\u{00B7}'
+            | '\u{00BB}'
+            | '\u{00BF}'
+            | '\u{2010}'..='\u{2027}'
+            | '\u{2030}'..='\u{205E}'
+            | '\u{3000}'..='\u{303F}'
+            | '\u{FF01}'..='\u{FF0F}'
+            | '\u{FF1A}'..='\u{FF20}'
+            | '\u{FF3B}'..='\u{FF40}'
+            | '\u{FF5B}'..='\u{FF65}'
+    )
+}
+
+// ---------------------------------------------------------------------
+// Tests.
+// ---------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// Build a small BERT-style vocab that covers the canonical
+    /// `WordPiece` reference example: `"unaffable"` → `["un",
+    /// "##aff", "##able"]`.
+    fn small_bert_vocab() -> BTreeMap<String, TokenId> {
+        let mut vocab = BTreeMap::new();
+        vocab.insert("[UNK]".to_string(), 0);
+        vocab.insert("[CLS]".to_string(), 1);
+        vocab.insert("[SEP]".to_string(), 2);
+        vocab.insert("un".to_string(), 3);
+        vocab.insert("##aff".to_string(), 4);
+        vocab.insert("##able".to_string(), 5);
+        vocab.insert("cat".to_string(), 6);
+        vocab.insert("dog".to_string(), 7);
+        vocab.insert(",".to_string(), 8);
+        vocab.insert("!".to_string(), 9);
+        vocab.insert("Hello".to_string(), 10);
+        vocab.insert("world".to_string(), 11);
+        vocab
+    }
+
+    fn small_tokenizer() -> WordPieceTokenizer {
+        WordPieceTokenizer::from_parts(small_bert_vocab(), 0, "##".to_string(), 100).unwrap()
+    }
+
+    #[test]
+    fn build_fails_if_unk_not_in_vocab() {
+        let mut vocab = BTreeMap::new();
+        vocab.insert("a".to_string(), 1);
+        let err = WordPieceTokenizer::from_parts(vocab, 0, "##".to_string(), 100).unwrap_err();
+        assert_eq!(err, WordPieceBuildError::UnkNotInVocab(0));
+    }
+
+    #[test]
+    fn encode_unaffable_reference_example() {
+        // The canonical WordPiece reference: "unaffable" → ["un",
+        // "##aff", "##able"].
+        let tok = small_tokenizer();
+        assert_eq!(tok.encode("unaffable"), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn encode_word_oov_emits_unk() {
+        // "xyz" isn't in the vocab and no prefix decomposition works.
+        let tok = small_tokenizer();
+        assert_eq!(tok.encode("xyz"), vec![0]);
+    }
+
+    #[test]
+    fn encode_word_partial_oov_emits_unk() {
+        // "unaff" prefix matches ("un" + "##aff") but the trailing "q"
+        // has no vocabulary entry and no "##q" continuation. WordPiece
+        // is all-or-nothing on the word: emit UNK, drop the partial
+        // subwords.
+        let tok = small_tokenizer();
+        assert_eq!(tok.encode("unaffq"), vec![0]);
+    }
+
+    #[test]
+    fn encode_multiple_words_split_on_whitespace() {
+        let tok = small_tokenizer();
+        assert_eq!(tok.encode("cat dog"), vec![6, 7]);
+    }
+
+    #[test]
+    fn encode_word_longer_than_max_chars_emits_unk() {
+        // max_input_chars_per_word = 5: any longer word shortcuts to
+        // UNK.
+        let tok =
+            WordPieceTokenizer::from_parts(small_bert_vocab(), 0, "##".to_string(), 5).unwrap();
+        // "unaffable" has 9 chars > 5.
+        assert_eq!(tok.encode("unaffable"), vec![0]);
+        // "cat" has 3 chars, still fits.
+        assert_eq!(tok.encode("cat"), vec![6]);
+    }
+
+    #[test]
+    fn encode_empty_input_emits_nothing() {
+        let tok = small_tokenizer();
+        assert!(tok.encode("").is_empty());
+        assert!(tok.encode("   ").is_empty());
+    }
+
+    #[test]
+    fn encode_word_at_char_boundary_max_length_is_ok() {
+        // max = 3 chars, word = 3 chars → encoded normally.
+        let tok =
+            WordPieceTokenizer::from_parts(small_bert_vocab(), 0, "##".to_string(), 3).unwrap();
+        assert_eq!(tok.encode("cat"), vec![6]);
+    }
+
+    #[test]
+    fn encode_with_punctuation_pre_tokenizer_splits_punctuation() {
+        // "Hello, world!" → ["Hello", ",", "world", "!"] with the
+        // whitespace+punctuation pre-tokenizer (the default).
+        let tok = small_tokenizer();
+        let ids = tok.encode("Hello, world!");
+        assert_eq!(ids, vec![10, 8, 11, 9]);
+    }
+
+    #[test]
+    fn encode_with_bert_pre_tokenizer_splits_punctuation() {
+        let tok = small_tokenizer().with_pre_tokenizer(WordPiecePreTokenizer::Bert);
+        let ids = tok.encode("Hello, world!");
+        assert_eq!(ids, vec![10, 8, 11, 9]);
+    }
+
+    #[test]
+    fn encode_with_whitespace_split_leaves_punctuation_attached() {
+        // WhitespaceSplit keeps "Hello," as one word — which then
+        // fails to decompose ("Hello," is not in the vocab and there
+        // is no "##," continuation), so the whole word emits UNK.
+        let tok = small_tokenizer().with_pre_tokenizer(WordPiecePreTokenizer::WhitespaceSplit);
+        let ids = tok.encode("Hello, world!");
+        // "Hello," → UNK, "world!" → UNK.
+        assert_eq!(ids, vec![0, 0]);
+    }
+
+    #[test]
+    fn decode_reassembles_continuing_subwords() {
+        let tok = small_tokenizer();
+        // ["un", "##aff", "##able"] → "unaffable"
+        let text = tok.decode(&[3, 4, 5]).unwrap();
+        assert_eq!(text, "unaffable");
+    }
+
+    #[test]
+    fn decode_inserts_spaces_between_full_words() {
+        let tok = small_tokenizer();
+        // ["cat", "dog"] → "cat dog"
+        let text = tok.decode(&[6, 7]).unwrap();
+        assert_eq!(text, "cat dog");
+    }
+
+    #[test]
+    fn decode_reassembles_mixed_full_and_continuing_subwords() {
+        let tok = small_tokenizer();
+        // ["un", "##aff", "##able", "cat"] → "unaffable cat"
+        let text = tok.decode(&[3, 4, 5, 6]).unwrap();
+        assert_eq!(text, "unaffable cat");
+    }
+
+    #[test]
+    fn decode_rejects_unknown_id() {
+        let tok = small_tokenizer();
+        let err = tok.decode(&[42]).unwrap_err();
+        assert_eq!(err, WordPieceDecodeError::UnknownId(42));
+    }
+
+    #[test]
+    fn round_trip_encode_decode_lossy_on_whitespace() {
+        // Pre-tokenizer collapses whitespace to single spaces; the
+        // documented lossy round-trip.
+        let tok = small_tokenizer();
+        let ids = tok.encode("cat  dog");
+        // encode collapses the double space → ["cat", "dog"] → [6,7].
+        assert_eq!(ids, vec![6, 7]);
+        let text = tok.decode(&ids).unwrap();
+        assert_eq!(text, "cat dog");
+    }
+
+    #[test]
+    fn empty_prefix_disables_continuation_marker() {
+        // Some WordPiece variants (or hand-built configs) use "" as
+        // the continuing-subword prefix: subwords after the first
+        // are looked up bare. Set up a tiny vocab that exercises
+        // that.
+        let mut vocab = BTreeMap::new();
+        vocab.insert("[UNK]".to_string(), 0);
+        vocab.insert("un".to_string(), 1);
+        vocab.insert("aff".to_string(), 2);
+        vocab.insert("able".to_string(), 3);
+        let tok = WordPieceTokenizer::from_parts(vocab, 0, String::new(), 100).unwrap();
+        // "unaffable" — greedy longest match with empty prefix.
+        assert_eq!(tok.encode("unaffable"), vec![1, 2, 3]);
+        // Decode: without a prefix every subword is treated as a
+        // "new word" so every one gets a leading space. This is the
+        // documented degenerate shape.
+        assert_eq!(tok.decode(&[1, 2, 3]).unwrap(), "un aff able");
+    }
+
+    #[test]
+    fn encode_multibyte_word_uses_char_length_not_byte_length() {
+        // Build a vocab that carries a multi-byte-char subword and
+        // verify the max-chars check counts scalars, not bytes.
+        let mut vocab = BTreeMap::new();
+        vocab.insert("[UNK]".to_string(), 0);
+        // "café" is 4 chars but 5 bytes.
+        vocab.insert("café".to_string(), 1);
+        let tok = WordPieceTokenizer::from_parts(vocab, 0, "##".to_string(), 4).unwrap();
+        // 4 chars ≤ 4 → encoded normally, not UNK.
+        assert_eq!(tok.encode("café"), vec![1]);
+    }
+
+    #[test]
+    fn tokenizer_trait_encode_returns_encoding_with_ids_only() {
+        let tok = small_tokenizer();
+        let enc = Tokenizer::encode(&tok, "cat dog").unwrap();
+        assert_eq!(enc.ids, vec![6, 7]);
+        // Offsets and special_mask are empty — WordPiece doesn't
+        // track them today.
+        assert!(enc.offsets.is_empty());
+        assert!(enc.special_mask.is_empty());
+    }
+
+    #[test]
+    fn tokenizer_trait_count_matches_encode_length() {
+        let tok = small_tokenizer();
+        assert_eq!(Tokenizer::count(&tok, "unaffable").unwrap(), 3);
+        assert_eq!(Tokenizer::count(&tok, "cat dog").unwrap(), 2);
+    }
+
+    #[test]
+    fn punctuation_helper_matches_ascii_bert_rule() {
+        for &c in &['!', '"', '#', ',', '.', '?', '-', '_', '(', ')', '[', ']'] {
+            assert!(is_punctuation(c), "expected '{c}' to be punctuation");
+        }
+        for &c in &['a', 'Z', '0', '9', ' ', '\t'] {
+            assert!(!is_punctuation(c), "expected '{c}' to be non-punctuation");
+        }
+    }
+}

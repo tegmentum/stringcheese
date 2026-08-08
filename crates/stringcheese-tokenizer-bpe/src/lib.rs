@@ -108,6 +108,16 @@ pub mod normalizer;
 #[cfg(feature = "alloc")]
 pub mod post_processor;
 
+// `WordPiece` model (Wu et al. 2016 — used by BERT / `DistilBERT` /
+// `RoBERTa` / `ALBERT` / `MobileBERT`). The full module docs live in
+// `src/wordpiece.rs`; here we only gate compilation. Gated behind
+// `hf-tokenizer` (rather than a standalone feature) because the
+// runtime is small and the HF loader is the primary consumer; every
+// caller that wants a `WordPiece` model is already reaching for the
+// HF loader.
+#[cfg(feature = "hf-tokenizer")]
+pub mod wordpiece;
+
 // Hugging Face `tokenizer.json` parser and adapter. The full module
 // docs (support matrix, error taxonomy, deferred features) live in
 // `src/hf.rs`; here we only gate compilation on the crate feature.
