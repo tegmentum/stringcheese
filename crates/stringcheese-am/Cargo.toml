@@ -1,0 +1,44 @@
+[package]
+name = "stringcheese-am"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Amharic language pack for the StringCheese toolkit: ~50-word Ge'ez-script stopword list, rule-based Amharic suffix stripper (definite article, plural, possessive, and object suffixes), Ge'ez-aware whitespace-and-punctuation tokenizer (። full stop, ፡ wordspace), Ge'ez syllable decompose/compose helpers, and a PHONEX-Amharic (Ge'ez → BGN/PCGN-style Latin transliteration → Soundex-shape 4-char reduction) phonetic hookup. Implements stringcheese-lang::Language. First Ge'ez-script pack, first Ethiopian/Eritrean language, Semitic sibling of Arabic and Hebrew."
+categories = ["text-processing", "internationalization"]
+keywords = ["amharic", "ethiopic", "geez", "stemmer", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The rule-
+# based Amharic stemmer builds owned `String` output,
+# `Language::tokenize` hands back a `Box<dyn Iterator>`, and the
+# PHONEX-Amharic encoder returns an owned `String` key — all
+# `alloc`-only. Without this feature the crate compiles down to the
+# stopword slice, the Ge'ez decompose/compose helpers, and the module
+# constants alone (enough to link against on embedded targets that
+# only want the stopword table or the Ge'ez syllable math).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
