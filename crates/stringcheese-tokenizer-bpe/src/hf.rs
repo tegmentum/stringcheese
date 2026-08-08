@@ -58,8 +58,14 @@
 //!   [`to_unigram_tokenizer`] into a [`UnigramTokenizer`] whose
 //!   `encode` runs the Viterbi forward-DP over the vocabulary's log
 //!   probabilities; see that type's docs for the algorithm.
+//! * `pre_tokenizer.type == "Metaspace"` parses into typed fields
+//!   ([`HfPreTokenizer::Metaspace`]) and can be materialised via
+//!   [`to_runtime_metaspace`] into a runtime [`Metaspace`] that
+//!   callers can drive themselves against a `Unigram` tokenizer; it
+//!   is not wired into [`to_bpe_tokenizer`] (BPE has its own
+//!   byte-level pipeline).
 //! * All other `pre_tokenizer` types (`Whitespace`,
-//!   `WhitespaceSplit`, `Punctuation`, `Metaspace`, `CharDelimiterSplit`,
+//!   `WhitespaceSplit`, `Punctuation`, `CharDelimiterSplit`,
 //!   `BertPreTokenizer`, `Digits`, `UnicodeScripts`, ...).
 //! * All other `decoder` types (`WordPiece`, `Metaspace`, `BPEDecoder`,
 //!   `Sequence`, ...). The raw config is preserved on
@@ -99,7 +105,9 @@ use crate::bpe::{
 };
 use crate::normalizer::Normalizer;
 use crate::post_processor::{PostProcessor, SpecialTokenInfo, TemplatePiece, TemplateProcessing};
-use crate::pre_tokenizer::{GPT2_PATTERN, PreTokenizerCompileError, RegexPreTokenizer};
+use crate::pre_tokenizer::{
+    GPT2_PATTERN, Metaspace, PreTokenizerCompileError, PrependScheme, RegexPreTokenizer,
+};
 
 // ---------------------------------------------------------------------
 // Config shapes — mirror the on-disk `tokenizer.json` layout.
@@ -408,8 +416,32 @@ pub enum HfPreTokenizer {
     WhitespaceSplit(serde_json::Value),
     /// Punctuation splitter. Deferred.
     Punctuation(serde_json::Value),
-    /// SentencePiece-style metaspace pre-tokenizer. Deferred.
-    Metaspace(serde_json::Value),
+    /// SentencePiece-style Metaspace pre-tokenizer — the shape used by
+    /// Llama, Mistral, T5, and XLM-RoBERTa. Parsed into typed fields
+    /// (see [`Self::Metaspace::replacement`] /
+    /// [`Self::Metaspace::prepend_scheme`] /
+    /// [`Self::Metaspace::split`]). Materialised via
+    /// [`to_runtime_metaspace`] into a runtime
+    /// [`Metaspace`]; a caller who wants to apply
+    /// it on a Unigram tokenizer today does so by driving the
+    /// returned `Metaspace` themselves. `to_bpe_tokenizer` still
+    /// rejects a Metaspace pre-tokenizer at conversion time — BPE has
+    /// its own byte-level pipeline.
+    Metaspace {
+        /// The character substituted for ASCII space. HF's default
+        /// (and what a bare `{"type": "Metaspace"}` block picks up)
+        /// is `▁` (U+2581).
+        #[serde(default = "default_metaspace_replacement")]
+        replacement: char,
+        /// The prepend policy. HF's default (and what a bare block
+        /// picks up) is [`HfPrependScheme::Always`].
+        #[serde(default)]
+        prepend_scheme: HfPrependScheme,
+        /// Whether to split the transformed string on `replacement`.
+        /// HF's default is `true`.
+        #[serde(default = "default_true")]
+        split: bool,
+    },
     /// Single-character delimiter split. Deferred.
     CharDelimiterSplit(serde_json::Value),
     /// BERT-style pre-tokenizer — HF `BertPreTokenizer`. Materialised
@@ -544,6 +576,42 @@ const fn default_true() -> bool {
     true
 }
 
+/// Default `replacement` for a bare `{"type": "Metaspace"}` block —
+/// `▁` (U+2581 LOWER ONE EIGHTH BLOCK), the canonical `SentencePiece`
+/// space mark.
+const fn default_metaspace_replacement() -> char {
+    Metaspace::DEFAULT_REPLACEMENT
+}
+
+/// The prepend policy for a [`HfPreTokenizer::Metaspace`] block.
+///
+/// Mirrors Hugging Face's on-disk shape: the JSON string `"always"`
+/// / `"never"` / `"first"` deserialises to the corresponding variant.
+/// Default is [`Self::Always`], HF's own default.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+#[non_exhaustive]
+pub enum HfPrependScheme {
+    /// Always prepend the replacement character to the input.
+    #[default]
+    Always,
+    /// Never prepend.
+    Never,
+    /// Prepend only if the input does not already start with the
+    /// replacement.
+    First,
+}
+
+impl From<HfPrependScheme> for PrependScheme {
+    fn from(v: HfPrependScheme) -> Self {
+        match v {
+            HfPrependScheme::Always => Self::Always,
+            HfPrependScheme::Never => Self::Never,
+            HfPrependScheme::First => Self::First,
+        }
+    }
+}
+
 /// The `normalizer` block of a `tokenizer.json` file.
 ///
 /// Only the variants named explicitly here are honoured at
@@ -551,8 +619,12 @@ const fn default_true() -> bool {
 /// through to [`Self::Other`]. See [`Normalizer`] for the semantics
 /// of the honoured shapes.
 ///
-/// Deferred variants (`Nmt`, `Precompiled`, regex `Replace`, custom
-/// callables) surface at conversion as
+/// [`Self::Precompiled`] parses successfully so real `SentencePiece`
+/// `tokenizer.json` blobs load; its runtime pass is a passthrough
+/// today — see [`Normalizer::Precompiled`] for the limitation.
+///
+/// Deferred variants (`Nmt`, regex `Replace`, custom callables)
+/// surface at conversion as
 /// [`HfConversionError::UnsupportedNormalizer`] with the offending
 /// type name.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -629,10 +701,28 @@ pub enum HfNormalizer {
         #[serde(default = "default_true")]
         lowercase: bool,
     },
-    /// Any other normalizer tag (NMT, `Precompiled`, custom, ...).
-    /// Recognised at parse time via serde's `#[serde(other)]` so
-    /// parsing does not fail; [`to_bpe_tokenizer`] rejects it with a
-    /// specific error.
+    /// `SentencePiece`'s "Precompiled" charsmap normalizer — Llama,
+    /// Mistral, T5, and XLM-RoBERTa all ship one, usually inside a
+    /// `Sequence` alongside `Prepend` and `Replace`. The
+    /// [`Self::Precompiled::precompiled_charsmap`] field carries the
+    /// raw base64-encoded payload verbatim.
+    ///
+    /// # Runtime behaviour
+    ///
+    /// Materialises into [`Normalizer::Precompiled`], whose apply
+    /// step is **currently a passthrough** — see that variant's
+    /// doc-comment for the limitation. The parse-time variant exists
+    /// so real `tokenizer.json` blobs stop failing at load time.
+    Precompiled {
+        /// The raw base64 payload from the source `tokenizer.json`.
+        /// Not decoded or interpreted at parse time; the string is
+        /// preserved verbatim so callers who need the real charsmap
+        /// can decode it themselves.
+        precompiled_charsmap: String,
+    },
+    /// Any other normalizer tag (NMT, custom, ...). Recognised at
+    /// parse time via serde's `#[serde(other)]` so parsing does not
+    /// fail; [`to_bpe_tokenizer`] rejects it with a specific error.
     #[serde(other)]
     Other,
 }
@@ -875,8 +965,9 @@ pub enum HfConversionError {
     /// The `Split` pre-tokenizer's regex pattern failed to compile.
     Regex(PreTokenizerCompileError),
     /// The `normalizer` block used a variant this crate does not
-    /// materialise yet (`Nmt`, `Precompiled`, a `Replace` with a
-    /// `Regex` pattern, or a custom callable).
+    /// materialise yet (`Nmt`, a `Replace` with a `Regex` pattern, or
+    /// a custom callable). `Precompiled` is honoured as a passthrough
+    /// and does not surface here.
     UnsupportedNormalizer {
         /// The `normalizer.type` string, or a short synthesised name
         /// for a nested rejection (`"Replace(Regex)"`, ...).
@@ -962,8 +1053,8 @@ impl fmt::Display for HfConversionError {
                 f,
                 "unsupported HF normalizer type {type_name:?}: \
                  this crate materialises NFC/NFD/NFKC/NFKD, Lowercase, \
-                 Replace(String), Strip, Prepend, BertNormalizer, and \
-                 their Sequence composition"
+                 Replace(String), Strip, Prepend, BertNormalizer, \
+                 Precompiled (passthrough), and their Sequence composition"
             ),
             Self::UnsupportedPostProcessor { type_name } => write!(
                 f,
@@ -1975,7 +2066,12 @@ fn deferred_pre_tokenizer_reason(pt: &HfPreTokenizer) -> Option<HfConversionErro
         HfPreTokenizer::Whitespace(_) => ("Whitespace", "deferred to a later landing"),
         HfPreTokenizer::WhitespaceSplit(_) => ("WhitespaceSplit", "deferred to a later landing"),
         HfPreTokenizer::Punctuation(_) => ("Punctuation", "deferred to a later landing"),
-        HfPreTokenizer::Metaspace(_) => ("Metaspace", "deferred to a later landing"),
+        HfPreTokenizer::Metaspace { .. } => (
+            "Metaspace",
+            "SentencePiece Metaspace is not part of the BPE pipeline; \
+             use `to_runtime_metaspace` to materialise the runtime `Metaspace` \
+             and drive it against a Unigram tokenizer",
+        ),
         HfPreTokenizer::CharDelimiterSplit(_) => {
             ("CharDelimiterSplit", "deferred to a later landing")
         }
@@ -2033,8 +2129,66 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
             strip_accents: *strip_accents,
             lowercase: *lowercase,
         }),
+        HfNormalizer::Precompiled {
+            precompiled_charsmap,
+        } => Ok(Normalizer::Precompiled {
+            charsmap_base64: precompiled_charsmap.clone(),
+        }),
         HfNormalizer::Other => Err(HfConversionError::UnsupportedNormalizer {
             type_name: "Other".to_string(),
+        }),
+    }
+}
+
+/// Reduce an [`HfPreTokenizer::Metaspace`] value to a runtime
+/// [`Metaspace`].
+///
+/// `Metaspace` is `SentencePiece`'s pre-tokenizer for Llama, Mistral,
+/// T5, and XLM-RoBERTa — see the runtime [`Metaspace`] type for the
+/// exact semantics. It is not wired into either [`to_bpe_tokenizer`]
+/// (BPE has its own byte-level pipeline) or [`to_unigram_tokenizer`]
+/// (the current Unigram runtime encodes raw input) today; callers who
+/// need to apply it can obtain the typed runtime value here and drive
+/// it themselves against the produced tokenizer.
+///
+/// # Errors
+///
+/// Returns [`HfConversionError::UnsupportedPreTokenizer`] with
+/// `type_name == "<non-Metaspace variant tag>"` if the argument is not
+/// an [`HfPreTokenizer::Metaspace`].
+///
+/// # Examples
+///
+/// ```
+/// use stringcheese_tokenizer_bpe::{Metaspace, PrependScheme};
+/// use stringcheese_tokenizer_bpe::hf::{HfPreTokenizer, to_runtime_metaspace};
+///
+/// let ms_json = r#"{"type": "Metaspace"}"#;
+/// let ms: HfPreTokenizer = serde_json::from_str(ms_json).unwrap();
+/// let runtime = to_runtime_metaspace(&ms).unwrap();
+/// assert_eq!(runtime.replacement, '\u{2581}');
+/// assert_eq!(runtime.prepend_scheme, PrependScheme::Always);
+/// assert!(runtime.split);
+/// assert_eq!(
+///     runtime.apply("hello world"),
+///     vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+/// );
+/// # let _ = Metaspace::new();
+/// ```
+pub fn to_runtime_metaspace(pt: &HfPreTokenizer) -> Result<Metaspace, HfConversionError> {
+    match pt {
+        HfPreTokenizer::Metaspace {
+            replacement,
+            prepend_scheme,
+            split,
+        } => Ok(Metaspace {
+            replacement: *replacement,
+            prepend_scheme: (*prepend_scheme).into(),
+            split: *split,
+        }),
+        _ => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "non-Metaspace".to_string(),
+            reason: "to_runtime_metaspace called on a pre-tokenizer that is not Metaspace",
         }),
     }
 }
@@ -3163,8 +3317,12 @@ mod tests {
     }
 
     #[test]
-    fn normalizer_precompiled_reports_deferred_error() {
-        // SentencePiece's Precompiled char-map lands here as `Other`.
+    fn normalizer_precompiled_parses_and_materialises_as_passthrough() {
+        // Wave-13: Precompiled is a first-class typed variant. It
+        // parses without error and materialises into
+        // `Normalizer::Precompiled` on the runtime side — see that
+        // variant's doc-comment for the passthrough contract and the
+        // deferred full-execution TODO.
         let json = r#"{
             "added_tokens": [],
             "normalizer": {
@@ -3174,12 +3332,21 @@ mod tests {
             "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        assert!(matches!(config.normalizer, Some(HfNormalizer::Other)));
-        let err = to_bpe_tokenizer(&config).unwrap_err();
-        assert!(matches!(
-            err,
-            HfConversionError::UnsupportedNormalizer { .. }
-        ));
+        match &config.normalizer {
+            Some(HfNormalizer::Precompiled {
+                precompiled_charsmap,
+            }) => {
+                assert_eq!(precompiled_charsmap, "AAAA");
+            }
+            other => panic!("expected Precompiled, got {other:?}"),
+        }
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        match tok.normalizer() {
+            Some(crate::normalizer::Normalizer::Precompiled { charsmap_base64 }) => {
+                assert_eq!(charsmap_base64, "AAAA");
+            }
+            other => panic!("expected Normalizer::Precompiled, got {other:?}"),
+        }
     }
 
     // ---------------------------------------------------------------------

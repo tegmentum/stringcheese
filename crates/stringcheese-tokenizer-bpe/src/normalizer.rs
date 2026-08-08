@@ -44,11 +44,19 @@
 //!   lower-casing. See the variant's doc-comment for the exact order
 //!   and the semantics of each pass.
 //!
+//! # Partially-supported variants
+//!
+//! * [`Normalizer::Precompiled`] — `SentencePiece`'s compiled
+//!   char-mapping table (used by every Llama, Mistral, T5, and
+//!   XLM-RoBERTa checkpoint). The raw base64-encoded charsmap parses
+//!   into the variant so real `tokenizer.json` files stop erroring at
+//!   the JSON stage, but the runtime pass is **currently a
+//!   passthrough** — reproducing `SentencePiece`'s `Normalizer::Normalize`
+//!   requires re-implementing the compiled trie the charsmap encodes.
+//!   See the variant's doc-comment for the full limitation.
+//!
 //! # Deferred variants
 //!
-//! * `Precompiled` — `SentencePiece`'s compiled char-mapping table.
-//!   Requires shipping the (many-megabyte) precompiled binary format;
-//!   out of scope for the tokenizer.json BPE landing.
 //! * `Nmt` — the Marian NMT normalizer.
 //! * `Replace` with a `Regex` pattern (rather than a literal). Callers
 //!   who need this can approximate with a `Sequence` of literal
@@ -162,6 +170,40 @@ pub enum Normalizer {
         /// Enable the lower-casing pass.
         lowercase: bool,
     },
+    /// `SentencePiece`'s "Precompiled" charsmap normalizer — the shape
+    /// used by every Llama, Mistral, T5, and XLM-RoBERTa
+    /// `tokenizer.json` we have seen. The wrapped
+    /// [`Self::Precompiled::charsmap_base64`] is the base64-encoded
+    /// serialized character-remapping trie as `SentencePiece` stores it
+    /// on disk.
+    ///
+    /// # Runtime behaviour — **currently a passthrough**
+    ///
+    /// The runtime [`normalize`] call for this variant returns the
+    /// input string unchanged. Full support requires decoding the
+    /// base64 blob and running `SentencePiece`'s
+    /// `Normalizer::Normalize()` (a compiled DFA over the charsmap).
+    /// That implementation is deferred to a later landing; today the
+    /// variant exists so that real `tokenizer.json` files ship a
+    /// [`Normalizer::Precompiled`] alongside their other normalizers
+    /// (typically inside a [`Normalizer::Sequence`] with `Prepend` and
+    /// `Replace`) and parse successfully instead of failing at load
+    /// time.
+    ///
+    /// Callers who need bit-identical `SentencePiece` normalization
+    /// today should decode the blob and apply it themselves; the raw
+    /// base64 string is available via
+    /// [`Self::Precompiled::charsmap_base64`].
+    ///
+    /// TODO: implement `SentencePiece` `Normalizer::Normalize` over the
+    /// decoded charsmap.
+    Precompiled {
+        /// The raw, undecoded base64 payload from the source
+        /// `tokenizer.json`. Not decoded or interpreted at runtime
+        /// today — see the variant docs for the passthrough contract
+        /// and the plan for full support.
+        charsmap_base64: String,
+    },
 }
 
 /// Apply `normalizer` to `text`, returning the normalized output.
@@ -231,6 +273,17 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
                 cur = normalize(&cur, step);
             }
             cur
+        }
+        Normalizer::Precompiled { .. } => {
+            // Passthrough — see the variant's doc-comment for the
+            // limitation and the TODO. Returning the input verbatim
+            // keeps the encode/decode pipeline functional for
+            // callers who only need parse-time compatibility with a
+            // Llama / Mistral / T5 / XLM-RoBERTa `tokenizer.json`;
+            // encodings will differ from upstream on any input the
+            // real charsmap would have altered (fullwidth digit
+            // normalization, private-use collapsing, ...).
+            text.into()
         }
         Normalizer::Bert {
             clean_text,
@@ -632,6 +685,20 @@ mod tests {
             lowercase: false,
         };
         assert_eq!(normalize("Hello, café! 你好", &n), "Hello, café! 你好");
+    }
+
+    #[test]
+    fn precompiled_normalizer_is_passthrough() {
+        // The Precompiled variant is documented as a passthrough
+        // today; verify concretely.
+        let n = Normalizer::Precompiled {
+            charsmap_base64: "AAAA".to_string(),
+        };
+        assert_eq!(normalize("hello world", &n), "hello world");
+        // Non-ASCII input is passed through byte-for-byte.
+        assert_eq!(normalize("café \u{FF11}", &n), "café \u{FF11}");
+        // Empty input stays empty.
+        assert_eq!(normalize("", &n), "");
     }
 
     #[test]

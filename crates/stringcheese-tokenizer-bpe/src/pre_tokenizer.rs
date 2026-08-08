@@ -52,6 +52,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
+use core::mem;
 
 use fancy_regex::Regex;
 
@@ -257,6 +258,179 @@ impl PartialEq for RegexPreTokenizer {
 impl Eq for RegexPreTokenizer {}
 
 // ---------------------------------------------------------------------
+// Metaspace pre-tokenizer (`SentencePiece`).
+// ---------------------------------------------------------------------
+
+/// `SentencePiece`-style prepending policy for the [`Metaspace`]
+/// pre-tokenizer.
+///
+/// Mirrors Hugging Face's on-disk shape: the JSON string
+/// `"always"` / `"never"` / `"first"` maps to the corresponding
+/// variant. The default is [`Self::Always`] — HF's own default and the
+/// shape used by Llama, Mistral, T5, and XLM-RoBERTa checkpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrependScheme {
+    /// Always prepend the replacement character to the input, even if
+    /// the input already starts with it.
+    #[default]
+    Always,
+    /// Never prepend.
+    Never,
+    /// Prepend the replacement character only when the input does not
+    /// already start with it. Used by tokenizers that pre-mark
+    /// caller-visible strings with a leading `▁`.
+    First,
+}
+
+/// `SentencePiece` "Metaspace" pre-tokenizer — Kudo & Richardson (2018).
+///
+/// Every ASCII space in the input is replaced with a single
+/// [`Self::replacement`] character (canonically `▁`, U+2581 LOWER ONE
+/// EIGHTH BLOCK, informally the "space bar" mark). Depending on
+/// [`Self::prepend_scheme`] the replacement character may also be
+/// prepended to the string. When [`Self::split`] is `true` — HF's
+/// default — the transformed string is split on the replacement
+/// character with `SentencePiece`'s `MergedWithNext` semantics: each
+/// output piece starts with the replacement character (except for the
+/// first piece when no prepend happened and the input did not start
+/// with a space).
+///
+/// This pre-tokenizer is what makes Llama, Mistral, T5, and
+/// XLM-RoBERTa treat token-initial position uniformly — a word that
+/// appears at the start of the input is scored the same as a word that
+/// follows a space, because both surface strings begin with `▁`.
+///
+/// # Example
+///
+/// ```
+/// use stringcheese_tokenizer_bpe::Metaspace;
+///
+/// let ms = Metaspace::new();
+/// assert_eq!(
+///     ms.apply("hello world"),
+///     vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()],
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Metaspace {
+    /// The character substituted for ASCII space. HF's default is
+    /// `▁` (U+2581) — see [`Self::DEFAULT_REPLACEMENT`].
+    pub replacement: char,
+    /// The prepend policy — see [`PrependScheme`].
+    pub prepend_scheme: PrependScheme,
+    /// Whether to split the transformed string on the replacement
+    /// character so each piece starts with [`Self::replacement`]
+    /// (`SentencePiece`'s `MergedWithNext` split behaviour). When
+    /// `false`, [`Self::apply`] returns a single-element `Vec`
+    /// containing the transformed string verbatim.
+    pub split: bool,
+}
+
+impl Metaspace {
+    /// The canonical replacement character (`▁`, U+2581 LOWER ONE
+    /// EIGHTH BLOCK) — HF's own default and the shape used by every
+    /// `SentencePiece`-descended checkpoint on the Hub.
+    pub const DEFAULT_REPLACEMENT: char = '\u{2581}';
+
+    /// Construct a Metaspace with Hugging Face's default configuration:
+    /// [`Self::DEFAULT_REPLACEMENT`], [`PrependScheme::Always`], and
+    /// `split = true`. Matches the shape a bare
+    /// `{"type": "Metaspace"}` block deserialises to.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            replacement: Self::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::Always,
+            split: true,
+        }
+    }
+
+    /// Apply the pre-tokenizer to `text`, returning the split pieces.
+    ///
+    /// Semantics, in order:
+    ///
+    /// 1. Every ASCII space in `text` is replaced with
+    ///    [`Self::replacement`].
+    /// 2. Depending on [`Self::prepend_scheme`], the replacement
+    ///    character may be prepended:
+    ///    * [`PrependScheme::Always`] — always prepend.
+    ///    * [`PrependScheme::First`] — prepend only if the (already
+    ///      transformed) string does not start with the replacement.
+    ///    * [`PrependScheme::Never`] — never prepend.
+    /// 3. If [`Self::split`] is `true`, the transformed string is
+    ///    split on the replacement character with `SentencePiece`'s
+    ///    `MergedWithNext` semantics: the delimiter stays glued to the
+    ///    following piece. If `false`, the returned vec contains
+    ///    exactly one element (the transformed string).
+    ///
+    /// An empty input returns an empty `Vec` regardless of
+    /// [`Self::prepend_scheme`] or [`Self::split`] — matching HF's own
+    /// behaviour.
+    #[must_use]
+    pub fn apply(&self, text: &str) -> Vec<String> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        // Step 1: replace ASCII spaces with the replacement character.
+        // The output is at most `text.chars().count() * repl_utf8_len`
+        // bytes; a good enough starting capacity is `text.len()`.
+        let mut transformed = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c == ' ' {
+                transformed.push(self.replacement);
+            } else {
+                transformed.push(c);
+            }
+        }
+
+        // Step 2: optional prepend, per the scheme.
+        let should_prepend = match self.prepend_scheme {
+            PrependScheme::Always => true,
+            PrependScheme::First => !transformed.starts_with(self.replacement),
+            PrependScheme::Never => false,
+        };
+        if should_prepend {
+            let mut prefixed =
+                String::with_capacity(self.replacement.len_utf8() + transformed.len());
+            prefixed.push(self.replacement);
+            prefixed.push_str(&transformed);
+            transformed = prefixed;
+        }
+
+        // Step 3: optional split. Without splitting we return the whole
+        // transformed string as a single piece.
+        if !self.split {
+            return alloc::vec![transformed];
+        }
+
+        // `MergedWithNext`: the delimiter attaches to the piece that
+        // follows it. We walk the string once, breaking off a new
+        // piece whenever a replacement char appears mid-buffer. A
+        // leading replacement is *not* treated as a boundary — it
+        // becomes the first character of the first piece.
+        let mut pieces: Vec<String> = Vec::new();
+        let mut current = String::new();
+        for c in transformed.chars() {
+            if c == self.replacement && !current.is_empty() {
+                pieces.push(mem::take(&mut current));
+            }
+            current.push(c);
+        }
+        if !current.is_empty() {
+            pieces.push(current);
+        }
+        pieces
+    }
+}
+
+impl Default for Metaspace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
 
@@ -459,5 +633,115 @@ mod tests {
         );
         // GPT-2 groups digits without the {1,3} cap.
         assert_eq!(split_strs(&pre, "1234567"), vec!["1234567"]);
+    }
+
+    // ---------------------------------------------------------------
+    // Metaspace
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn metaspace_default_matches_hf_shape() {
+        let ms = Metaspace::default();
+        assert_eq!(ms.replacement, '\u{2581}');
+        assert_eq!(ms.prepend_scheme, PrependScheme::Always);
+        assert!(ms.split);
+    }
+
+    #[test]
+    fn metaspace_hello_world_with_defaults_splits_into_two_marked_pieces() {
+        // HF Python reference:
+        //   >>> from tokenizers.pre_tokenizers import Metaspace
+        //   >>> Metaspace().pre_tokenize_str("hello world")
+        //   [('▁hello', (0, 5)), ('▁world', (5, 11))]
+        let ms = Metaspace::new();
+        assert_eq!(
+            ms.apply("hello world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_prepend_never_leaves_first_piece_unmarked() {
+        // Reference:
+        //   >>> Metaspace(prepend_scheme="never").pre_tokenize_str("hello world")
+        //   [('hello', ...), ('▁world', ...)]
+        let ms = Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::Never,
+            split: true,
+        };
+        assert_eq!(
+            ms.apply("hello world"),
+            vec!["hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_prepend_first_does_not_double_prepend() {
+        // Input already starts with `▁` — First should be a no-op.
+        let ms = Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::First,
+            split: true,
+        };
+        assert_eq!(
+            ms.apply("\u{2581}already prefixed"),
+            vec![
+                "\u{2581}already".to_string(),
+                "\u{2581}prefixed".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn metaspace_prepend_first_prepends_when_missing() {
+        // Input does not start with `▁` — First behaves like Always.
+        let ms = Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::First,
+            split: true,
+        };
+        assert_eq!(
+            ms.apply("hello world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_split_false_returns_single_transformed_piece() {
+        let ms = Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::Always,
+            split: false,
+        };
+        assert_eq!(
+            ms.apply("hello world"),
+            vec!["\u{2581}hello\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_empty_input_is_empty_output() {
+        let ms = Metaspace::new();
+        assert!(ms.apply("").is_empty());
+    }
+
+    #[test]
+    fn metaspace_no_spaces_still_prepends_when_always() {
+        let ms = Metaspace::new();
+        assert_eq!(ms.apply("hello"), vec!["\u{2581}hello".to_string()]);
+    }
+
+    #[test]
+    fn metaspace_custom_replacement_char_is_honoured() {
+        let ms = Metaspace {
+            replacement: '_',
+            prepend_scheme: PrependScheme::Always,
+            split: true,
+        };
+        assert_eq!(
+            ms.apply("hello world"),
+            vec!["_hello".to_string(), "_world".to_string()]
+        );
     }
 }
