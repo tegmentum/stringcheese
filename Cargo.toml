@@ -45,6 +45,7 @@ members = [
     "crates/stringcheese-sv",
     "crates/stringcheese-hu",
     "crates/stringcheese-vi",
+    "crates/stringcheese-th",
     "crates/stringcheese-el",
     "crates/stringcheese-tokenizer",
     "crates/stringcheese-tokenizer-bpe",
@@ -117,6 +118,7 @@ stringcheese-sk = { version = "0.1.0", path = "crates/stringcheese-sk", default-
 stringcheese-sv = { version = "0.1.0", path = "crates/stringcheese-sv", default-features = false }
 stringcheese-hu = { version = "0.1.0", path = "crates/stringcheese-hu", default-features = false }
 stringcheese-vi = { version = "0.1.0", path = "crates/stringcheese-vi", default-features = false }
+stringcheese-th = { version = "0.1.0", path = "crates/stringcheese-th", default-features = false }
 stringcheese-el = { version = "0.1.0", path = "crates/stringcheese-el", default-features = false }
 stringcheese-tokenizer = { version = "0.1.0", path = "crates/stringcheese-tokenizer", default-features = false }
 stringcheese-tokenizer-bpe = { version = "0.1.0", path = "crates/stringcheese-tokenizer-bpe", default-features = false }
