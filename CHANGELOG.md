@@ -11,6 +11,175 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-am` — Amharic language pack.** New workspace crate,
+  registered as BCP-47 `"am"`. **First Ge'ez-script pack** in
+  StringCheese (Ethiopic syllabary — an abugida where each character
+  represents a consonant+vowel syllable, unlike Devanagari/Bengali
+  which use base+matra). First Ethiopian/Eritrean language pack; Semitic
+  sibling of Arabic (`ar`) and Hebrew (`he`) but written in Ge'ez
+  instead of the Arabic/Hebrew abjads. Dedicated `geez` module with
+  `decompose(char) → Option<(family_head, order 0..7)>` and
+  `compose(base, order) → Option<char>` — pure arithmetic on the
+  48-row × 8-column main-block layout at U+1200..=U+137F (supplement
+  U+1380..=U+139F and extended U+2D80..=U+2DDF return `None` — layout
+  differs). Rule-based iterate-to-convergence longest-match stripper
+  covering the definite article `-ው`/`-ዋ` (masc/fem), plural `-ኦች`,
+  8 possessive suffixes, 8 object suffixes. 2-scalar min-stem guard;
+  `Vec<char>` arithmetic throughout since every Ge'ez scalar is 3
+  bytes in UTF-8. Tokenizer splits on Ge'ez punctuation `፡`/`።`/`፣`/
+  `፤`/`፥`/`፦`/`፧`/`፨` (U+1361..=U+1368) plus ASCII whitespace. Two-
+  stage phonex: BGN/PCGN-style Latin transliteration (48-family table
+  with Buckwalter-inspired stand-ins for pharyngeals/emphatics/
+  sibilants/palatals/glottals/ayn) then Soundex-shape 4-char
+  reduction; adapter name `"phonex-am"`. ~70-entry stopword list.
+
+- **`stringcheese-ka` — Georgian language pack.** New workspace crate,
+  registered as BCP-47 `"ka"`. **First Kartvelian-family pack** — a
+  small Caucasian family (Georgian, Mingrelian, Laz, Svan) unrelated
+  to every prior family in the workspace. **First Georgian-script
+  pack** — Mkhedruli `U+10D0..=U+10FF` (3 bytes/scalar), all
+  arithmetic on `Vec<char>`. Longest-match stemmer covering all 7
+  grammatical cases (nominative `-ი`, dative-accusative `-ს`,
+  ergative `-მა`, genitive `-ის`, instrumental `-ით`, adverbial
+  `-ად`, vocative unmarked), plural markers (contemporary `-ები`,
+  archaic `-ნი`/`-თა`), 5 agglutinated postpositions (`-ში` "in",
+  `-ზე` "on", `-თან` "at", `-გან` "from", `-კენ` "toward", plus
+  `-თვის` "for"), plural+case/postposition compounds, and common
+  verb personal/tense endings. 2-scalar min-stem guard; longest-match
+  wins so `-ისთვის` (6 chars) beats bare `-ის` (2 chars). Tokenizer
+  handles Mkhedruli, Mtavruli (Unicode 11 capitalized), Asomtavruli,
+  and Nuskhuri as alphabetic; `჻` (U+10FB) as punctuation. PHONEX
+  case-folds Mtavruli → Mkhedruli via `char::to_lowercase`, then maps
+  each scalar to **ISO 9984 (1996)** Latin form (33 modern letters
+  including the distinctive **glottalized/ejective consonants**
+  `კ`/`პ`/`ტ`/`წ`/`ჭ`/`ყ` marked with apostrophe). The apostrophe
+  drops before Soundex classification, so ejective/aspirate pairs
+  (`კ`/`ქ`, `პ`/`ფ`, `ტ`/`თ`, `წ`/`ც`, `ჭ`/`ჩ`) collapse to the
+  same key by design. Adapter name `"phonex-ka"`. ~65-entry
+  Mkhedruli-lowercase stopword list.
+
+- **`stringcheese-hy` — Armenian (Eastern Armenian) language pack.**
+  New workspace crate, registered as BCP-47 `"hy"`. **First
+  Armenian-script pack** — Armenian `U+0530..=U+058F`, 2 bytes/scalar.
+  **Indo-European isolate branch** — a family-of-one within IE, in
+  the same typological company as Greek (`el`) and Albanian.
+  Longest-match iterate-to-convergence stripper covering all 7
+  Eastern Armenian singular case suffixes (genitive `-ի`, dative
+  `-ին`, ablative `-ից`, instrumental `-ով`, locative `-ում`
+  which is also the imperfective-participle marker, postposed
+  definite article `-ը`/`-ն`), the two plural markers `-եր`
+  (monosyllabic base) / `-ներ` (polysyllabic base), their
+  plural+case combinations, and aorist personal endings
+  (`-եցի`/`-եցիր`/`-եց`/`-եցինք`/`-եցիք`/`-եցին`). 2-scalar
+  min-stem guard. Documented over-strip: `տանում` "in house" stems
+  to `տա` because the cascade first strips `-ում` then strips the
+  `-ն` definite article. PHONEX-hy (`"phonex-hy"`) with
+  aspiration-collapsing consonant folds (labial stops
+  `պ`/`փ`/`բ → P`, dental stops `տ`/`թ`/`դ → T`, velar stops
+  `կ`/`ք`/`գ → K`, dental affricates `ծ`/`ց`/`ձ → C`,
+  palato-alveolar affricates `ճ`/`չ`/`ջ → J`); digraph handling
+  for `ու → U` and ligature `և → EV`; two-form spelling `եւ` and
+  `և` normalized to a single form at every entry point. Overrides
+  `Language::is_stopword` with Unicode case-fold + `եւ → և`
+  normalization.
+
+- **`stringcheese-ml` — Malayalam language pack.** New workspace
+  crate, registered as BCP-47 `"ml"`. **Second Dravidian pack**
+  (sibling of Tamil), **fourth Brahmic-script pack** (after
+  Devanagari, Bengali, Tamil). First Malayalam-script pack —
+  `U+0D00..=U+0D7F`, 3 bytes/scalar, `Vec<char>` throughout.
+  Malayalam is a hybrid — retains the classical Sanskrit
+  **four-way stop series** across five places of articulation (like
+  Devanagari, unlike Tamil which collapses to one stop per place)
+  PLUS the three Dravidian additions (`ള`/`ഴ`/`റ`). Signature
+  feature: **six atomic chillu letters** at U+0D7A..=U+0D7F
+  (`ൺ ൻ ർ ൽ ൾ ൿ`) representing word-final consonants without
+  vowels — unique among Brahmic scripts. Conjunct consonants form
+  via virama `്` (U+0D4D), unlike Tamil which uses only explicit
+  pulli. Longest-match stripper covering 6 case suffixes
+  (accusative `-നെ`, genitive `-ന്റെ`/`-ുടെ`, dative `-ന്`,
+  locative `-ിൽ`, instrumental `-ാൽ`/`-ിനാൽ`, sociative `-ോട്`),
+  plural markers (`-കൾ` inanimate, `-മാർ` animate, `-ങ്ങൾ`
+  linked variant), verb tense/aspect/adjectival endings, and
+  emphatic particles. **Bare chillu word-endings deliberately left
+  in place** so pronouns like `ഞാൻ`/`അവർ`/`അവൾ` survive the
+  stemmer unchanged. PHONEX-ml (`"phonex-ml"`) via ISO 15919
+  transliteration with chillu letters encoded as bare-consonant
+  suppressed-schwa forms.
+
+- **`stringcheese-pa` — Punjabi (Eastern) language pack.** New
+  workspace crate, registered as BCP-47 `"pa"` (defaults to
+  Gurmukhi/`pa-Guru`; Shahmukhi variant `pa-Arab` deferred). **First
+  Gurmukhi-script pack** — Gurmukhi `U+0A00..=U+0A7F`,
+  3 bytes/scalar. **Fifth Brahmic-script pack** (hi/bn/ta/ml/pa).
+  Signature feature: **Punjabi is a tonal language** — the
+  historical Sanskrit-inherited voiced-aspirate letters
+  `ਘ`/`ਝ`/`ਢ`/`ਧ`/`ਭ` have lost their voicing and aspiration in
+  modern Punjabi and now encode a **tone contour** on the adjacent
+  vowel (low tone at syllable start, high tone at syllable end),
+  while the phone matches the corresponding voiceless-unaspirated
+  stop. Longest-match stripper covering case markers, plural
+  markers (`-ਾਂ`/`-ਆਂ`/`-ੀਆਂ`/`-ਿਆਂ`), imperfective participles
+  (`-ਦਾ`/`-ਦੀ`/`-ਦੇ`), and perfective/aorist endings. Tippi (`ੰ`),
+  bindi (`ਂ`), and addak (`ੱ`) never stripped alone. Two-stage
+  phonex via `PunjabiIso15919` then **Punjabi-specific tone-
+  collapse pre-pass** — folds historical voiced-aspirate digrams to
+  voiceless-unaspirated counterparts (`gh → k`, `jh → c`,
+  `ḍh → ṭ`, `dh → t`, `bh → p`) so tone-marked and unmarked
+  spellings of the same word (e.g. `ਘਰ` and `ਕਰ`) share a key.
+  Handles addak-driven gemination (`ਪੱਕਾ` → "pakkā"), tippi/bindi
+  nasalization, and Perso-Arabic nukta letters `ਖ਼ ਗ਼ ਜ਼ ਫ਼`.
+
+- **`stringcheese-mr` — Marathi language pack.** New workspace
+  crate, registered as BCP-47 `"mr"`. **Second Devanagari-script
+  pack** (after Hindi). Marathi differs from Hindi in three
+  linguistically-meaningful ways: (1) retains the **OIA neuter
+  gender** (Hindi has only masc/fem) — three-way verb/adjective
+  agreement; (2) case marking is **agglutinative** — case suffixes
+  attach directly to the noun stem (`घराला` "to the house" — one
+  orthographic word) rather than Hindi's postposition-based system
+  (`घर को` — two tokens), which means the Marathi stemmer is
+  substantially more useful than Hindi's because Marathi words
+  genuinely inflect at the surface spelling level; (3) retains the
+  letters `ळ` (U+0933, retroflex L /ɭ/) and `ऱ` (U+0931) that
+  Standard Modern Hindi lacks. Longest-match stripper (iterated to
+  convergence per idempotence requirement) covering agglutinative
+  case markers (`-ला`/`-ना` dative, `-चा`/`-ची`/`-चे`/`-च्या`
+  genitive with head-noun agreement, `-ने`/`-नी` instrumental,
+  `-त`/`-मध्ये` locative, `-ऊन`/`-हून` ablative, `-शी`/`-सह`
+  sociative), plural markers, verb personal endings, aorist/
+  perfective endings, infinitive `-णे`, and linking-vowel matras
+  (`-ा`/`-े`/`-ी`). Documented tradeoff: over-strips a small class
+  of surface stems (`मुलाने → मु`) — unavoidable without a lexicon.
+  Two-stage ISO 15919 → PHONEX-mr (`"phonex-mr"`). Devanagari
+  transliteration tables structurally adapted from Hindi pack.
+
+- **`stringcheese-ro` — Romanian language pack.** New workspace
+  crate, registered as BCP-47 `"ro"`; `ro-MD` (Moldovan-Latin)
+  falls back to `ro` via BCP-47 subtag walk. **First Balkan Romance
+  pack** — Romanian is genealogically Romance (sibling of Spanish/
+  French/Portuguese/Italian, descended from Vulgar Latin) but
+  geographically Balkan, having spent centuries inside the **Balkan
+  Sprachbund** alongside Bulgarian/Macedonian/Albanian/Greek and
+  picked up several signature Balkan features its Romance cousins
+  lack. Signature: **postposed definite articles** (like
+  Bulgarian/Macedonian — `omul` "the man") and **retained Latin
+  case marking** (`-lui` gen/dat masc sg, `-i`/`-ii` fem sg, `-lor`
+  gen pl) — every other Romance language lost the Latin case system.
+  Snowball Romanian stemmer per Porter's `romanian.sbl` — five-step
+  cascade: (0) preprocess with **cedilla-to-comma-below fold**
+  (`ş → ș` U+015F → U+0219, `ţ → ț` U+0163 → U+021B) at every entry
+  point, glide-marking pass (i/u between vowels marked
+  consonantal); step 0 postposed-article strip in R1; step 1
+  standard-suffix replacement (iterated to fix-point per sbl `do
+  repeat`); step 2 combining-suffix delete in R2; step 3 verb
+  personal endings in RV (gated `!step1 && !step2`); step 4 final
+  vowel drop in RV. Documented divergence: `steaua` stems to `steau`
+  rather than `stea` because word-final glide marking blocks the
+  literal `aua` suffix match. PHONEX-ro (`"phonex-ro"`) with
+  `ch → K` / `gh → G` before front vowel (Romance hard-`k`/hard-`g`
+  spelling convention), silent intervocalic `h`, cedilla fold.
+
 - **HuggingFace `Metaspace` pre-tokenizer + `Precompiled` normalizer
   passthrough in `stringcheese-tokenizer-bpe`.** Completes the missing
   SentencePiece pieces that pair with wave 12's Unigram model support,
@@ -1308,6 +1477,15 @@ bump; `0.x` versions are pre-stability.
   output, ...). Design only — no implementation.
 
 ### Fixed
+
+- **`stringcheese-mr`: Marathi stemmer idempotence.** The two-phase
+  design (single primary strip + iterated cleanup) shipped in the
+  initial Marathi pack was not idempotent — an input like `कओतत`
+  would stem to `कओत` on the first call and `कओ` on the second,
+  breaking `stem(stem(w)) == stem(w)`. Fixed by iterating primary +
+  cleanup together to convergence. Accepts a small class of
+  over-strips (`मुलाने → मु` instead of the linguistically-correct
+  `मुल`) as an unavoidable tradeoff for a lexicon-free light stemmer.
 
 - **`stringcheese-tokenizer-bpe`: backtick doc-markdown identifiers in
   `hf.rs`.** Rust 1.97's `clippy::doc_markdown` lint fires on bare
