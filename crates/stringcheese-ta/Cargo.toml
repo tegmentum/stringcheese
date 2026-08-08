@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-ta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tamil language pack for the StringCheese toolkit: ~55-word Tamil-script stopword list, longest-match-wins Tamil suffix-stripping stemmer (plural marker, case suffixes, verb personal endings, tense markers, interrogative particles), Tamil-aware whitespace-and-punctuation tokenizer, and an ISO 15919 Tamil → Latin transliteration hookup driving a PHONEX-Tamil Soundex-shape 4-char key encoder. Implements stringcheese-lang::Language. First Dravidian pack and third Brahmic-script pack after stringcheese-hi and stringcheese-bn."
+categories = ["text-processing", "internationalization"]
+keywords = ["tamil", "dravidian", "stemmer", "iso-15919", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The light
+# Tamil stemmer builds owned `String` output, `Language::tokenize`
+# hands back a `Box<dyn Iterator>`, and the ISO 15919 transliterator
+# returns an owned `String` key — all `alloc`-only. Without this
+# feature the crate compiles down to the stopword slice and the module
+# constants alone (enough to link against on embedded targets that
+# only want the stopword table).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
