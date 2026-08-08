@@ -1,0 +1,43 @@
+[package]
+name = "stringcheese-mr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Marathi language pack for the StringCheese toolkit: ~55-word Devanagari stopword list, longest-match Marathi suffix-stripping stemmer covering the agglutinative case suffixes (-ला/-ना accusative-dative, -चा/-ची/-चे/-च्या genitive, -ने/-नी instrumental-ergative, -त/-मध्ये locative, -ऊन/-हून ablative, -शी/-सह sociative) and verb personal endings (present habitual and aorist), Marathi-aware whitespace-and-punctuation tokenizer (danda ।), and an ISO 15919 Marathi to Latin transliteration feeding a PHONEX-Marathi Soundex-shape 4-char reduction as the phonetic hookup with inherent-vowel schwa handling and Marathi-specific letters ळ (U+0933) and ऱ (U+0931). Implements stringcheese-lang::Language. Second Devanagari-script pack after stringcheese-hi."
+categories = ["text-processing", "internationalization"]
+keywords = ["marathi", "devanagari", "stemmer", "iso-15919", "stopwords"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
+# When enabled, the crate exposes its full public surface. The
+# Marathi stemmer builds owned `String` output, `Language::tokenize`
+# hands back a `Box<dyn Iterator>`, and the ISO 15919 transliterator
+# returns an owned `String` key — all `alloc`-only. Without this
+# feature the crate compiles down to the stopword slice and the module
+# constants alone (enough to link against on embedded targets that
+# only want the stopword table).
+alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+
+[dependencies]
+stringcheese-lang = { workspace = true }
+stringcheese-phonetic = { workspace = true }
+
+[dev-dependencies]
+
+
+# `proptest` gated off wasm — its transitive `wait-timeout` dep is
+# `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
+# leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
+# `cargo test --target wasm32-wasip1`. Host tests still pick up
+# proptest through this target-gated section; wasm test runs simply
+# skip the property-test modules (they're gated on the same predicate).
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
