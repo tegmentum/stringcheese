@@ -11,6 +11,159 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-sv` — Swedish language pack.** New workspace crate.
+  ~145 stopwords (ranked head + `vara`/`ha`/`bli`/`kunna`/`skola`/`vilja`
+  paradigms). Snowball Swedish stemmer (Porter/Boulton `swedish.sbl`) —
+  faithful to the reference spec, no postlude (contrary to some common
+  descriptions). German-style R1 adjusted to ≥3. Three-step cascade:
+  36-entry main-suffix unconditional delete + conditional `s` (16-char
+  valid-s-ending set `bcdfghjklmnoprtvy`) + conditional `et` (with
+  21-entry exclusion list protecting `paket`/`alfabet`/`raket`/
+  `societet`); consonant-pair reduction on `dd`/`gd`/`nn`/`dt`/`gt`/
+  `kt`/`tt` in R1; other-suffix `lig`/`ig`/`els` delete + `öst → ös` +
+  `fullt → full`. **`y` is both a vowel and an s-ending consonant** per
+  Snowball's spec — tested explicitly. PHONEX-sv encoder (`"phonex-sv"`)
+  with sj-family cluster fold (`sj`/`stj`/`skj`/`sch`/`sk` before front
+  vowels → `S`), tj-family palatal (`tj`/`kj`/`k` before front vowels
+  → `C`), vowel folds `å → o`, `ä → e`, `ö → e`. 37 Snowball pairs +
+  20 PHONEX pairs. 80 tests total. Finland-Swedish, Norwegian/Danish
+  siblings deferred to their own packs.
+
+- **`stringcheese-no` — Norwegian (Bokmål) language pack.** New workspace
+  crate. **Registered as `"nb"`** (Bokmål-specific), NOT `"no"`
+  (macrolanguage) — leaves room for a future `stringcheese-nn` (Nynorsk)
+  sibling to register `"nn"` without either pack shadowing the other.
+  A `macrolanguage_no_is_not_registered_by_this_pack` test locks this
+  in. ~177 stopwords (Bokmål core + retained Nynorsk-flavored high-
+  frequency function words for Snowball parity). Snowball Norwegian
+  stemmer per official spec: R1 rules; suffix cascades `-heter`/`-arna`/
+  `-etene`/`-ande`/`-a`/`-e`/`-et`/`-en`/`-ene`/`-hetens`/`-ens`/`-ers`;
+  `-s` genitive with specific consonant preceding. PHONEX-no encoder
+  (`"phonex-no"`) with `skj`/`sk` before front vowels → `S`, `kj`/`k`
+  before front vowels → `C`, `å → o`, `æ → e`, `ø → e`. 35 Snowball
+  pairs + 20 PHONEX pairs. Nynorsk (`stringcheese-nn`), Danish
+  (`stringcheese-da`), Icelandic (`stringcheese-is`) deferred.
+
+- **`stringcheese-fi` — Finnish language pack.** New workspace crate.
+  **First Uralic (non-Indo-European) pack.** Finnish morphology is famously
+  agglutinative — a single word can carry 5-10 morphemes with vowel
+  harmony rules. ~172 stopwords. Snowball Finnish stemmer per official
+  spec — the longest Snowball algorithm in the workspace. Steps: mark
+  R1/R2; remove particles (`-kin`/`-kaan`/`-han`/`-ko`/`-ni`/`-si`/
+  `-mme`/`-nne`); possessive-suffix removal; case-ending removal
+  (Finnish has 15 grammatical cases); verb-personal-ending removal;
+  consonant-gradation restoration; undouble-consonant. **Vowel harmony
+  encoded in the suffix table** (not as a runtime predicate) — every
+  harmony-sensitive suffix listed in both back (`-ssa`/`-lla`/`-kaan`/
+  `-ko`/`-han`/`-pa`/`-nsa`) and front (`-ssä`/`-llä`/`-kään`/`-kö`/
+  `-hän`/`-pä`/`-nsä`) variants across all six steps' tables. Longest-
+  literal-match check IS the harmony check. Finnish `y` treated as a
+  front rounded vowel /y/ (critical for R1/R2 region computation).
+  PHONEX-fi encoder (`"phonex-fi"`) with long-consonant collapse
+  (`ll → L`, `kk → K`) and long-vowel collapse. Traced longest sample:
+  `yliopistossanikin` (17 chars, "in my university also") → `yliopisto`
+  (9 chars) — inessive + 1sg possessive + clitic particle cascade.
+  33 Snowball pairs + 20 PHONEX pairs. Estonian (`et`), Sami packs,
+  full-lexicon consonant-gradation reversal, compound-word splitting
+  deferred.
+
+- **`stringcheese-hu` — Hungarian language pack.** New workspace crate.
+  Second Uralic pack (after Finnish); related but structurally distinct.
+  ~196 stopwords. Snowball Hungarian stemmer implemented as an iterated
+  longest-match strip over a unified surface-form table that merges the
+  reference algorithm's instrumental/case/owned/owner/plural/verb-suffix
+  steps into a single pass (rationale: phased approach can over-strip
+  a shorter cross-category match; unified longest-match resolves
+  ambiguity uniformly). R1 region guard + 2-char min-stem floor.
+  **Vowel harmony encoded in the suffix table** — every case-ending
+  listed in each harmony variant: `-ban`/`-ben` inessive, `-ba`/`-be`
+  illative, `-nak`/`-nek` dative, `-hoz`/`-hez`/`-höz` allative triplet,
+  `-val`/`-vel` instrumental with 16 doubled-consonant assimilation
+  variants (`-Xal`/`-Xel` for X ∈ {b,c,d,f,g,h,j,k,l,m,n,p,r,s,t,z}),
+  `-ért`/`-ig`/`-kor`/`-ként` non-harmonizing cases, `-t`/`-at`/`-et`/
+  `-ot`/`-öt` accusative. **`MAX_STRIP_ITERATIONS = 1`** prevents
+  cascade over-stemming. Bare `-t`/`-tek`/`-tok`/`-tök` deliberately
+  excluded to prevent loanword over-stripping. PHONEX-hu encoder
+  (`"phonex-hu"`) with Hungarian digraphs `cs → C`, `dz → Z`, `dzs → J`,
+  `gy → G'`, `ly → J`, `ny → N'`, `sz → S`, `ty → T'`, `zs → Z'`
+  (primed placeholders keep related sounds distinguishable). 34 Snowball
+  pairs (covering inessive/illative/sublative/dative/adessive/elative/
+  delative/ablative harmony pairs) + 19 PHONEX pairs.
+
+- **`stringcheese-el` — Greek language pack.** New workspace crate.
+  **First Greek-script pack.** 222 stopwords (205 unique, accent-stripped,
+  non-final-sigma form). Snowball Greek stemmer per official spec, with
+  a preprocessing step that strips accents from vowels (ά→α/έ→ε/ή→η/
+  ί→ι/ό→ο/ύ→υ/ώ→ω) and folds final sigma (ς→σ) before the multi-step
+  suffix cascade. **Final sigma fold at every entry point** — stemmer
+  preprocessing, phonetic encoder, `is_stopword` — rationale: `ς` and
+  `σ` are positional variants of the same letter. All arithmetic on
+  `Vec<char>` (Greek letters are 2 bytes per UTF-8 char). Phonetic
+  encoder: **ISO 843 transliteration** to Latin (adapter `"iso-843-el"`):
+  `α→a`, `β→v`, `γ→g`, `δ→d`, `ζ→z`, `η→i`, `θ→th`, `κ→k`, `λ→l`,
+  `μ→m`, `ν→n`, `ξ→x`, `π→p`, `ρ→r`, `σ/ς→s`, `τ→t`, `υ→y`, `φ→f`,
+  `χ→ch`, `ψ→ps`, `ω→o`. Handles diphthongs (`αι→ai`, `ει→ei`, `οι→oi`,
+  `ου→ou`, `γγ→ng`) and dialytika (`ϊ`, `ϋ`, `ΰ`). Registered as
+  `"el"`. 32 Snowball pairs + 33 transliteration pairs (all 24 letters
+  + final sigma + all 7 accented vowels). Ancient Greek (`stringcheese-grc`),
+  Katharevousa, polytonic support, Coptic sibling, ELOT 743 alternative
+  transliteration deferred.
+
+- **`stringcheese-hi` — Hindi language pack.** New workspace crate.
+  **First Devanagari-script pack** (3 bytes per UTF-8 char — the first
+  script wider than Cyrillic's 2 bytes). ~149 stopwords in Devanagari.
+  `HindiNormalizer` with `with_devanagari_digit_folding` (fold `०-९` to
+  `0-9`) and `with_nukta_stripping`. Light stemmer with gender/number
+  markers, verb tense endings. Bare postpositions (`-का`/`-की`/`-के`)
+  and single-scalar matras (`ि`, `ु`, `ई`, `ए`) deliberately **excluded**
+  from the stemmer table — they cause real over-stemming
+  (`लड़का → लड़` instead of `लड़क`; `बच्चे → बच्` instead of `बच्च`),
+  documented as a conservative choice. **IAST transliteration** (International
+  Alphabet of Sanskrit Transliteration, adapter `"iast-hi"`) with
+  **one-scalar-lookahead state-machine schwa handling**: every base
+  consonant queued rather than emitted; the encoder inspects the next
+  scalar to decide — virama `्` drops the schwa (`क्` → `k`), matra
+  produces vowel replacement (`कि` → `ki`), combining mark keeps the
+  schwa (`हैं` → `haiṃ`), nukta swaps the base to its nukta variant
+  (`ज़` → `za`). Convention: Sanskrit-style explicit-schwa retention
+  (`राम` → `rāma`, `कमल` → `kamala`); Modern-Hindi context-dependent
+  schwa deletion is out of scope, deferred to a future `stringcheese-hi-morph`.
+  Tokenizer handles danda `।` (U+0964). 20 stemmer pairs + 52 transliteration
+  pairs (all 33 classical consonants + 10 primary vowels + digits +
+  combining marks + word examples). Marathi (`mr`), Sanskrit (`sa`),
+  Nepali (`ne`), Bengali/Gurmukhi/Gujarati/Oriya/Tamil/Telugu/Kannada/
+  Malayalam sibling packs deferred; ITRANS/Harvard-Kyoto/SLP1/ISO 15919
+  alternate romanization adapters deferred.
+
+- **`stringcheese-tokenizer-bpe`: HuggingFace WordPiece model support.**
+  Adds the second-largest deferred model type from the wave-9 HF parser.
+  Unlocks BERT / DistilBERT / RoBERTa / ALBERT / MobileBERT tokenizer.json
+  parsing end-to-end. New `wordpiece` module: `WordPieceTokenizer` with
+  `vocab: HashMap<String, u32>`, `unk_token_id`, `continuing_subword_prefix`
+  (default `"##"`), `max_input_chars_per_word` (default 100). Encoding is
+  greedy longest-match from left with `##` continuation prefix; first
+  subword unprefixed, subsequent subwords prefixed. Whole word becomes
+  `[UNK]` if any subword fails to match. New `HfTokenizer` enum
+  (`#[non_exhaustive]`, boxed BpeTokenizer variant to keep footprint):
+  ```
+  pub enum HfTokenizer {
+      Bpe(Box<BpeTokenizer>),
+      WordPiece(WordPieceTokenizer),
+  }
+  ```
+  New `to_tokenizer` dispatcher + `to_wordpiece_tokenizer` sibling.
+  **Backwards-compatible**: existing `to_bpe_tokenizer` callers still
+  work; a non-BPE model now surfaces `HfConversionError::UnsupportedModelForBpe`.
+  **`BertPreTokenizer` implemented inline** — whitespace split followed
+  by per-word punctuation split. Reference test: `"unaffable"` → `["un",
+  "##aff", "##able"]`. BERT-shape synthetic tokenizer.json integration
+  test with BertPreTokenizer + TemplateProcessing + `[CLS]`/`[SEP]`.
+  33 new tests. Deferred: `Unigram`, `WordLevel` models; `BertNormalizer`
+  (lower-case + accent-strip + Chinese-char handling); `Punctuation`/
+  `Metaspace`/`CharDelimiterSplit`/`Digits`/`UnicodeScripts`/`FixedLength`
+  standalone pre-tokenizers; `TemplateProcessing` splice on the WordPiece
+  runtime path (config parses, callers can splice manually).
+
 - **`stringcheese-vi` — Vietnamese language pack.** New workspace crate.
   ~181 single-syllable stopwords (Vietnamese orthography writes each
   syllable as a whitespace-separated word; multi-syllable compounds like
