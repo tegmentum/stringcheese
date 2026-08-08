@@ -516,8 +516,8 @@ const fn default_true() -> bool {
 /// through to [`Self::Other`]. See [`Normalizer`] for the semantics
 /// of the honoured shapes.
 ///
-/// Deferred variants (`Bert`, `Nmt`, `Precompiled`, regex `Replace`,
-/// custom callables) surface at conversion as
+/// Deferred variants (`Nmt`, `Precompiled`, regex `Replace`, custom
+/// callables) surface at conversion as
 /// [`HfConversionError::UnsupportedNormalizer`] with the offending
 /// type name.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -569,7 +569,32 @@ pub enum HfNormalizer {
         /// The child normalizers, applied in order.
         normalizers: Vec<HfNormalizer>,
     },
-    /// Any other normalizer tag (BERT, NMT, `Precompiled`, custom, ...).
+    /// BERT's classic composite normalizer — control-char cleanup,
+    /// CJK spacing, accent stripping, and lower-casing. Materialises
+    /// to [`Normalizer::Bert`] on the runtime side. Ships as a single
+    /// tag (`"BertNormalizer"`) with four boolean toggles; every
+    /// toggle has an HF-canonical default so a bare `{"type":
+    /// "BertNormalizer"}` deserialises to the BERT-base shape
+    /// (`clean_text: true, handle_chinese_chars: true, strip_accents:
+    /// None, lowercase: true`).
+    BertNormalizer {
+        /// See [`Normalizer::Bert::clean_text`]. Defaults to `true`.
+        #[serde(default = "default_true")]
+        clean_text: bool,
+        /// See [`Normalizer::Bert::handle_chinese_chars`]. Defaults
+        /// to `true`.
+        #[serde(default = "default_true")]
+        handle_chinese_chars: bool,
+        /// See [`Normalizer::Bert::strip_accents`]. Defaults to
+        /// `None` (which the runtime resolves against
+        /// [`Self::BertNormalizer::lowercase`]).
+        #[serde(default)]
+        strip_accents: Option<bool>,
+        /// See [`Normalizer::Bert::lowercase`]. Defaults to `true`.
+        #[serde(default = "default_true")]
+        lowercase: bool,
+    },
+    /// Any other normalizer tag (NMT, `Precompiled`, custom, ...).
     /// Recognised at parse time via serde's `#[serde(other)]` so
     /// parsing does not fail; [`to_bpe_tokenizer`] rejects it with a
     /// specific error.
@@ -800,8 +825,8 @@ pub enum HfConversionError {
     /// The `Split` pre-tokenizer's regex pattern failed to compile.
     Regex(PreTokenizerCompileError),
     /// The `normalizer` block used a variant this crate does not
-    /// materialise yet (`Bert`, `Nmt`, `Precompiled`, a `Replace`
-    /// with a `Regex` pattern, or a custom callable).
+    /// materialise yet (`Nmt`, `Precompiled`, a `Replace` with a
+    /// `Regex` pattern, or a custom callable).
     UnsupportedNormalizer {
         /// The `normalizer.type` string, or a short synthesised name
         /// for a nested rejection (`"Replace(Regex)"`, ...).
@@ -878,8 +903,8 @@ impl fmt::Display for HfConversionError {
                 f,
                 "unsupported HF normalizer type {type_name:?}: \
                  this crate materialises NFC/NFD/NFKC/NFKD, Lowercase, \
-                 Replace(String), Strip, Prepend, and their Sequence \
-                 composition"
+                 Replace(String), Strip, Prepend, BertNormalizer, and \
+                 their Sequence composition"
             ),
             Self::UnsupportedPostProcessor { type_name } => write!(
                 f,
@@ -1200,11 +1225,13 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
 ///
 /// * `normalizer` — most `WordPiece` checkpoints ship a
 ///   `BertNormalizer` (lower-case + accent strip + Chinese-char
-///   handling). Applying it correctly is its own landing; a
-///   config with a normalizer surfaces
-///   [`HfConversionError::UnsupportedNormalizer`] with the type name.
-///   NFC / NFD / NFKC / NFKD are honoured — those already work through
-///   the shared [`crate::normalizer`] layer.
+///   handling). The runtime materialises it (see
+///   [`Normalizer::Bert`]), but the [`crate::wordpiece::WordPieceTokenizer`]
+///   surface does not yet carry a normalizer slot, so the parsed
+///   normalizer is validated and then discarded. NFC / NFD / NFKC /
+///   NFKD (and `BertNormalizer` itself) are treated the same way
+///   today — the value is honoured on the type side but not applied
+///   at encode time.
 /// * `post_processor` — `WordPiece` checkpoints usually ship
 ///   `TemplateProcessing` (for `[CLS]` / `[SEP]`); that shape is
 ///   honoured verbatim. Deferred variants (`BertProcessing`, etc.)
@@ -1218,9 +1245,9 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
 /// # Errors
 ///
 /// Returns [`HfConversionError`] with a variant naming the offending
-/// feature. Common causes: a non-`WordPiece` `model.type`, a
-/// `BertNormalizer` in the `normalizer` slot, or an `unk_token` that
-/// is not present in the vocabulary.
+/// feature. Common causes: a non-`WordPiece` `model.type`, an
+/// unrecognised `normalizer.type`, or an `unk_token` that is not
+/// present in the vocabulary.
 ///
 /// # Examples
 ///
@@ -1311,8 +1338,8 @@ pub fn to_wordpiece_tokenizer(
 
     // Normalizer routing — the shared to_runtime_normalizer honours
     // NFC / NFD / NFKC / NFKD / Lowercase / Strip / Prepend /
-    // Replace(String) / their Sequence composition. Everything else
-    // (notably BertNormalizer) surfaces as UnsupportedNormalizer.
+    // Replace(String) / BertNormalizer / their Sequence composition.
+    // Everything else surfaces as UnsupportedNormalizer.
     //
     // The runtime `WordPieceTokenizer` does not carry a normalizer
     // slot today (its `encode` operates on the raw input), so a
@@ -1643,6 +1670,17 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
             }
             Ok(Normalizer::Sequence(children))
         }
+        HfNormalizer::BertNormalizer {
+            clean_text,
+            handle_chinese_chars,
+            strip_accents,
+            lowercase,
+        } => Ok(Normalizer::Bert {
+            clean_text: *clean_text,
+            handle_chinese_chars: *handle_chinese_chars,
+            strip_accents: *strip_accents,
+            lowercase: *lowercase,
+        }),
         HfNormalizer::Other => Err(HfConversionError::UnsupportedNormalizer {
             type_name: "Other".to_string(),
         }),
@@ -2704,7 +2742,11 @@ mod tests {
     }
 
     #[test]
-    fn normalizer_bert_reports_deferred_error() {
+    fn normalizer_bert_parses_and_materialises() {
+        // Wave-12: BertNormalizer is a first-class variant. It
+        // deserialises into `HfNormalizer::BertNormalizer{..}` and
+        // materialises into `Normalizer::Bert{..}` on the runtime
+        // side.
         let json = r#"{
             "added_tokens": [],
             "normalizer": {
@@ -2717,12 +2759,51 @@ mod tests {
             "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        assert!(matches!(config.normalizer, Some(HfNormalizer::Other)));
-        let err = to_bpe_tokenizer(&config).unwrap_err();
+        match &config.normalizer {
+            Some(HfNormalizer::BertNormalizer {
+                clean_text,
+                handle_chinese_chars,
+                strip_accents,
+                lowercase,
+            }) => {
+                assert!(*clean_text);
+                assert!(*handle_chinese_chars);
+                assert!(strip_accents.is_none());
+                assert!(*lowercase);
+            }
+            other => panic!("expected BertNormalizer, got {other:?}"),
+        }
+        let tok = to_bpe_tokenizer(&config).unwrap();
         assert!(matches!(
-            err,
-            HfConversionError::UnsupportedNormalizer { .. }
+            tok.normalizer(),
+            Some(crate::normalizer::Normalizer::Bert { .. })
         ));
+    }
+
+    #[test]
+    fn normalizer_bert_defaults_are_hf_canonical() {
+        // Bare `{"type": "BertNormalizer"}` — every field defaults
+        // to the HF-canonical value (`true` / `None` / `true`).
+        let json = r#"{
+            "added_tokens": [],
+            "normalizer": {"type": "BertNormalizer"},
+            "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        match &config.normalizer {
+            Some(HfNormalizer::BertNormalizer {
+                clean_text,
+                handle_chinese_chars,
+                strip_accents,
+                lowercase,
+            }) => {
+                assert!(*clean_text);
+                assert!(*handle_chinese_chars);
+                assert!(strip_accents.is_none());
+                assert!(*lowercase);
+            }
+            other => panic!("expected BertNormalizer, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3204,8 +3285,12 @@ mod tests {
     }
 
     #[test]
-    fn to_wordpiece_tokenizer_rejects_bert_normalizer_deferred() {
-        // BertNormalizer is deferred — surfaces UnsupportedNormalizer.
+    fn to_wordpiece_tokenizer_accepts_bert_normalizer() {
+        // Wave-12: BertNormalizer is a first-class variant on the
+        // typed side. The `WordPieceTokenizer` still does not carry a
+        // normalizer slot, so the parsed normalizer is validated and
+        // then discarded — the conversion succeeds and produces a
+        // usable tokenizer.
         let json = r#"{
             "added_tokens": [],
             "normalizer": {
@@ -3220,11 +3305,14 @@ mod tests {
             }
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        let err = to_wordpiece_tokenizer(&config).unwrap_err();
         assert!(matches!(
-            err,
-            HfConversionError::UnsupportedNormalizer { .. }
+            &config.normalizer,
+            Some(HfNormalizer::BertNormalizer { .. })
         ));
+        // Conversion succeeds — the normalizer is honoured on the
+        // type side even though the WordPiece runtime does not apply
+        // it yet.
+        to_wordpiece_tokenizer(&config).expect("BertNormalizer must materialise");
     }
 
     #[test]

@@ -37,15 +37,18 @@
 //! * [`Normalizer::Sequence`] — apply a list of normalizers left to
 //!   right. The `Vec` is followed order-preserving; each entry sees
 //!   the output of every preceding one.
+//! * [`Normalizer::Bert`] — the classic BERT normalizer used by
+//!   BERT / `DistilBERT` / `ELECTRA` and their `WordPiece`
+//!   siblings. Composes four independently-toggleable passes:
+//!   control-character cleanup, CJK spacing, accent stripping, and
+//!   lower-casing. See the variant's doc-comment for the exact order
+//!   and the semantics of each pass.
 //!
 //! # Deferred variants
 //!
 //! * `Precompiled` — `SentencePiece`'s compiled char-mapping table.
 //!   Requires shipping the (many-megabyte) precompiled binary format;
 //!   out of scope for the tokenizer.json BPE landing.
-//! * `Bert` — BERT's classic normalizer (accent-strip + CJK spacing +
-//!   controls handling). Belongs with the `WordPiece` model landing,
-//!   not with BPE.
 //! * `Nmt` — the Marian NMT normalizer.
 //! * `Replace` with a `Regex` pattern (rather than a literal). Callers
 //!   who need this can approximate with a `Sequence` of literal
@@ -60,6 +63,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::canonical_combining_class;
 
 /// A Unicode normalization step to apply before the pre-tokenizer.
 ///
@@ -113,6 +117,51 @@ pub enum Normalizer {
     /// Each child sees the output of every preceding child. An empty
     /// sequence is a no-op.
     Sequence(Vec<Normalizer>),
+    /// The classic BERT normalizer — the shape shipped by BERT,
+    /// `DistilBERT`, `ELECTRA`, and every other `WordPiece`-family
+    /// tokenizer.json that predates the current `Sequence`-of-atoms
+    /// idiom.
+    ///
+    /// Composes four independently-toggleable passes, applied in this
+    /// order:
+    ///
+    /// 1. **`clean_text`** — drop NUL (`U+0000`), the Unicode
+    ///    replacement character (`U+FFFD`), and every other Unicode
+    ///    "control" scalar *except* tab / newline / carriage return;
+    ///    then replace every remaining whitespace scalar with a single
+    ///    ASCII space (which lets the subsequent BERT pre-tokenizer
+    ///    handle any run of whitespace uniformly).
+    /// 2. **`handle_chinese_chars`** — pad every CJK / Han codepoint
+    ///    with an ASCII space on each side, so the downstream
+    ///    pre-tokenizer treats each Han character as its own "word".
+    ///    The ranges checked are the classic HF set: CJK Unified
+    ///    Ideographs (`U+4E00..=U+9FFF`), Extensions A / B / C / D / E,
+    ///    CJK Compatibility Ideographs, and CJK Compatibility
+    ///    Ideographs Supplement.
+    /// 3. **`strip_accents`** — NFD-decompose the input, then drop
+    ///    every combining mark (checked via
+    ///    [`unicode_normalization::char::canonical_combining_class`]
+    ///    `!= 0`, which is the closest zero-table proxy for HF's own
+    ///    `Mn`-only filter and coincides on every Latin-script accent
+    ///    a typical caller cares about). When `strip_accents` is
+    ///    `None`, HF defaults it to the value of `lowercase` — the
+    ///    same behaviour is reproduced here.
+    /// 4. **`lowercase`** — Unicode-aware lower-casing via
+    ///    [`str::to_lowercase`], matching [`Normalizer::Lowercase`].
+    ///
+    /// Every field defaults to `true` when materialised from a
+    /// tokenizer.json blob, matching HF's own on-disk defaults.
+    Bert {
+        /// Enable the control-character / whitespace cleanup pass.
+        clean_text: bool,
+        /// Enable the CJK-character spacing pass.
+        handle_chinese_chars: bool,
+        /// Enable the accent-stripping pass. `None` defers to
+        /// [`Self::Bert::lowercase`] — HF's own default rule.
+        strip_accents: Option<bool>,
+        /// Enable the lower-casing pass.
+        lowercase: bool,
+    },
 }
 
 /// Apply `normalizer` to `text`, returning the normalized output.
@@ -183,7 +232,130 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
             }
             cur
         }
+        Normalizer::Bert {
+            clean_text,
+            handle_chinese_chars,
+            strip_accents,
+            lowercase,
+        } => {
+            // Apply each pass in the HF-canonical order:
+            // clean_text → handle_chinese_chars → strip_accents →
+            // lowercase. Every pass is independently toggleable and
+            // owns its output — the passes below allocate a fresh
+            // `String` even for the no-op fall-through so the return
+            // type stays uniform.
+            let mut cur: String = text.into();
+            if *clean_text {
+                cur = bert_clean_text(&cur);
+            }
+            if *handle_chinese_chars {
+                cur = bert_handle_chinese_chars(&cur);
+            }
+            // HF's rule: when `strip_accents` is not set, default it to
+            // `lowercase`. This mirrors upstream exactly.
+            let do_strip = strip_accents.unwrap_or(*lowercase);
+            if do_strip {
+                cur = bert_strip_accents(&cur);
+            }
+            if *lowercase {
+                cur = cur.to_lowercase();
+            }
+            cur
+        }
     }
+}
+
+/// BERT's `clean_text` pass.
+///
+/// Drops NUL (`U+0000`), the Unicode replacement character (`U+FFFD`),
+/// and every other Unicode "control" scalar except tab, newline, and
+/// carriage return (which are treated as whitespace, not controls);
+/// every remaining whitespace scalar is replaced with a single ASCII
+/// space.
+fn bert_clean_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if c == '\0' || c == '\u{FFFD}' || is_bert_control(c) {
+            continue;
+        }
+        if is_bert_whitespace(c) {
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// HF's "is a control character for BERT" predicate. Tab, newline,
+/// and carriage return are explicitly *not* controls here — they are
+/// treated as whitespace by [`bert_clean_text`].
+fn is_bert_control(c: char) -> bool {
+    if c == '\t' || c == '\n' || c == '\r' {
+        return false;
+    }
+    // `char::is_control` covers Cc (the C0 and C1 control blocks).
+    // HF's own predicate is more permissive (it also catches Cf / Co /
+    // Cs), but every non-Cc scalar we might see in practice is either
+    // handled by `is_bert_whitespace` below (Zs) or is a normal
+    // letter/mark. Cc coverage is sufficient for round-tripping the
+    // BERT-canonical inputs.
+    c.is_control()
+}
+
+/// HF's "is whitespace for BERT" predicate. Tab / newline / CR are
+/// whitespace; every general-category-Zs scalar (and any other
+/// scalar `char::is_whitespace` recognises) is whitespace.
+fn is_bert_whitespace(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r') || c.is_whitespace()
+}
+
+/// BERT's `handle_chinese_chars` pass.
+///
+/// Pads every CJK / Han codepoint with an ASCII space on each side so
+/// the downstream pre-tokenizer treats each Han character as its own
+/// "word".
+fn bert_handle_chinese_chars(input: &str) -> String {
+    // Worst-case output is `3 * input.len()` (one three-byte char
+    // becoming " {char} "), but the common case adds only one or two
+    // padding bytes per Han char — start at `input.len()` and grow.
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if is_chinese_char(c) {
+            out.push(' ');
+            out.push(c);
+            out.push(' ');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// HF's `is_chinese_char` predicate — the eight Han-script Unicode
+/// ranges the reference `BertNormalizer` treats as "Chinese".
+fn is_chinese_char(c: char) -> bool {
+    let cp = u32::from(c);
+    matches!(cp,
+        0x4E00..=0x9FFF
+        | 0x3400..=0x4DBF
+        | 0x2_0000..=0x2_A6DF
+        | 0x2_A700..=0x2_B73F
+        | 0x2_B740..=0x2_B81F
+        | 0x2_B820..=0x2_CEAF
+        | 0xF900..=0xFAFF
+        | 0x2_F800..=0x2_FA1F
+    )
+}
+
+/// BERT's `strip_accents` pass. NFD-decomposes the input then drops
+/// every combining mark (canonical combining class ≠ 0). The result
+/// is left in NFD form, matching HF's own behaviour.
+fn bert_strip_accents(input: &str) -> String {
+    input
+        .nfd()
+        .filter(|c| canonical_combining_class(*c) == 0)
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -355,6 +527,111 @@ mod tests {
     fn sequence_of_empty_is_noop() {
         let n = Normalizer::Sequence(vec![]);
         assert_eq!(normalize("hello", &n), "hello");
+    }
+
+    // ---------------------------------------------------------------
+    // BertNormalizer
+    // ---------------------------------------------------------------
+
+    /// Convenience — the BERT default (`clean_text: true,
+    /// handle_chinese_chars: true, strip_accents: None,
+    /// lowercase: true`) matches what a bare
+    /// `{"type": "BertNormalizer"}` deserialises to.
+    fn bert_default() -> Normalizer {
+        Normalizer::Bert {
+            clean_text: true,
+            handle_chinese_chars: true,
+            strip_accents: None,
+            lowercase: true,
+        }
+    }
+
+    #[test]
+    fn bert_lowercases_and_strips_accents_by_default() {
+        // `strip_accents: None` defers to `lowercase: true`, so the
+        // combining acute is dropped and `É` becomes `e`.
+        assert_eq!(normalize("café", &bert_default()), "cafe");
+        assert_eq!(normalize("CAFÉ", &bert_default()), "cafe");
+        // The decomposed form reaches the same output.
+        assert_eq!(normalize("cafe\u{0301}", &bert_default()), "cafe");
+    }
+
+    #[test]
+    fn bert_strip_accents_none_defers_to_lowercase_false() {
+        // With `strip_accents: None` and `lowercase: false`, the
+        // default resolves to `strip_accents: false` — the accent
+        // survives.
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: false,
+            strip_accents: None,
+            lowercase: false,
+        };
+        assert_eq!(normalize("café", &n), "café");
+    }
+
+    #[test]
+    fn bert_strip_accents_explicit_true_overrides_lowercase_false() {
+        // Explicit `strip_accents: Some(true)` wins over the default
+        // rule even when lowercase is off — `É` decomposes into `E` +
+        // combining acute and the acute is dropped, leaving `E`.
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: false,
+            strip_accents: Some(true),
+            lowercase: false,
+        };
+        assert_eq!(normalize("CAFÉ", &n), "CAFE");
+    }
+
+    #[test]
+    fn bert_handle_chinese_chars_pads_han_scalars() {
+        // "你" (U+4F60) and "好" (U+597D) are both in the CJK Unified
+        // Ideographs block; the world/ASCII characters are not padded.
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: true,
+            strip_accents: Some(false),
+            lowercase: false,
+        };
+        assert_eq!(normalize("你好world", &n), " 你  好 world");
+    }
+
+    #[test]
+    fn bert_clean_text_drops_nul_and_replaces_tab_and_newline() {
+        // `\0` and the U+FFFD replacement char are dropped; `\t` /
+        // `\n` become a single ASCII space each.
+        let n = Normalizer::Bert {
+            clean_text: true,
+            handle_chinese_chars: false,
+            strip_accents: Some(false),
+            lowercase: false,
+        };
+        assert_eq!(normalize("a\0b\tc\nd\u{FFFD}e", &n), "ab c de");
+    }
+
+    #[test]
+    fn bert_clean_text_drops_other_c0_controls() {
+        // `\u{0001}` (SOH) — a C0 control that is neither tab / newline
+        // / CR nor NUL / FFFD — is dropped as a control character.
+        let n = Normalizer::Bert {
+            clean_text: true,
+            handle_chinese_chars: false,
+            strip_accents: Some(false),
+            lowercase: false,
+        };
+        assert_eq!(normalize("a\u{0001}b", &n), "ab");
+    }
+
+    #[test]
+    fn bert_all_features_disabled_is_identity() {
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: false,
+            strip_accents: Some(false),
+            lowercase: false,
+        };
+        assert_eq!(normalize("Hello, café! 你好", &n), "Hello, café! 你好");
     }
 
     #[test]
