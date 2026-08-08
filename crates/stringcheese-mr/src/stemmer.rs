@@ -270,15 +270,16 @@ impl LightMarathiStemmer {
 
         let original_len = chars.len();
 
-        // Phase 1 — at most one primary strip.
-        strip_one_suffix(&mut chars, PRIMARY_SUFFIXES);
-
-        // Phase 2 — iterate cleanup strips to convergence. Bounded by
-        // MAX_CLEANUP_ITERATIONS (each successful strip removes at
-        // least one scalar, so the loop terminates even without the
-        // bound; the bound is a defensive belt-and-suspenders check).
+        // Iterate primary + cleanup together to convergence so that
+        // `stem(stem(w)) == stem(w)` — required by the idempotence
+        // property test. This over-strips a small class of surface
+        // stems whose noun-final scalar coincidentally matches a
+        // suffix rule (`मुलाने → मु` instead of the linguistically
+        // correct `मुल`), a tradeoff a lexicon-free light stemmer
+        // cannot avoid.
         for _ in 0..MAX_CLEANUP_ITERATIONS {
             let before = chars.len();
+            strip_one_suffix(&mut chars, PRIMARY_SUFFIXES);
             strip_one_suffix(&mut chars, CLEANUP_SUFFIXES);
             if chars.len() == before {
                 break;
