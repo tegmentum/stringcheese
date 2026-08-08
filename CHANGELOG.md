@@ -11,6 +11,118 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **HuggingFace `Unigram` model support in `stringcheese-tokenizer-bpe`.**
+  Adds `HfUnigramModel` + `HfModel::Unigram` variant and a new
+  `UnigramTokenizer` runtime executing Viterbi forward-DP over Unicode
+  character positions. Best path = `max over j<i of best_prev[j] +
+  log_prob(input[j..i])`; UNK fallback via `unk_id` with a fixed 10.0
+  log-space penalty so vocab-only paths always win when one exists.
+  New dispatch variant `HfTokenizer::Unigram` in `to_tokenizer`, new
+  conversion `to_unigram_tokenizer`, new error variants
+  `UnsupportedModelForUnigram` and `UnigramUnkIdOutOfRange`. Unlocks
+  end-to-end loading of Llama, Mistral, T5, and XLM-RoBERTa
+  tokenizer.json files (Unigram/SentencePiece model family). 12
+  integration tests cover whole-word preference, two-piece splits,
+  char-by-char fallback, OOV/`unk` fallback, multibyte character
+  boundaries, empty input, out-of-range `unk_id`, and non-Unigram
+  rejection.
+
+- **HuggingFace `BertNormalizer` support in `stringcheese-tokenizer-bpe`.**
+  Extends `HfNormalizer` with the `BertNormalizer { clean_text,
+  handle_chinese_chars, strip_accents, lowercase }` variant, all with
+  HF-matching serde defaults (`true`/`true`/`None`/`true`) so bare
+  `{"type": "BertNormalizer"}` deserialises correctly. Passes applied
+  in HF order: `clean_text` (strip C0 controls + `\u{FFFD}`, replace
+  `\t`/`\n`/`\r` with space) → `handle_chinese_chars` (pad Han-block
+  codepoints with spaces so downstream WordPiece treats each as its own
+  token) → `strip_accents` (NFD then drop combining marks via
+  `canonical_combining_class != 0`; defaults to `lowercase` when not
+  set) → `lowercase`. Full 24-combination toggle sweep asserts no field
+  silently regresses. With Unigram + BertNormalizer + WordPiece +
+  BertPreTokenizer now landed, BERT, DistilBERT, ELECTRA, Llama,
+  Mistral, T5, and XLM-RoBERTa tokenizer.json files are all parseable
+  and executable end-to-end.
+
+- **`stringcheese-da` — Danish language pack.** New workspace crate,
+  registered as BCP-47 `"da"`. Nordic sibling to `sv`/`no`. Four-step
+  Snowball Danish stemmer per `danish.sbl`: Group A main-suffix
+  unconditional delete + Group B bare-`s` guarded by valid-s-ending set
+  `abcdfghjklmnoprtvyzå`; consonant-pair `-gd`/`-dt`/`-gt`/`-kt`
+  trailing-letter strip; `-ig`/`-lig`/`-elig`/`-els`/`-løst` other-suffix
+  processing with `-igst` prelude and `løst → løs` rewrite; undouble
+  trailing repeated consonant when the pair sits in R1. R1 floor
+  adjusted to ≥3 per the reference. ~120-word stopword list. PHONEX-da
+  encoder (`"phonex-da"`): Soundex-shape 4-char key with `sj → S`,
+  `sk`-before-front-vowel → `S`, `ch → S`, silent `H`, `å → O`,
+  `æ`/`ø → E`. Documented in tests: unlike Norwegian, Danish's Snowball
+  suffix table does not include `-ede`, so `elskede → elsked` (only the
+  bare `-e` strips). 30-pair Snowball + 20-pair PHONEX reference tables.
+
+- **`stringcheese-nn` — Norwegian Nynorsk language pack.** New
+  workspace crate, registered as BCP-47 `"nn"` — sibling to
+  `stringcheese-no` (registered as `"nb"` for Bokmål). Snowball
+  Norwegian stemmer ported verbatim since the upstream `norwegian.sbl`
+  covers both Bokmål and Nynorsk per the Snowball project. ~130-word
+  Nynorsk-tuned stopword list with Nynorsk-specific pronouns
+  (`eg`/`ho`/`me`/`dei`/`dykk`/`dykkar`/`deira`/`honom`), articles
+  (`ein`/`ei`/`eit`), negation (`ikkje`), kv-interrogatives
+  (`kva`/`kven`/`kvifor`/`korleis`/`kvar`), adverbs (`so`/`difor`/
+  `mykje`), and Nynorsk verb paradigms (`vera`/`vore`/`verta`/`vert`/
+  `vart`/`vorte`). PHONEX-nn encoder (`"phonex-nn"`) shares the same
+  phonological cluster set as PHONEX-no.
+
+- **`stringcheese-et` — Estonian language pack.** New workspace crate,
+  registered as BCP-47 `"et"`. **Second Uralic pack** (sibling of
+  Finnish, both non-Indo-European). Since Snowball has no official
+  Estonian stemmer, ships a single-pass longest-match suffix stripper
+  covering all 14 grammatical cases (`-le`/`-lt`/`-ks`/`-ni`/`-na`/
+  `-ga`/`-ta`/`-sse`/`-st`/`-s`/`-de`/…), plural markers
+  (`-d`/`-id`/`-te`/`-de`), verb inflections
+  (`-me`/`-te`/`-vad`/`-sin`/`-sid`/`-sime`/`-site`/`-sid`), and the
+  diminutive (`-ke`/`-kene`). Estonian has **no vowel harmony** (unlike
+  Finnish) — the suffix table lists each suffix exactly once. `-si-`
+  past-tense forms carry a vowel-preceding-stem check to disambiguate
+  from noun-plural `-id` (`kass + -id → kassid` "cats" vs. `käi +
+  -sid → käisid` "you went"). Single-char strips (`-s`/`-l`/`-d`/`-b`)
+  carry a stricter 4-char min-stem floor to protect short base words
+  (`kool`, `kass`, `ilus`). PHONEX-et encoder (`"phonex-et"`) folds
+  `ä→a`, `ö→o`, `õ→o`, `ü→u`, `š→s`, `ž→z`. ~80 stopwords.
+
+- **`stringcheese-bn` — Bengali language pack.** New workspace crate,
+  registered as BCP-47 `"bn"`. **Second Brahmic-script pack** (sibling
+  of Hindi/Devanagari). Bengali script `U+0980..=U+09FF`, 3 bytes per
+  scalar in UTF-8; all string operations use `Vec<char>` arithmetic,
+  never byte indexing. Word tokenizer covers the full Bengali block
+  including matras/halant/anusvara as word-internal; danda `।`/`॥`
+  separate. `LightBengaliStemmer` covering `-গুলি`/`-গুলো`/`-দের`/
+  `-রা`/`-রে`/`-কে`/`-তে`/`-র`/`-য়` with 2-scalar min-stem guard.
+  Two-stage phonex: `BengaliIso15919` (schwa-aware transliteration,
+  virama suppresses inherent vowel, matras override, nukta variants
+  both precomposed and decomposed, khanda ta `ৎ` → final `t`) then
+  `BengaliPhonex` (Soundex-shape 4-char key with ISO-diacritic
+  folding); adapter name `"phonex-bn"`. 65-entry stopword list. 20-pair
+  stemmer + 17-pair PHONEX reference tables.
+
+- **`stringcheese-ko` — Korean language pack.** New workspace crate,
+  registered as BCP-47 `"ko"`. **First Hangul-script pack.** Ships a
+  dedicated `jamo` module with `decompose_syllable(char) →
+  Option<(char, char, Option<char>)>` and `compose_jamo(L, V, T) →
+  Option<char>` implementing the closed-form Unicode `U+AC00..=U+D7A3`
+  formulas: `SIndex = C - 0xAC00`, `L = 0x1100 + SIndex / (21*28)`,
+  `V = 0x1161 + (SIndex % (21*28)) / 28`, `T = 0x11A7 + SIndex % 28`.
+  `tests/jamo_decompose.rs` enumerates **all 11172 precomposed
+  syllables** and asserts `compose(decompose(s)) == s`. Stemmer
+  iteratively peels the closed particle set (`-에서`, `-까지`, `-부터`,
+  `-에게`, `-으로`, `-는`, `-은`, `-을`, `-를`, `-이`, `-가`, `-에`,
+  `-로`, `-와`, `-과`, `-의`, `-도`, `-만`, `-다`) with longest-match
+  ordering so `학교에서` strips `-에서` (not `-에`). Space-delimited
+  word tokenizer (unlike JA/ZH, Korean uses spaces between words) that
+  keeps Latin/digit runs glued to adjacent Hangul (`iOS앱`, `2025년`).
+  Two-step phonex: full Revised Romanization jamo tables → 4-char
+  Soundex-family key with Korean-tuned classification; adapter name
+  `"phonex-ko"`. ~60-entry stopword list (case particles deliberately
+  omitted — the stemmer handles those).
+
 - **`stringcheese-sv` — Swedish language pack.** New workspace crate.
   ~145 stopwords (ranked head + `vara`/`ha`/`bli`/`kunna`/`skola`/`vilja`
   paradigms). Snowball Swedish stemmer (Porter/Boulton `swedish.sbl`) —
