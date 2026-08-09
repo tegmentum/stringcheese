@@ -27,6 +27,22 @@ stringcheese-core = { workspace = true, features = ["std"] }
 # `stringcheese-compare` still ships with SIMD off by default; the bench
 # crate is publish = false, so opting in here does not affect downstream.
 stringcheese-compare = { workspace = true, features = ["std", "simd"] }
+# Newer sketch / pattern / segmentation crates that landed after the
+# original bench set. Bench modules under `benches/` exercise these to
+# track performance regressions across the sliding-window +
+# fingerprint pipelines LLM callers actually assemble.
+stringcheese-ngram = { workspace = true, features = ["std"] }
+stringcheese-minhash = { workspace = true, features = ["std"] }
+stringcheese-simhash = { workspace = true, features = ["std"] }
+stringcheese-winnowing = { workspace = true, features = ["std"] }
+stringcheese-pattern = { workspace = true, features = ["std"] }
+stringcheese-diff = { workspace = true, features = ["std"] }
+stringcheese-collate = { workspace = true, features = ["std"] }
+stringcheese-stats = { workspace = true, features = ["std"] }
+stringcheese-escape = { workspace = true, features = ["std"] }
+stringcheese-textsplit = { workspace = true, features = ["std"] }
+stringcheese-normalize = { workspace = true, features = ["std"] }
+stringcheese-ident = { workspace = true, features = ["std"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }
@@ -56,6 +72,79 @@ harness = false
 
 [[bench]]
 name = "batch"
+harness = false
+
+# Sketch construction and comparison — MinHash + SimHash + winnowing.
+# All three share a common shape (feed hashed grams from ngram; get a
+# comparable fingerprint back) so this bench measures the pipeline
+# LLM RAG callers care about, not the underlying primitives in
+# isolation.
+[[bench]]
+name = "sketches"
+harness = false
+
+# Pattern-matching throughput — literal (memchr) vs wildcard vs glob
+# on realistic haystacks. The wildcard/glob path wraps globset+regex
+# so this catches regressions in either the wrap layer or in the
+# underlying crates.
+[[bench]]
+name = "pattern"
+harness = false
+
+# Diff — Myers + Patience side-by-side at four input scales. The
+# diff crate's algo.rs carries an at-risk revisit trigger:
+# "replace with wrap of `similar` if no benchmark-tracked perf
+# work lands within 2-3 arcs." This bench discharges that trigger.
+[[bench]]
+name = "diff"
+harness = false
+
+# Collate — UCA (feruca) vs Natural (wraps any inner) vs ASCII-CI
+# (byte-level fast path). Three implementations behind one trait
+# should show orders-of-magnitude differences on ASCII input,
+# validating the "pick the right collator for your input" note in
+# the crate's module docs.
+[[bench]]
+name = "collate"
+harness = false
+
+# Stats — all-in-house characterisation primitives. Bench measures
+# per-character-iteration overhead directly (no wrap layer to
+# amortise across).
+[[bench]]
+name = "stats"
+harness = false
+
+# Escape — four targets side-by-side. Three wrap crates
+# (percent-encoding, html-escape, shlex); one in-house (JSON
+# string body). The in-house JSON's cost vs the wraps is the
+# interesting datapoint — validates or challenges the "avoid
+# serde_json footprint" rationale in the crate's json module.
+[[bench]]
+name = "escape"
+harness = false
+
+# Textsplit — recursive splitter has the most complex algorithm
+# in the session's new crates (separator-list recursion + hard-cut
+# fallback + greedy merge + overlap). Bench captures per-splitter
+# throughput at three chunk sizes and three input sizes so
+# regressions on the recursive OR merge path surface loudly.
+[[bench]]
+name = "textsplit"
+harness = false
+
+# Normalize — named pipelines are compositions of primitives.
+# Bench measures which pipeline dominates which primitive so the
+# per-preset cost is legible when a caller has to pick.
+[[bench]]
+name = "normalize"
+harness = false
+
+# Ident — three surfaces: heck-backed case conversion, deunicode-
+# backed slugify, in-house sanitize. Bench measures each so wrap-
+# costs vs in-house are directly comparable.
+[[bench]]
+name = "ident"
 harness = false
 
 # Allocation-report binaries. Each one is gated on the `alloc-tracking`
