@@ -88,7 +88,7 @@ exclude = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
 repository = "https://github.com/tegmentum/stringcheese"
