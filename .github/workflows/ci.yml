@@ -123,11 +123,16 @@ jobs:
             stringcheese-core
             stringcheese-corpus
             stringcheese-compare
-            stringcheese
             stringcheese-segment
             stringcheese-collate
           )
+          # `stringcheese` (the facade) sits here rather than in
+          # pure_no_std because it re-exports alloc-only crates
+          # (stats/ident/escape/normalize/textsplit/translit/diff/
+          # pattern/simhash/winnowing). A pure --no-default-features
+          # build can't materialise those deps.
           alloc_only_crates=(
+            stringcheese
             stringcheese-stats
             stringcheese-ident
             stringcheese-escape
@@ -206,7 +211,6 @@ jobs:
         run: |
           set -euo pipefail
           pure_no_std_crates=(
-            stringcheese
             stringcheese-core
             stringcheese-corpus
             stringcheese-compare
@@ -215,7 +219,13 @@ jobs:
             stringcheese-segment
             stringcheese-collate
           )
+          # `stringcheese` (the facade) is alloc-mandatory now that
+          # it re-exports Vec/String-returning APIs from the
+          # session subsystems. Only the --features alloc / --all
+          # variants are checked; the pure --no-default variant is
+          # skipped for the same reason as in the no_std job.
           alloc_only_crates=(
+            stringcheese
             stringcheese-stats
             stringcheese-ident
             stringcheese-escape
