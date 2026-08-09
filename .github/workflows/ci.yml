@@ -361,11 +361,19 @@ jobs:
         # gate each `mod wit`/`export!` behind a per-crate feature
         # (e.g. `wit-component`) that only the standalone-component
         # build enables.
+        #
+        # `stringcheese-lang-gen` is a build-time codegen crate that
+        # writes generated Rust to the filesystem — its tests exercise
+        # that write path and trap under wasmtime's sandboxed WASI
+        # filesystem view. It belongs in `[build-dependencies]` and
+        # never runs in a wasm consumer's process, so excluding its
+        # test suite from the wasm-runtime job is aligned with intent.
         run: |
           cargo test \
             --workspace \
             --exclude stringcheese-bench \
             --exclude stringcheese-detect \
+            --exclude stringcheese-lang-gen \
             --all-features \
             --locked \
             --target wasm32-wasip1
