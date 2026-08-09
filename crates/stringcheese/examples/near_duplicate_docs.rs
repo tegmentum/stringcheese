@@ -84,7 +84,8 @@ fn main() {
     }
 
     // Rescore every candidate pair with the full MinHash estimate.
-    let sketch_by_name: HashMap<&str, &Sketch> = doc_sketches.iter().map(|(n, s)| (*n, s)).collect();
+    let sketch_by_name: HashMap<&str, &Sketch> =
+        doc_sketches.iter().map(|(n, s)| (*n, s)).collect();
     let threshold = 0.6;
 
     let mut hits: Vec<(&str, &str, f64)> = candidates

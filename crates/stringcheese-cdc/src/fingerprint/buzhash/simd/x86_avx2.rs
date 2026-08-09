@@ -51,14 +51,14 @@
 //! partially-emulated SIMD gather+rotate would.
 //!
 //! The SIMD kernel then reads the 64-entry buffer as sixteen unaligned
-//! 4×`u64` loads (`_mm256_loadu_si256`), applies the per-lane
-//! `[3, 2, 1, 0]` pre-rotate via `_mm256_sllv_epi64` + `_mm256_srlv_epi64`
-//! + `_mm256_or_si256`, advances the accumulator with a 4-bit rotate
-//! (`_mm256_slli_epi64::<4>` + `_mm256_srli_epi64::<60>` + `_mm256_or_si256`),
-//! and folds with `_mm256_xor_si256`. Horizontal XOR of the four
-//! lanes at the end reduces to a single `u64` digest with
-//! `_mm256_extracti128_si256` plus one `_mm_xor_si128` and two
-//! `_mm_extract_epi64` extractions.
+//! 4×`u64` loads via `_mm256_loadu_si256`, applies the per-lane
+//! `[3, 2, 1, 0]` pre-rotate via `_mm256_sllv_epi64`,
+//! `_mm256_srlv_epi64`, and `_mm256_or_si256`, advances the accumulator
+//! with a 4-bit rotate via `_mm256_slli_epi64::<4>`,
+//! `_mm256_srli_epi64::<60>`, and `_mm256_or_si256`, and folds with
+//! `_mm256_xor_si256`. Horizontal XOR of the four lanes at the end
+//! reduces to a single `u64` digest with `_mm256_extracti128_si256`
+//! plus one `_mm_xor_si128` and two `_mm_extract_epi64` extractions.
 //!
 //! Using shift-count `0` on the identity lanes is deliberate: the
 //! per-lane right-shift vector is `[61, 62, 63, 0]` (lane 3 rotates by
@@ -213,6 +213,14 @@ unsafe fn block_hash_avx2(contribs: &[u64; BLOCK_LEN]) -> u64 {
         let sr = _mm256_setr_epi64x(61, 62, 63, 0);
 
         let mut acc = _mm256_setzero_si256();
+        // Every load below uses `_mm256_loadu_si256`, whose contract
+        // accepts any alignment — the `*const __m256i` type is a
+        // vocabulary cast, not a promise of 32-byte alignment. Clippy's
+        // `cast_ptr_alignment` sees only the type and flags conservatively.
+        #[allow(
+            clippy::cast_ptr_alignment,
+            reason = "loadu accepts any alignment; the __m256i cast is a vocabulary cast for the intrinsic signature"
+        )]
         let base = contribs.as_ptr().cast::<__m256i>();
 
         // 16 iterations × 4 contribs = 64. Manual unrolling yields no

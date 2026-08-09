@@ -8,8 +8,8 @@
 //!
 //! # ISA constraint — no carry-less multiply on wasm SIMD128
 //!
-//! The [x86_sse2][super::x86_sse2], [x86_avx2][super::x86_avx2], and
-//! [aarch64_neon][super::aarch64_neon] backends ship a real
+//! The `x86_sse2`, `x86_avx2`, and `aarch64_neon` sibling backends
+//! ship a real
 //! vectorized Rabin kernel built on hardware carry-less multiply
 //! (`pclmulqdq`, `vpclmulqdq`, `PMULL` respectively). wasm SIMD128
 //! does **not** surface any `GF(2)` carry-less multiply primitive on

@@ -424,10 +424,7 @@ fn step_4(w: &mut String) {
     if w.ends_with("ion") {
         let stem_len = w.len() - 3;
         let stem = &w.as_bytes()[..stem_len];
-        if measure(stem) > 1
-            && let Some(&last) = stem.last()
-            && (last == b's' || last == b't')
-        {
+        if measure(stem) > 1 && matches!(stem.last(), Some(b's' | b't')) {
             w.truncate(stem_len);
         }
     }

@@ -38,6 +38,17 @@
 //! backend — they are `const`-evaluated so no runtime pow-mod runs on
 //! the hot path.
 
+// The block-form helpers below (BLOCK_LEN, scalar_from_zero, PK,
+// PK_BLOCK, COEFF_HI, COEFF_LO, and the const-fn arithmetic they use)
+// are consumed only by the arch-specific SIMD backends. On targets
+// where no SIMD backend is compiled (wasm32 without simd128), they
+// become dead code. Silencing the lint at module scope avoids
+// scattering the same `#[cfg]` guard across eight items.
+#![allow(
+    dead_code,
+    reason = "SIMD block-form helpers used only when an arch backend is compiled"
+)]
+
 use crate::fingerprint::polynomial::{BASE, PRIME};
 
 /// Block size for the block-form kernel — 16 bytes per block. Picked

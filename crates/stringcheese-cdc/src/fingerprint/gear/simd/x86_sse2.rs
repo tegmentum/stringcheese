@@ -7,7 +7,7 @@
 //!
 //! # Kernel shape — scalar under `target_feature(sse2)`
 //!
-//! The [AVX2][super::x86_avx2] and [NEON][super::aarch64_neon] backends
+//! The [AVX2][super::x86_avx2] and `aarch64_neon` sibling backends
 //! ship a real vectorized kernel built on the Gear block reformulation
 //! — see their module docs for the derivation. This SSE2 backend
 //! deliberately does **not**: SSE2 has no `_mm_i32gather_epi64` (that
