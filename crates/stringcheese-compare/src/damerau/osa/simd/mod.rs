@@ -33,9 +33,18 @@
 //! * `scalar` — portable SIMD-shaped scalar OSA (three-row rolling DP,
 //!   self-contained heap buffer). Always compiled; the reference against
 //!   which every arch-specific backend is differentially tested.
-//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`.
-//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`.
-//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`.
+//! * `x86_avx2` — AVX2-gated Hyyrö-OSA wide-block, compiled only on
+//!   `x86_64`. Handles patterns of length `128 < m ≤ 256` with a
+//!   256-bit register (four `u64` lanes), delegates `64 < m ≤ 128` to
+//!   the SSE2 sibling (SSE2 is a strict subset of AVX2, so a 128-bit
+//!   state is a better fit than a half-idle 256-bit one), and
+//!   shorter/longer patterns to the scalar path.
+//! * `x86_sse2` — SSE2-gated Hyyrö-OSA wide-block, compiled only on
+//!   `x86_64`. Handles `64 < m ≤ 128` with a 128-bit register (two
+//!   `u64` lanes); shorter/longer patterns delegate to the scalar path.
+//! * `aarch64_neon` — NEON-gated Hyyrö-OSA wide-block for
+//!   `64 < m ≤ 128`, same shape as SSE2 with NEON's `vextq_u64`-based
+//!   cross-lane carry. Compiled only on `aarch64`.
 //! * `wasm_simd128` — wasm SIMD128-gated Hyyrö-OSA wide-block for
 //!   `64 < m ≤ 128`. Two `u64` lanes per `v128`, same shape as
 //!   SSE2/NEON but with lane-extract/insert used for the cross-lane
@@ -45,13 +54,17 @@
 //!   enabled — wasm-SIMD feature detection is a compile-time gate,
 //!   not a runtime one.
 //!
-//! The three arch-specific backends currently share the scalar
-//! implementation under a `#[target_feature(enable = "...")]` context;
-//! this puts the runtime-dispatch scaffolding in place and lets the
-//! compiler use the enabled ISA for its own auto-vectorization of the
-//! rolling-rows inner loop. A true bit-parallel OSA in the shape of
-//! Hyyrö (2003) is documented as follow-up work — landing it does not
-//! require any API change.
+//! Every arch-specific backend implements Hyyrö's (2003) bit-parallel
+//! OSA recurrence — Myers's word-parallel Levenshtein extended with an
+//! extra bit-vector `Pm_old` (the previous column's `Peq[text[j-1]]`)
+//! and a diagonal-zero vector `D0` — packed into the arch's widest
+//! integer register. See Hyyrö, H. (2003), "Bit-parallel approximate
+//! string matching algorithms with transposition" (SPIRE 2003,
+//! LNCS 2857, 95-107). The scalar backend deliberately keeps the
+//! rolling-rows DP form as the differential-test anchor; the
+//! arch-specific backends are checked bit-for-bit against it in the
+//! module-local tests and in the property tests at
+//! `crates/stringcheese-compare/src/damerau/simd_property_tests.rs`.
 //!
 //! # `unsafe` policy
 //!

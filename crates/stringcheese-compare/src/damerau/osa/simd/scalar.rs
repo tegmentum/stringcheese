@@ -32,22 +32,21 @@
 //! every iteration — the same tiny arithmetic the sibling
 //! [`crate::damerau::osa::rolling_rows`] uses.
 //!
-//! # SIMD lifting is deferred
+//! # Why the scalar reference stays rolling-rows
 //!
-//! A true bit-parallel OSA in the shape of Hyyrö (2003) —
-//! Myers's word-parallel Levenshtein extended with an extra bit-vector
-//! that carries the transposition-match state between adjacent columns —
-//! is documented follow-up work. The recurrence is more delicate than
-//! the classical Myers pattern (the transposition bit depends on the
+//! The three arch-specific backends implement Hyyrö's (2003)
+//! bit-parallel OSA — Myers's word-parallel Levenshtein extended with an
+//! extra bit-vector `Pm_old` that carries the transposition-match state
+//! between adjacent columns. The recurrence is more delicate than the
+//! classical Myers pattern (the transposition bit depends on the
 //! *previous column's* equality mask, so the propagation needs a
-//! per-column bookkeeping word), and getting it bit-for-bit right on
-//! wide-block inputs demands its own dedicated commit alongside a
-//! full differential test sweep. This module's current shape puts the
-//! dispatch scaffolding in place and keeps correctness anchored on the
-//! rolling-rows form; the arch-specific backends can be upgraded to
-//! Hyyrö-style bit-parallel OSA behind the same public API.
+//! per-column bookkeeping word). Keeping this scalar backend on the
+//! rolling-rows form deliberately isolates the differential-test anchor
+//! from the bit-parallel encoding under test — a bug in the shared
+//! Hyyrö encoding cannot silently agree with itself across every
+//! backend when the reference is a different algorithm altogether.
 //!
-//! # Reference for the deferred bit-parallel form
+//! # Reference for the bit-parallel form used by the arch backends
 //!
 //! - Hyyrö, H. (2003). "Bit-parallel approximate string matching
 //!   algorithms with transposition." *SPIRE 2003*, LNCS 2857, 95-107.
