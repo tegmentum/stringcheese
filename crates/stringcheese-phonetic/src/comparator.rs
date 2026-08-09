@@ -155,20 +155,20 @@ fn cross_product_match(l: &DoubleMetaphoneKey, r: &DoubleMetaphoneKey) -> bool {
     if l.primary == r.primary {
         return true;
     }
-    if let Some(alt) = &r.alternate {
-        if &l.primary == alt {
-            return true;
-        }
+    if let Some(alt) = &r.alternate
+        && &l.primary == alt
+    {
+        return true;
     }
-    if let Some(alt) = &l.alternate {
-        if alt == &r.primary {
-            return true;
-        }
+    if let Some(alt) = &l.alternate
+        && alt == &r.primary
+    {
+        return true;
     }
-    if let (Some(la), Some(ra)) = (&l.alternate, &r.alternate) {
-        if la == ra {
-            return true;
-        }
+    if let (Some(la), Some(ra)) = (&l.alternate, &r.alternate)
+        && la == ra
+    {
+        return true;
     }
     false
 }

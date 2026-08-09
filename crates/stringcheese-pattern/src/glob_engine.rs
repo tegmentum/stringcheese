@@ -141,10 +141,10 @@ fn strip_anchors(body: &str) -> String {
     // trailing `$`. Skip both.
     let bytes = body.as_bytes();
     let mut start = 0usize;
-    if body.starts_with("(?") {
-        if let Some(end) = body.find(')') {
-            start = end + 1;
-        }
+    if body.starts_with("(?")
+        && let Some(end) = body.find(')')
+    {
+        start = end + 1;
     }
     let anchor_start = if bytes.get(start) == Some(&b'^') {
         start + 1

@@ -102,13 +102,13 @@ impl Slugger {
         while out.ends_with(self.separator) {
             out.pop();
         }
-        if let Some(max) = self.max_len {
-            if out.len() > max {
-                out.truncate(max);
-                // Re-trim in case truncation lands on a separator.
-                while out.ends_with(self.separator) {
-                    out.pop();
-                }
+        if let Some(max) = self.max_len
+            && out.len() > max
+        {
+            out.truncate(max);
+            // Re-trim in case truncation lands on a separator.
+            while out.ends_with(self.separator) {
+                out.pop();
             }
         }
         out

@@ -781,15 +781,15 @@ fn k_nearest_at<T, M>(
         (node.outside.as_ref(), node.inside.as_ref())
     };
 
-    if let Some(child) = first {
-        if child_may_contain_better(heap, k, inside_first, d, t) {
-            k_nearest_at(metric, child, query, k, heap);
-        }
+    if let Some(child) = first
+        && child_may_contain_better(heap, k, inside_first, d, t)
+    {
+        k_nearest_at(metric, child, query, k, heap);
     }
-    if let Some(child) = second {
-        if child_may_contain_better(heap, k, !inside_first, d, t) {
-            k_nearest_at(metric, child, query, k, heap);
-        }
+    if let Some(child) = second
+        && child_may_contain_better(heap, k, !inside_first, d, t)
+    {
+        k_nearest_at(metric, child, query, k, heap);
     }
 }
 

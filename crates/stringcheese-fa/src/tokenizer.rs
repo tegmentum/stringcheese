@@ -151,11 +151,11 @@ impl<'a> Iterator for PersianTokens<'a> {
         let mut end = self.offset;
         while end > start {
             let slice = &self.text[start..end];
-            if let Some(c) = slice.chars().next_back() {
-                if c == '\u{200C}' {
-                    end -= c.len_utf8();
-                    continue;
-                }
+            if let Some(c) = slice.chars().next_back()
+                && c == '\u{200C}'
+            {
+                end -= c.len_utf8();
+                continue;
             }
             break;
         }
@@ -164,11 +164,11 @@ impl<'a> Iterator for PersianTokens<'a> {
         let mut real_start = start;
         while real_start < end {
             let slice = &self.text[real_start..end];
-            if let Some(c) = slice.chars().next() {
-                if c == '\u{200C}' {
-                    real_start += c.len_utf8();
-                    continue;
-                }
+            if let Some(c) = slice.chars().next()
+                && c == '\u{200C}'
+            {
+                real_start += c.len_utf8();
+                continue;
             }
             break;
         }

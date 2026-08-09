@@ -128,22 +128,21 @@ impl Sanitizer {
                 out.push(self.replacement);
             }
         }
-        if self.fix_leading_digit {
-            if let Some(first) = out.chars().next() {
-                if first.is_ascii_digit() {
-                    out.insert(0, self.replacement);
-                }
-            }
+        if self.fix_leading_digit
+            && let Some(first) = out.chars().next()
+            && first.is_ascii_digit()
+        {
+            out.insert(0, self.replacement);
         }
-        if let Some(max) = self.max_len {
-            if out.len() > max {
-                // Trim back to a character boundary <= max.
-                let mut end = max;
-                while end > 0 && !out.is_char_boundary(end) {
-                    end -= 1;
-                }
-                out.truncate(end);
+        if let Some(max) = self.max_len
+            && out.len() > max
+        {
+            // Trim back to a character boundary <= max.
+            let mut end = max;
+            while end > 0 && !out.is_char_boundary(end) {
+                end -= 1;
             }
+            out.truncate(end);
         }
         out
     }

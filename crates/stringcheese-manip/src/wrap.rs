@@ -576,10 +576,10 @@ fn split_paragraphs(text: &str) -> Vec<String> {
         // \n each count as one.
         if ch == '\r' {
             // Peek next; if \n, consume it too.
-            if let Some(&(_, next)) = iter.peek() {
-                if next == '\n' {
-                    iter.next();
-                }
+            if let Some(&(_, next)) = iter.peek()
+                && next == '\n'
+            {
+                iter.next();
             }
             newlines_since_content += 1;
             if newlines_since_content >= 2 && !current.is_empty() {

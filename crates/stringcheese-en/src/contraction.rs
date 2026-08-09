@@ -308,10 +308,10 @@ impl<'a> Iterator for RawWords<'a> {
             }
             if is_apostrophe(ch) {
                 let after = &rest[ch_len..];
-                if let Some(next_ch) = after.chars().next() {
-                    if next_ch.is_alphanumeric() {
-                        break;
-                    }
+                if let Some(next_ch) = after.chars().next()
+                    && next_ch.is_alphanumeric()
+                {
+                    break;
                 }
             }
             self.offset += ch_len;
@@ -383,67 +383,67 @@ fn split_word(cfg: ContractionTokenizer, word: &str) -> (&str, Option<&str>) {
 
     // -n't (must be checked before -'d and -'t patterns that overlap
     // with typographic-apostrophe encodings).
-    if let Some(base_end) = match_suffix(word, &['n', '\'', 't']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            let suffix = if cfg.normalize_nt { "not" } else { "n't" };
-            return (base, Some(suffix));
-        }
+    if let Some(base_end) = match_suffix(word, &['n', '\'', 't'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        let suffix = if cfg.normalize_nt { "not" } else { "n't" };
+        return (base, Some(suffix));
     }
 
     // -'ll
-    if let Some(base_end) = match_suffix(word, &['\'', 'l', 'l']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            let suffix = if cfg.normalize_ll { "will" } else { "'ll" };
-            return (base, Some(suffix));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 'l', 'l'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        let suffix = if cfg.normalize_ll { "will" } else { "'ll" };
+        return (base, Some(suffix));
     }
 
     // -'ve
-    if let Some(base_end) = match_suffix(word, &['\'', 'v', 'e']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            let suffix = if cfg.normalize_ve { "have" } else { "'ve" };
-            return (base, Some(suffix));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 'v', 'e'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        let suffix = if cfg.normalize_ve { "have" } else { "'ve" };
+        return (base, Some(suffix));
     }
 
     // -'re
-    if let Some(base_end) = match_suffix(word, &['\'', 'r', 'e']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            let suffix = if cfg.normalize_re { "are" } else { "'re" };
-            return (base, Some(suffix));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 'r', 'e'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        let suffix = if cfg.normalize_re { "are" } else { "'re" };
+        return (base, Some(suffix));
     }
 
     // -'d (2-char pattern — check after 3-char patterns above so it
     // doesn't preempt them; harmless in practice because the 3-char
     // patterns start with different terminal letters, but stable order
     // makes the algorithm easier to reason about).
-    if let Some(base_end) = match_suffix(word, &['\'', 'd']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            let suffix = if cfg.normalize_d { "would" } else { "'d" };
-            return (base, Some(suffix));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 'd'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        let suffix = if cfg.normalize_d { "would" } else { "'d" };
+        return (base, Some(suffix));
     }
 
     // -'s (ambiguous — no normalization flag; treated as-is)
-    if let Some(base_end) = match_suffix(word, &['\'', 's']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            return (base, Some("'s"));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 's'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        return (base, Some("'s"));
     }
 
     // -'m (no normalization flag; treated as-is)
-    if let Some(base_end) = match_suffix(word, &['\'', 'm']) {
-        if base_end > 0 {
-            let base = &word[..base_end];
-            return (base, Some("'m"));
-        }
+    if let Some(base_end) = match_suffix(word, &['\'', 'm'])
+        && base_end > 0
+    {
+        let base = &word[..base_end];
+        return (base, Some("'m"));
     }
 
     (word, None)

@@ -213,20 +213,20 @@ proptest! {
     /// form).
     #[test]
     fn buckwalter_forward_and_reverse_agree_on_persian_scalars(c in any::<char>()) {
-        if let Some(ascii) = persian_to_buckwalter(c) {
-            if let Some(back) = buckwalter_to_persian(ascii) {
-                // Re-encode the decoded scalar and compare.
-                let re = persian_to_buckwalter(back);
-                prop_assert_eq!(
-                    re,
-                    Some(ascii),
-                    "{:?} → {:?} → {:?} → {:?} did not round-trip",
-                    c,
-                    ascii,
-                    back,
-                    re
-                );
-            }
+        if let Some(ascii) = persian_to_buckwalter(c)
+            && let Some(back) = buckwalter_to_persian(ascii)
+        {
+            // Re-encode the decoded scalar and compare.
+            let re = persian_to_buckwalter(back);
+            prop_assert_eq!(
+                re,
+                Some(ascii),
+                "{:?} → {:?} → {:?} → {:?} did not round-trip",
+                c,
+                ascii,
+                back,
+                re
+            );
         }
     }
 

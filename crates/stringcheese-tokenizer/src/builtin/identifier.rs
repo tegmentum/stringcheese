@@ -240,12 +240,12 @@ fn split_camel(input: &str) -> Vec<(usize, usize)> {
         // Acronym rule: upper → upper, where the *next* char is lower.
         // Prefer inserting the boundary at `curr` (so the previous segment
         // ends before curr).
-        if is_upper(prev) && is_upper(curr) {
-            if let Some(&(_, next)) = indices.get(i + 1) {
-                if is_lower(next) {
-                    boundary = true;
-                }
-            }
+        if is_upper(prev)
+            && is_upper(curr)
+            && let Some(&(_, next)) = indices.get(i + 1)
+            && is_lower(next)
+        {
+            boundary = true;
         }
 
         if boundary {
