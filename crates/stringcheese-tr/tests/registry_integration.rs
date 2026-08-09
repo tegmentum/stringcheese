@@ -11,8 +11,6 @@
 //! lookup is absent.
 #![cfg(not(target_family = "wasm"))]
 
-#![cfg(not(target_family = "wasm"))]
-
 use stringcheese_lang::registry;
 
 // Force the `stringcheese_tr` rlib into the test binary's link — a
