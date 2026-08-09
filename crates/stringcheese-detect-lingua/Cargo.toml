@@ -1,0 +1,73 @@
+[package]
+name = "stringcheese-detect-lingua"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tier-2 high-accuracy language detection for the StringCheese detection stack. Wraps `lingua-rs` behind the shared tegmentum:lang-detect@0.2.0 WIT contract, with per-language Cargo features so each build embeds only the language models the caller asked for. Intended to be built once per language and shipped as an opt-in WASM component hosts fetch when whatlang's confidence (tier 1) is below their threshold."
+categories = ["text-processing", "internationalization", "wasm"]
+keywords = ["language-detection", "lingua", "wasm", "wit"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers, `cdylib` for the WIT component
+# build. One cdylib per feature-selected language pair.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# One feature per language. Each activates lingua's matching
+# `<lang>-language-model` crate (4–6 MB of FST-embedded ngrams per
+# language) and adds that language to the detector's candidate set.
+#
+# Lingua's `LanguageDetectorBuilder` requires **at least two
+# languages** to distinguish between — a build with a single
+# feature enabled will fail lingua's runtime assertion. In practice
+# a per-language tier-2 build enables `<lang>` + `english`;
+# English serves as the universal comparator (every "is this
+# really <lang>?" verification runs against English as the fallback
+# candidate). Callers who need pure single-language confidence
+# scores use `compute_language_confidence` directly, which
+# lingua exposes even for the anchor pair.
+#
+# Lingua's internal exhaustive matches over `Language` require
+# at least one language variant to compile, so an empty-features
+# build is a lingua-side error, not a design choice we can make.
+# The default here enables `en` + `de` — the minimum lingua accepts
+# and the pair every tier-2 "non-English pack" would ship anyway
+# (see the "English as anchor" note in src/lib.rs). Browser
+# consumers who want lean single-language builds pass
+# `--no-default-features --features <lang>,en` explicitly.
+default = ["en", "de"]
+
+en = ["lingua/english"]
+de = ["lingua/german"]
+fr = ["lingua/french"]
+es = ["lingua/spanish"]
+it = ["lingua/italian"]
+pt = ["lingua/portuguese"]
+ja = ["lingua/japanese"]
+ru = ["lingua/russian"]
+
+[dependencies]
+# lingua is the higher-accuracy language detector — larger per-
+# language footprint than whatlang (~4–6 MB each vs whatlang's
+# 3–5 KB per language) in exchange for meaningfully better
+# accuracy on short inputs and closely-related language pairs.
+# Apache-2.0 licensed. `default-features = false` disables every
+# language model; per-`<lang>` features above pull in exactly the
+# ones the crate asked for.
+lingua = { version = "1.8", default-features = false }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "tegmentum:stringcheese-detect-lingua"
+
+[package.metadata.component.target]
+path = "../../wit"
+world = "lang-detect"
+
+[lints]
+workspace = true

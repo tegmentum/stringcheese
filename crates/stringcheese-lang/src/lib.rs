@@ -30,9 +30,12 @@
 //!
 //! # Non-goals
 //!
-//! - No language detection. Deciding *which* [`Language`] to feed a
-//!   piece of text is a caller responsibility; language detection is a
-//!   downstream library.
+//! - No **silent** language detection. Detection MUST be explicit —
+//!   see [`detect::LanguageDetector`] for the pluggable trait; ordinary
+//!   string operations never dispatch through a detector on their own.
+//!   The trait exists so callers can plug in a backend (whatlang, CLD3,
+//!   fastText, a WebAssembly component) without the rest of the toolkit
+//!   growing a dependency on any one implementation.
 //! - No morphological analysis or POS tagging. The trait's stemming
 //!   contract is intentionally weak: return an equivalence-class
 //!   representative for the word, nothing more.
@@ -91,6 +94,10 @@
 //! - [`language`] — the [`Language`] trait itself, plus the
 //!   [`LanguageProvider`] discovery trait for callers who want to look
 //!   a language up by BCP-47 code at runtime.
+//! - [`detect`] — the [`LanguageDetector`] plugin trait and its
+//!   [`LanguagePrediction`] return type. Ships no implementation;
+//!   downstream adapter crates plug in whatlang / CLD3 / fastText /
+//!   a WebAssembly component.
 //! - [`registry`] — the static distributed-slice registry
 //!   (`language(code)`, `languages()`) every pack opts into via
 //!   [`register_language!`]. Populated at link time; no runtime init.
@@ -120,7 +127,10 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod capabilities;
 pub mod collator;
+#[cfg(feature = "alloc")]
+pub mod detect;
 #[cfg(feature = "alloc")]
 pub mod language;
 #[cfg(feature = "alloc")]
@@ -147,7 +157,10 @@ pub mod tokenizer;
 #[cfg(all(test, feature = "std", not(target_family = "wasm")))]
 mod properties;
 
+pub use capabilities::LanguageCapabilities;
 pub use collator::Collator;
+#[cfg(feature = "alloc")]
+pub use detect::{LanguageDetector, LanguagePrediction};
 #[cfg(feature = "alloc")]
 pub use language::{Language, LanguageProvider};
 #[cfg(feature = "alloc")]

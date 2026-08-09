@@ -1,0 +1,41 @@
+[package]
+name = "stringcheese-detect-script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tier-0 script classifier for the StringCheese language-detection stack. Scans text for Unicode-block membership and returns the dominant ISO 15924 script code. Zero-dependency; small enough (~5KB WASM after strip) to be always resident in a browser session as the bootstrap step before per-script language detection loads."
+categories = ["text-processing", "internationalization", "wasm"]
+keywords = ["language-detection", "script", "iso15924", "unicode", "wasm"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers linking directly, `cdylib` for
+# `wasm-tools component new` to consume when producing the WIT
+# component that hosts load at runtime.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+# `wit-bindgen-rt` is only needed for the WIT Guest impl compiled
+# into the WASM component. Native `rlib` consumers never see it —
+# the target-gate keeps it off the dependency tree on host builds
+# (including this crate's own `cargo test`), so the tier-0 story
+# stays "no extra runtime cost" outside the component build.
+[target.'cfg(target_family = "wasm")'.dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+# `cargo-component` reads this stanza to locate the WIT world. The
+# workspace-root `wit/` directory is the canonical schema shared with
+# `stringcheese-detect-whatlang` (tier 1) and every downstream
+# component that implements the same detection contract.
+[package.metadata.component]
+package = "tegmentum:stringcheese-detect-script"
+
+[package.metadata.component.target]
+path = "../../wit"
+world = "lang-detect"
+
+[lints]
+workspace = true

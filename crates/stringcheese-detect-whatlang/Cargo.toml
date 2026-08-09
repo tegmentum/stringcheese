@@ -1,0 +1,60 @@
+[package]
+name = "stringcheese-detect-whatlang"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Tier-1 language detection for the StringCheese detection stack. Wraps `whatlang` behind the shared tegmentum:lang-detect@0.2.0 WIT contract, with per-script Cargo features so each build targets one Unicode script (Latin, Cyrillic, Arabic, ...). Intended to be built once per script and shipped as a lazy-loaded WASM component the host fetches after `stringcheese-detect-script` (tier 0) classifies the input."
+categories = ["text-processing", "internationalization", "wasm"]
+keywords = ["language-detection", "whatlang", "wasm", "wit"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers, `cdylib` for the WIT component
+# build. One cdylib per feature-selected script.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# One feature per Unicode script. Each feature turns on the
+# per-script trigram tables under src/vendored/trigrams/profiles/
+# — disabled scripts are not compiled in at all, so the resulting
+# binary contains only the script(s) the caller asked for. See
+# the release-size measurements in src/lib.rs's module docs.
+default = ["latn"]
+latn = []
+cyrl = []
+arab = []
+hebr = []
+grek = []
+deva = []
+hans = []
+hant = []
+hang = []
+jpan = []
+
+[dependencies]
+# whatlang's source is vendored under `src/vendored/` — see
+# `LICENSE-WHATLANG` at the crate root for the upstream MIT notice
+# and the module-level docs in `src/vendored/mod.rs` for the changes
+# (profile split by script, feature gates on per-script alphabet
+# tables). Runtime dep on whatlang is intentionally NOT taken so the
+# per-script feature gates actually drop unused trigram tables at
+# link time.
+#
+# whatlang's own runtime deps are copied here.
+hashbrown = { version = "0.14", default-features = false, features = ["ahash"] }
+once_cell = "1"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "tegmentum:stringcheese-detect-whatlang"
+
+[package.metadata.component.target]
+path = "../../wit"
+world = "lang-detect"
+
+[lints]
+workspace = true

@@ -1,0 +1,48 @@
+[package]
+name = "stringcheese-detect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Composed language-detection dispatcher for the StringCheese toolkit. Walks tier 0 (script-detect) → tier 1 (whatlang, cheap trigram) → tier 2 (lingua, high-confidence FST), escalating only when the previous tier's confidence falls below the caller's threshold. Rust host analog of the browser lazy-loading dispatcher documented in docs/design/language-architecture.md."
+categories = ["text-processing", "internationalization"]
+keywords = ["language-detection", "dispatcher", "whatlang", "lingua", "tier"]
+
+[features]
+# Tier 0 is always in. Tier 1 (whatlang) and tier 2 (lingua) opt in
+# via features that mirror the per-crate feature surfaces so a Rust
+# host says exactly what shapes it wants without pulling the union.
+default = ["tier1-latn"]
+
+# --- Tier 1: whatlang per-script -----------------------------------
+tier1 = ["dep:stringcheese-detect-whatlang"]
+tier1-latn = ["tier1", "stringcheese-detect-whatlang/latn"]
+tier1-cyrl = ["tier1", "stringcheese-detect-whatlang/cyrl"]
+tier1-arab = ["tier1", "stringcheese-detect-whatlang/arab"]
+tier1-hebr = ["tier1", "stringcheese-detect-whatlang/hebr"]
+tier1-deva = ["tier1", "stringcheese-detect-whatlang/deva"]
+
+# --- Tier 2: lingua per-language -----------------------------------
+tier2 = ["dep:stringcheese-detect-lingua"]
+tier2-en = ["tier2", "stringcheese-detect-lingua/en"]
+tier2-de = ["tier2", "stringcheese-detect-lingua/de"]
+tier2-fr = ["tier2", "stringcheese-detect-lingua/fr"]
+tier2-es = ["tier2", "stringcheese-detect-lingua/es"]
+tier2-it = ["tier2", "stringcheese-detect-lingua/it"]
+tier2-pt = ["tier2", "stringcheese-detect-lingua/pt"]
+tier2-ja = ["tier2", "stringcheese-detect-lingua/ja"]
+tier2-ru = ["tier2", "stringcheese-detect-lingua/ru"]
+
+[dependencies]
+stringcheese-detect-script = { workspace = true }
+
+# Tier 1 / 2 are optional per the features above. `default-features
+# = false` on both so this crate's feature flags fully control what
+# scripts / languages the tier crates compile in.
+stringcheese-detect-whatlang = { workspace = true, optional = true, default-features = false }
+stringcheese-detect-lingua = { workspace = true, optional = true, default-features = false }
+
+[lints]
+workspace = true

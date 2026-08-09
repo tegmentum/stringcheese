@@ -1,0 +1,106 @@
+// Canonical language-detection WIT for StringCheese.
+//
+// Every StringCheese detection component — script-detect (tier 0),
+// whatlang-shard-<script> (tier 1), lingua-<lang> (tier 2), and any
+// third-party backend — implements this world. Backends advertise
+// which of the extended shapes they support via `capabilities`;
+// callers dispatch uniformly.
+//
+// Versioned to survive backend churn. 0.2 adds capability-flagged
+// ranked / constrained / segmented detection alongside 0.1's baseline
+// single-best-guess `detect`.
+
+package tegmentum:lang-detect@0.2.0;
+
+interface detector {
+    /// Static description of what this backend can do. Cheap; safe to
+    /// call once at load time and cache.
+    record capabilities {
+        /// Backend identifier — "whatlang" | "lingua" | "script" | ...
+        backend: string,
+        /// Semver of the backend's model / algorithm corpus.
+        version: string,
+        /// ISO 639-3 codes this backend can distinguish. Empty means
+        /// "any language in the backend's model" (whatlang); non-empty
+        /// means the exact enabled set (lingua per-language builds).
+        supports: list<string>,
+        /// True when `detect-ranked` returns more than a single-element
+        /// list. Whatlang supports this; script-detect does not.
+        can-rank: bool,
+        /// True when `detect-from` filters against the caller-supplied
+        /// allowlist. Whatlang and lingua support this; script-detect
+        /// does not.
+        can-constrain: bool,
+        /// True when `detect-mixed` returns real spans instead of
+        /// `none`. Only lingua supports this today.
+        can-segment: bool,
+    }
+
+    /// Baseline single-best-guess detection result.
+    record detection {
+        /// ISO 639-3 language code, e.g. "eng". Empty when the backend
+        /// only classifies script (script-detect returns `""` here).
+        lang: string,
+        /// English name of the language, e.g. "English". May be empty
+        /// when `lang` is empty.
+        lang-name: string,
+        /// ISO 15924 script code, e.g. "Latn", "Cyrl", "Jpan".
+        script: string,
+        /// Detection confidence in [0.0, 1.0]. Exact semantics are
+        /// backend-specific; callers threshold against their own
+        /// tolerance rather than treating it as a probability.
+        confidence: f64,
+        /// The backend's own opinion about whether the prediction is
+        /// trustworthy. Backends without a reliability signal set
+        /// this to `false` when they can't vouch for the result.
+        reliable: bool,
+    }
+
+    /// One entry of a ranked-candidates distribution.
+    record ranked-detection {
+        lang: string,
+        confidence: f64,
+    }
+
+    /// One segment of mixed-language text.
+    record span-detection {
+        /// Byte offset into the input text.
+        start: u32,
+        /// Byte offset (exclusive) into the input text.
+        end: u32,
+        lang: string,
+        confidence: f64,
+    }
+
+    /// Backend metadata. Callers cache this at load time.
+    // WIT keeps type names and function names in the same namespace,
+    // so the accessor can't share the `capabilities` name with the
+    // record type. `get-capabilities` is the WIT convention for
+    // "no-arg getter that returns a record of the same-ish name".
+    get-capabilities: func() -> capabilities;
+
+    /// Single best guess. Every backend implements this. Returns
+    /// `none` when the input carries no reliable signal (too short,
+    /// digit-only, mixed-script the backend refuses to classify).
+    detect: func(text: string) -> option<detection>;
+
+    /// Ranked distribution across the backend's enabled languages.
+    /// Backends without `can-rank` return a one-element list carrying
+    /// the same value `detect` would return.
+    detect-ranked: func(text: string) -> list<ranked-detection>;
+
+    /// Constrained detection — consider only ISO 639-3 codes in
+    /// `langs`. Backends without `can-constrain` ignore the filter
+    /// and return their unconstrained best guess; callers should
+    /// check `capabilities.can-constrain` before relying on the
+    /// filter.
+    detect-from: func(text: string, langs: list<string>) -> option<detection>;
+
+    /// Mixed-language segmentation. Backends without `can-segment`
+    /// return `none`.
+    detect-mixed: func(text: string) -> option<list<span-detection>>;
+}
+
+world lang-detect {
+    export detector;
+}
