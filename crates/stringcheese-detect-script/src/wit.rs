@@ -5,8 +5,16 @@
 //! as a WASM component that hosts consume through the generated
 //! bindings.
 //!
-//! Only compiled on wasm targets — native builds skip the bindings
-//! module entirely so `cargo test` doesn't drag in `wit-bindgen-rt`.
+//! Only compiled on wasm targets with the `wit-component` feature.
+//! Native builds skip the bindings module entirely so `cargo test`
+//! doesn't drag in `wit-bindgen-rt`, and wasm builds without the
+//! feature (e.g. the `stringcheese-detect` umbrella linking this
+//! crate as an `rlib` alongside the other detect backends) also
+//! skip it — otherwise three backends `export!`-ing the same
+//! `tegmentum:lang-detect` interface into one binary would collide
+//! at link time with duplicate exported symbols. The feature-gated
+//! build is the standalone-component path (`cargo component build
+//! --features wit-component`).
 
 use crate::bindings::exports::tegmentum::lang_detect::detector::{
     Capabilities, Detection, Guest, RankedDetection, SpanDetection,

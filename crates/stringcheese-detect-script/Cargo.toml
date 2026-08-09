@@ -16,15 +16,33 @@ keywords = ["language-detection", "script", "iso15924", "unicode", "wasm"]
 # component that hosts load at runtime.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# `wit-component` opts into the WIT `Guest` implementation and the
+# `export!` invocation that turns this crate into a standalone
+# `tegmentum:lang-detect@0.2.0` WASM component. Off by default so
+# the crate can be linked as a plain `rlib` sibling of other detect
+# backends (e.g. by the `stringcheese-detect` umbrella) without
+# every backend emitting the same exported symbols and tripping the
+# linker with duplicate-export errors. Enable this only for the
+# standalone-component build produced by `cargo component build`.
+# Meaningful only on wasm targets — the `wit-bindgen-rt` dep is
+# further scoped to `cfg(target_family = "wasm")` below, and the
+# `mod wit;` gate keys off `all(target_family = "wasm", feature)`.
+wit-component = ["dep:wit-bindgen-rt"]
+
 [dependencies]
 
 # `wit-bindgen-rt` is only needed for the WIT Guest impl compiled
 # into the WASM component. Native `rlib` consumers never see it —
 # the target-gate keeps it off the dependency tree on host builds
 # (including this crate's own `cargo test`), so the tier-0 story
-# stays "no extra runtime cost" outside the component build.
+# stays "no extra runtime cost" outside the component build. The
+# `wit-component` feature further scopes it so even a wasm build
+# without the feature — e.g. the crate linked as an `rlib` into
+# the `stringcheese-detect` umbrella's wasm test binary — skips
+# the dep and emits no WIT export symbols.
 [target.'cfg(target_family = "wasm")'.dependencies]
-wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
 
 # `cargo-component` reads this stanza to locate the WIT world. The
 # workspace-root `wit/` directory is the canonical schema shared with

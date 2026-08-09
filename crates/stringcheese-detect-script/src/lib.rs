@@ -80,11 +80,16 @@
 // via a small feature-gate flip once we ship one.
 #![deny(unsafe_code)]
 
-// WIT bindings + Guest wiring only compile on WASM targets — native
-// builds skip both so `cargo test`, downstream `rlib` consumers, and
-// the ~5 KB always-resident story stay unaffected by the component-
-// build machinery.
-#[cfg(target_family = "wasm")]
+// WIT bindings + Guest wiring only compile on WASM targets with the
+// `wit-component` feature — native builds and non-component wasm
+// consumers (e.g. the `stringcheese-detect` umbrella linking this
+// crate as an `rlib` sibling of the other detect backends) skip
+// both, so `cargo test`, plain `rlib` consumers, and the ~5 KB
+// always-resident story stay unaffected by the component-build
+// machinery. The feature-gate matters on wasm: without it, three
+// backends `export!`-ing the same interface into one binary would
+// collide at link time.
+#[cfg(all(target_family = "wasm", feature = "wit-component"))]
 #[allow(
     unsafe_code,
     unsafe_op_in_unsafe_fn,
@@ -95,7 +100,7 @@
     clippy::restriction
 )]
 mod bindings;
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "wit-component"))]
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 mod wit;
 

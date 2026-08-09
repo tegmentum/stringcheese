@@ -49,6 +49,16 @@ pt = ["lingua/portuguese"]
 ja = ["lingua/japanese"]
 ru = ["lingua/russian"]
 
+# `wit-component` opts into the WIT `Guest` implementation and the
+# `export!` invocation that turns this crate into a standalone
+# `tegmentum:lang-detect@0.2.0` WASM component. Off by default so
+# the crate can be linked as a plain `rlib` sibling of other detect
+# backends (e.g. by the `stringcheese-detect` umbrella) without
+# every backend emitting the same exported symbols and tripping the
+# linker with duplicate-export errors. Enable this only for the
+# standalone-component build produced by `cargo component build`.
+wit-component = ["dep:wit-bindgen-rt"]
+
 [dependencies]
 # lingua is the higher-accuracy language detector — larger per-
 # language footprint than whatlang (~4–6 MB each vs whatlang's
@@ -60,7 +70,12 @@ ru = ["lingua/russian"]
 lingua = { version = "1.8", default-features = false }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+# Pulled in only when the `wit-component` feature is enabled — see the
+# feature docs above. `optional = true` keeps it off the dependency
+# tree for non-component wasm consumers, including the
+# `stringcheese-detect` umbrella that links this crate as a plain
+# `rlib` alongside the other detect backends.
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
 
 [package.metadata.component]
 package = "tegmentum:stringcheese-detect-lingua"
