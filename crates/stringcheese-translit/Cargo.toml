@@ -1,0 +1,26 @@
+[package]
+name = "stringcheese-translit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Script-to-script transliteration for the StringCheese toolkit. A `Transliterator` trait; a `DeunicodeTransliterator` for the general 'any-script → ASCII approximation' path (wraps deunicode); a `TableTransliterator` for the classic char-to-string lookup pattern; and one built-in ISO 9 Cyrillic → Latin table as a template. Language-pack romanizers plug into the same trait in follow-ups."
+categories = ["text-processing", "internationalization"]
+keywords = ["transliteration", "romanization", "cyrillic", "unicode", "deunicode"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# Unicode-to-ASCII approximation table (~200 KB static data).
+# Same choice as `stringcheese-ident`'s slug module; a general-
+# purpose transliterator we'd otherwise re-derive from per-script
+# tables one at a time.
+deunicode = "1"
+
+[lints]
+workspace = true

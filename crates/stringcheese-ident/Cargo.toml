@@ -1,0 +1,32 @@
+[package]
+name = "stringcheese-ident"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Identifier and slug utilities for the StringCheese toolkit: case conversion (camelCase / snake_case / kebab-case / PascalCase / SCREAMING_SNAKE), case detection for round-trip normalization, Unicode-to-ASCII slug generation, and identifier sanitization with a configurable character policy. Wraps mature ecosystem crates (`heck` for case, `deunicode` for transliteration) behind a StringCheese-native API — one `Case` enum, one `Slugger` builder, one `Sanitizer` builder."
+categories = ["text-processing", "internationalization"]
+keywords = ["identifier", "slug", "case-conversion", "camel-case", "unicode"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# Mature, small, well-audited case-conversion library — the case
+# conversions are what its whole surface is. Our value is the
+# `Case` enum + `to_case()` dispatch that fits the rest of the
+# StringCheese type discipline (explicit target unit at every
+# call site).
+heck = "0.5"
+
+# Unicode → ASCII transliteration table. Ships ~200 KB of static
+# lookup data; the alternative is a per-script romanization suite
+# we don't want to own. Used inside `slugify`.
+deunicode = "1"
+
+[lints]
+workspace = true

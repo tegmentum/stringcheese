@@ -1,0 +1,24 @@
+[package]
+name = "stringcheese-normalize"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Named normalization pipelines for the StringCheese toolkit. Wraps `stringcheese-unicode` for the ICU-backed primitives (NFC/NFKC/case-fold/diacritic-strip) and adds small in-house pieces (whitespace collapse, punctuation canonicalisation, control-char stripping). Exposes the pipelines callers actually want — `identifier`, `display_safe`, `search_key`, `punctuation_canonical` — rather than making every caller re-derive the right composition. Every pipeline documents its exact stage order because normalization stages don't commute in general."
+categories = ["text-processing", "internationalization"]
+keywords = ["normalization", "unicode", "nfc", "nfkc", "case-fold"]
+
+[features]
+default = ["std"]
+std = ["alloc", "stringcheese-unicode/std"]
+alloc = ["stringcheese-unicode/alloc"]
+
+[dependencies]
+# Provides the ICU-backed heavy lifting (NFC/NFKC/case-fold/
+# strip-diacritics). This crate composes it into named pipelines.
+stringcheese-unicode = { workspace = true, features = ["case-fold", "compiled-case-data"] }
+
+[lints]
+workspace = true

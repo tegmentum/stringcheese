@@ -1,0 +1,29 @@
+[package]
+name = "stringcheese-textsplit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Text splitters and semantic chunkers for the StringCheese toolkit. Complements the byte-oriented content-defined chunking in `stringcheese-cdc` with the text-oriented splitters LLM pipelines actually reach for: a LangChain-style RecursiveSplitter (separator list + target size + overlap), a SentenceSplitter (group sentences until size threshold), a ParagraphSplitter (split on double-newline). Every chunk carries its byte range in the original input so downstream can point back."
+categories = ["text-processing"]
+keywords = ["chunker", "text-splitter", "llm", "rag", "recursive-splitter"]
+
+[features]
+default = ["std"]
+std = ["alloc", "stringcheese-segment/std"]
+alloc = ["stringcheese-segment/alloc"]
+
+# Enables sentence-boundary detection via ICU4X. Without it,
+# `SentenceSplitter` uses the naive `. ` / `? ` / `! ` fallback
+# already in stringcheese-segment.
+sentences-icu = ["stringcheese-segment/icu"]
+
+[dependencies]
+# Sentence and line boundaries delegate to stringcheese-segment;
+# this crate never re-implements segmentation.
+stringcheese-segment = { workspace = true }
+
+[lints]
+workspace = true

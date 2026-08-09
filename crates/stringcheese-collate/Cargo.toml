@@ -1,0 +1,27 @@
+[package]
+name = "stringcheese-collate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Locale-aware collation for the StringCheese toolkit: Unicode Collation Algorithm ordering via `feruca` (lean UCA implementation), natural-order collation (`file2` < `file10`), and ASCII-fast-path variants. One `Collator` trait; every implementation composes cleanly with `slice.sort_by`. Design goal is the sensible-default 90% case; callers who need full CLDR-tailored variants swap in `icu_collator` under the same trait."
+categories = ["text-processing", "internationalization"]
+keywords = ["collation", "sorting", "uca", "unicode", "natural-sort"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# Feruca is a leaner UCA implementation than the full icu_collator
+# pull — ~200 KB of collation data vs. multi-MB. For callers who
+# need CLDR-tailored variants (Vietnamese, Chinese pinyin, etc.),
+# swapping in icu_collator behind the same `Collator` trait is a
+# thin adapter, not a rewrite.
+feruca = "0.12"
+
+[lints]
+workspace = true

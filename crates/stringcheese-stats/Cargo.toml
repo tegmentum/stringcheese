@@ -1,0 +1,39 @@
+[package]
+name = "stringcheese-stats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "String statistics and characterization for the StringCheese toolkit: Shannon entropy over code points, Unicode general-category histograms, byte/code-point/grapheme length triples, and printable/control/whitespace/digit/alpha ratios. Explicit Unicode semantic units at every boundary — no silent choice between bytes and code points. Useful for deciding which subsequent operation to apply (which tokenizer, which normaliser, which fallback)."
+categories = ["text-processing", "internationalization"]
+keywords = ["statistics", "entropy", "histogram", "unicode", "characterization"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+# Grapheme-cluster counting for `Lengths::graphemes`. Passes through
+# to `stringcheese-segment/icu`. Without this feature `Lengths` still
+# reports bytes + code points; `graphemes` is `None`.
+graphemes = ["stringcheese-segment/icu", "std"]
+
+[dependencies]
+# Compact table lookup for `char → GeneralCategory` (Lu, Ll, Nd, Po, …).
+# ~30 KB of static data in exchange for the full Unicode 15 property
+# table — reimplementing this would be its own arc.
+unicode-general-category = "1"
+
+# `GeneralCategory` doesn't implement `Ord`, so BTreeMap is out;
+# hashbrown gives us an alloc-friendly HashMap that works without
+# `std` — matches this crate's `alloc` feature baseline.
+hashbrown = { version = "0.14", default-features = false, features = ["ahash"] }
+
+# Only used when `graphemes` is on. Kept optional so the default
+# build stays ICU-free.
+stringcheese-segment = { workspace = true, optional = true }
+
+[lints]
+workspace = true

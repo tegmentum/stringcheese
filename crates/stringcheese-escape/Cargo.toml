@@ -1,0 +1,30 @@
+[package]
+name = "stringcheese-escape"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Escape / quote / encode utilities for the StringCheese toolkit: URI percent-encoding, HTML entity escaping, JSON string escaping, and POSIX shell quoting. One `Escape` target enum names the grammar explicitly; wraps mature ecosystem crates (`percent-encoding`, `html-escape`, `shlex`) so we contribute API discipline (explicit target, uniform `escape`/`unescape` shape) instead of new engines for well-understood problems."
+categories = ["encoding", "text-processing"]
+keywords = ["escape", "quote", "url-encoding", "html-escape", "shell-quote"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# URI percent-encoding — small, mature, from the URL WG.
+percent-encoding = { version = "2", default-features = false, features = ["alloc"] }
+
+# HTML entity escape/unescape — covers named entities beyond the
+# five-XML-basics. Small tables, well-tested.
+html-escape = { version = "0.2", default-features = false, features = ["std"] }
+
+# POSIX shell quoting via bytecount / shell-word rules.
+shlex = "2"
+
+[lints]
+workspace = true
