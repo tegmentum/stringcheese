@@ -344,7 +344,9 @@ mod tests {
         // Multiply in u64 explicitly — on 32-bit targets (wasm32),
         // `i * 2_654_435_761` overflows `usize` even though the
         // subsequent `& 0xFFFF` masks the result to 16 bits.
-        let hashes: Vec<u64> = (0..n).map(|i| (i as u64 * 2_654_435_761) & 0xFFFF).collect();
+        let hashes: Vec<u64> = (0..n)
+            .map(|i| (i as u64 * 2_654_435_761) & 0xFFFF)
+            .collect();
         let fps: Vec<_> = Winnower::new(4).select(hashes).collect();
         let min_expected = (n - 4 + 1) * 2 / (4 + 1); // = 38
         assert!(
