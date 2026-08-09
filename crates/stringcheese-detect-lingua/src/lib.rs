@@ -69,10 +69,16 @@
 
 #![deny(unsafe_code)]
 
-// WIT bindings + Guest wiring only compile on wasm targets so
-// native builds stay lingua-only and don't drag wit-bindgen-rt
-// into `cargo test` or downstream Rust hosts.
-#[cfg(target_family = "wasm")]
+// WIT bindings + Guest wiring only compile on wasm targets with the
+// `wit-component` feature — native builds stay lingua-only and
+// don't drag wit-bindgen-rt into `cargo test` or downstream Rust
+// hosts, and non-component wasm consumers (e.g. the
+// `stringcheese-detect` umbrella linking this crate as an `rlib`
+// sibling of the other detect backends) also skip it. Without the
+// feature-gate, three backends `export!`-ing the same interface
+// into one binary collide at link time with duplicate exported
+// symbols.
+#[cfg(all(target_family = "wasm", feature = "wit-component"))]
 #[allow(
     unsafe_code,
     unsafe_op_in_unsafe_fn,
@@ -83,7 +89,7 @@
     clippy::restriction
 )]
 mod bindings;
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "wit-component"))]
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 mod wit;
 

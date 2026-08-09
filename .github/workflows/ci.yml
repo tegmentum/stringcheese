@@ -351,16 +351,21 @@ jobs:
         # `#[cfg(not(target_family = "wasm"))]` — or this job fails to
         # LINK.
         #
-        # `stringcheese-detect` is excluded on wasm — each of its three
-        # backend deps (`stringcheese-detect-{script,whatlang,lingua}`)
-        # unconditionally `export!`s the same WIT interface on wasm
-        # targets, so linking all three together into the umbrella
-        # crate's wasm test binary produces duplicate-symbol errors.
-        # The backends are designed to ship as *standalone* WIT
-        # components, not as siblings inside one binary. Follow-up:
-        # gate each `mod wit`/`export!` behind a per-crate feature
-        # (e.g. `wit-component`) that only the standalone-component
-        # build enables.
+        # `stringcheese-detect` is excluded from the `--workspace`
+        # invocation and tested by its own `-p` step below. Each of
+        # its three backend deps (`stringcheese-detect-{script,
+        # whatlang,lingua}`) gates its WIT `export!` behind a
+        # per-crate `wit-component` cargo feature so the backends can
+        # be linked together as `rlib` siblings inside the umbrella
+        # crate without duplicate-export errors. That works crate-at-
+        # a-time — but `cargo test --workspace --all-features`
+        # unifies features across the whole graph, which turns
+        # `wit-component` on for every backend and re-introduces the
+        # duplicate exports when the umbrella's test binary tries to
+        # link. Running `stringcheese-detect` in its own `-p` cargo
+        # invocation keeps feature resolution scoped to the umbrella
+        # crate's own manifest, which doesn't request `wit-component`
+        # on any backend, so the link succeeds.
         #
         # `stringcheese-lang-gen` is a build-time codegen crate that
         # writes generated Rust to the filesystem — its tests exercise
@@ -374,6 +379,14 @@ jobs:
             --exclude stringcheese-bench \
             --exclude stringcheese-detect \
             --exclude stringcheese-lang-gen \
+            --all-features \
+            --locked \
+            --target wasm32-wasip1
+          # Separate `-p` invocation for the detect umbrella so the
+          # backend crates are linked as plain `rlib`s (no
+          # `wit-component` feature) — see the note above.
+          cargo test \
+            -p stringcheese-detect \
             --all-features \
             --locked \
             --target wasm32-wasip1
