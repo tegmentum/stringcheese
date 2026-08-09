@@ -20,7 +20,7 @@ env:
 jobs:
   # ------------------------------------------------------------------
   # Unit, doc, and integration tests across (OS × Rust) matrix.
-  # MSRV is pinned to 1.87 to match `rust-version` in Cargo.toml.
+  # MSRV is pinned to 1.88 to match `rust-version` in Cargo.toml.
   # ------------------------------------------------------------------
   test:
     name: test (${{ matrix.os }}, rust ${{ matrix.rust }})
@@ -29,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable, "1.87"]
+        rust: [stable, "1.88"]
     steps:
       - uses: actions/checkout@v4
 
@@ -350,10 +350,22 @@ jobs:
         # and gate the property-test module on
         # `#[cfg(not(target_family = "wasm"))]` — or this job fails to
         # LINK.
+        #
+        # `stringcheese-detect` is excluded on wasm — each of its three
+        # backend deps (`stringcheese-detect-{script,whatlang,lingua}`)
+        # unconditionally `export!`s the same WIT interface on wasm
+        # targets, so linking all three together into the umbrella
+        # crate's wasm test binary produces duplicate-symbol errors.
+        # The backends are designed to ship as *standalone* WIT
+        # components, not as siblings inside one binary. Follow-up:
+        # gate each `mod wit`/`export!` behind a per-crate feature
+        # (e.g. `wit-component`) that only the standalone-component
+        # build enables.
         run: |
           cargo test \
             --workspace \
             --exclude stringcheese-bench \
+            --exclude stringcheese-detect \
             --all-features \
             --locked \
             --target wasm32-wasip1
