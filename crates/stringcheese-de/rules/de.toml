@@ -1,0 +1,54 @@
+# German language pack — data-driven rules.
+#
+# Ported from the historical src/stopwords.rs when the German pack
+# migrated to the stringcheese-lang-gen build-time generator. The
+# TOML is the single source of truth; touching src/stopwords.rs has
+# no effect (it just re-exports CAPABILITIES.stopwords).
+
+[locale]
+bcp47 = "de"
+icu = "de"
+name = "German"
+script = "Latn"
+
+[stopwords]
+# ~253-entry list — the union of NLTK's `german` list (which
+# descends from the widely-cited Snowball / Porter German stopword
+# list) and the Snowball reference file itself. Carries articles,
+# personal pronouns, auxiliaries, modals, prepositions,
+# conjunctions, and inflected forms of all of the above. Umlaut
+# vowels round-trip verbatim through the generator.
+list = [
+    "der", "die", "das", "des", "dem", "den", "ein", "eine",
+    "einer", "eines", "einem", "einen", "kein", "keine", "keiner", "keines",
+    "keinem", "keinen", "ich", "mich", "mir", "mein", "meine", "meiner",
+    "meines", "meinem", "meinen", "du", "dich", "dir", "dein", "deine",
+    "deiner", "deines", "deinem", "deinen", "er", "ihn", "ihm", "sein",
+    "seine", "seiner", "seines", "seinem", "seinen", "sie", "ihr", "ihre",
+    "ihrer", "ihres", "ihrem", "ihren", "es", "wir", "uns", "unser",
+    "unsere", "unserer", "unseres", "unserem", "unseren", "euch", "euer", "eure",
+    "eurer", "eures", "eurem", "euren", "dieser", "diese", "dieses", "diesem",
+    "diesen", "dies", "jener", "jene", "jenes", "jenem", "jenen", "solcher",
+    "solche", "solches", "solchem", "solchen", "welcher", "welche", "welches", "welchem",
+    "welchen", "wer", "wen", "wem", "wessen", "was", "sein", "bin",
+    "bist", "ist", "sind", "seid", "war", "warst", "waren", "wart",
+    "gewesen", "sei", "seien", "seiest", "wäre", "wären", "wärest", "wärst",
+    "wäret", "wärt", "haben", "habe", "hast", "hat", "habt",
+    "hatte", "hattest", "hatten", "hattet", "gehabt", "hätte", "hätten", "hättest",
+    "hättet", "werden", "werde", "wirst", "wird", "werdet", "wurde",
+    "wurdest", "wurden", "wurdet", "geworden", "worden", "würde", "würden", "würdest",
+    "würdet", "können", "kann", "kannst", "könnt", "konnte", "konntest", "konnten",
+    "konntet", "gekonnt", "könnte", "könnten", "müssen", "muss", "musst", "müsst",
+    "musste", "mussten", "gemusst", "sollen", "soll", "sollst", "sollt", "sollte",
+    "sollten", "wollen", "will", "willst", "wollt", "wollte", "wollten", "dürfen",
+    "darf", "darfst", "dürft", "durfte", "durften", "mögen", "mag", "magst",
+    "mögt", "mochte", "mochten", "an", "auf", "aus", "bei", "bis",
+    "durch", "für", "gegen", "hinter", "in", "mit", "nach", "neben",
+    "ohne", "seit", "über", "um", "unter", "von", "vor", "während",
+    "wegen", "zu", "zwischen", "und", "oder", "aber", "denn", "sondern",
+    "wenn", "weil", "damit", "dass", "ob", "als", "wie", "obwohl",
+    "nicht", "nur", "auch", "noch", "schon", "immer", "sehr", "so",
+    "hier", "da", "dort", "dann", "jetzt", "heute", "gestern", "morgen",
+    "wieder", "einmal", "mal", "doch", "ja", "nein", "man", "eben",
+    "etwa", "sogar", "kaum", "recht", "wohl",
+]

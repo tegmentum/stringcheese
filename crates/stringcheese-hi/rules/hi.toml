@@ -1,0 +1,47 @@
+# Hindi language pack — data-driven rules.
+#
+# Ported from the historical src/stopwords.rs when the Hindi pack
+# migrated to the stringcheese-lang-gen build-time generator. The
+# TOML is the single source of truth; touching src/stopwords.rs has
+# no effect (it just re-exports CAPABILITIES.stopwords).
+
+[locale]
+bcp47 = "hi"
+icu = "hi"
+name = "Hindi"
+script = "Deva"
+
+[stopwords]
+# ~150-entry list — personal / demonstrative / interrogative
+# pronouns, postpositions (Hindi uses them as separate tokens), the
+# copula होना (to be) surface forms, the auxiliary करना (to do),
+# common adverbs, and the negation particles. Every entry is
+# stored in NFC-normalized Devanagari; the generator preserves the
+# multi-byte scalars verbatim.
+list = [
+    "मैं", "मुझे", "मेरा", "मेरी", "मेरे", "हम",
+    "हमें", "हमारा", "हमारी", "हमारे", "तू", "तुझे",
+    "तेरा", "तेरी", "तेरे", "तुम", "तुम्हें", "तुम्हारा",
+    "तुम्हारी", "तुम्हारे", "आप", "आपको", "आपका", "आपकी",
+    "आपके", "वह", "वे", "यह", "ये", "उसे",
+    "उन्हें", "इसे", "इन्हें", "उसका", "उसकी", "उसके",
+    "उनका", "उनकी", "उनके", "इसका", "इसकी", "इसके",
+    "इनका", "इनकी", "इनके", "यहाँ", "वहाँ", "यहां",
+    "वहां", "कहाँ", "कहां", "जहाँ", "जहां", "ऐसा",
+    "ऐसी", "ऐसे", "वैसा", "वैसी", "वैसे", "क्या",
+    "कौन", "क्यों", "कैसे", "कैसा", "कैसी", "कब",
+    "कितना", "कितनी", "कितने", "का", "की", "के",
+    "को", "ने", "से", "में", "पर", "तक",
+    "साथ", "लिए", "बिना", "पास", "बीच", "ऊपर",
+    "नीचे", "आगे", "पीछे", "अंदर", "बाहर", "और",
+    "या", "लेकिन", "किंतु", "परन्तु", "अगर", "यदि",
+    "तो", "क्योंकि", "कि", "जब", "तब", "जो",
+    "जिसे", "नहीं", "मत", "न", "है", "हैं",
+    "था", "थी", "थे", "थीं", "हूँ", "हूं",
+    "हो", "होगा", "होगी", "होंगे", "होना", "होने",
+    "हुआ", "हुई", "हुए", "करना", "करता", "करती",
+    "करते", "किया", "किए", "किये", "अब", "फिर",
+    "बहुत", "थोड़ा", "थोड़ी", "सब", "कुछ", "कोई",
+    "हर", "यही", "वही", "सिर्फ", "केवल", "भी",
+    "ही", "जी", "एक", "दो", "तीन",
+]

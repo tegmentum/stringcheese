@@ -9,6 +9,16 @@ repository.workspace = true
 description = "English language pack for the StringCheese toolkit: ~150-word stopword list, Porter (1980) stemmer, simple word tokenizer, and Soundex phonetic hookup. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["english", "stemmer", "porter", "stopwords", "soundex"]
+build = "build.rs"
+
+# Ship the rules TOML in the crate package so downstream builds can
+# re-run the generator against the shipped rules.
+include = [
+    "build.rs",
+    "rules/**/*.toml",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -53,6 +63,13 @@ icu_locid = { version = "1.5", optional = true }
 # `Language::collator` trait's `Sync` bound. Only pulled in with
 # `icu-collator`.
 icu_provider = { version = "1.5", optional = true, default-features = false, features = ["sync"] }
+
+[build-dependencies]
+# Build-time codegen for the pack's data-driven surface (stopwords,
+# capability record). Runs in `build.rs`, emits code into `OUT_DIR`,
+# never reaches the shipped binary — see
+# `docs/design/language-architecture.md` § 1 for the rationale.
+stringcheese-lang-gen = { workspace = true }
 
 [dev-dependencies]
 

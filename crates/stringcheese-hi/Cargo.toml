@@ -9,6 +9,15 @@ repository.workspace = true
 description = "Hindi language pack for the StringCheese toolkit: ~130-word Devanagari stopword list, deliberately-conservative light Hindi suffix-stripping stemmer (gender/number markers and verb tense endings; fused postpositions deliberately omitted because they collide with common nominal endings), Devanagari-aware normalizer (Devanagari-digit folding and nukta stripping), whitespace-and-Devanagari-punctuation tokenizer (danda ।), and an IAST (International Alphabet of Sanskrit Transliteration) Devanagari to Latin transliteration phonetic hookup with inherent-vowel schwa handling. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["hindi", "devanagari", "stemmer", "iast", "stopwords"]
+build = "build.rs"
+
+# Ship rules TOML so downstream builds can regenerate against the shipped rules.
+include = [
+    "build.rs",
+    "rules/**/*.toml",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -26,6 +35,12 @@ alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the data-driven surface (stopwords,
+# capability record). Runs in build.rs, emits into OUT_DIR, never
+# reaches the shipped binary. See docs/design/language-architecture.md.
+stringcheese-lang-gen = { workspace = true }
 
 [dev-dependencies]
 

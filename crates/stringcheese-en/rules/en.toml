@@ -1,0 +1,57 @@
+# English language pack — data-driven rules.
+#
+# This file is the sole source of truth for the English pack's shipped
+# behaviour. `build.rs` reads it and emits a static `LanguageCapabilities`
+# value at `OUT_DIR/en.rs`; runtime code (`src/pack.rs`) reflects that
+# value into the `Language` trait.
+#
+# Adding a language to StringCheese means: (1) add a `[name]` feature to
+# `Cargo.toml`, (2) drop a `rules/<bcp47>.toml` alongside this one, (3)
+# extend `pack.rs`'s registry. No new crate, no per-language Rust files.
+
+[locale]
+# BCP-47 primary language subtag. Everything downstream — registry
+# lookup, detector prediction routing — keys off this string.
+bcp47 = "en"
+
+# ICU4X locale identifier. Passed to `icu_casemap::CaseMapper` for
+# case-fold and other locale-aware operations; the two values are
+# usually equal, but keeping them separate lets a pack point at a more
+# specific ICU locale (e.g. `en-GB` for British-tailored collation)
+# without changing its own BCP-47 code.
+icu = "en"
+
+# Human-readable name, English spelling.
+name = "English"
+
+# ISO 15924 script code. Consumed by the language detector's
+# LanguagePrediction shape and by future collation defaults.
+script = "Latn"
+
+[stopwords]
+# Modest 150-entry stopword list — the intersection of the traditional
+# van Rijsbergen list, NLTK's `english` list, and scikit-learn's
+# ENGLISH_STOP_WORDS. All lowercase; membership check uses ICU4X's
+# locale-aware case-fold so `"The"` / `"THE"` / `"the"` all match.
+list = [
+    "a", "about", "above", "after", "again", "against", "all", "am",
+    "an", "and", "any", "are", "as", "at", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can",
+    "did", "do", "does", "doing", "don", "down", "during", "each",
+    "few", "for", "from", "further", "had", "has", "have", "having",
+    "he", "her", "here", "hers", "herself", "him", "himself", "his",
+    "how", "i", "if", "in", "into", "is", "it", "its", "itself",
+    "just", "me", "more", "most", "my", "myself", "no", "nor", "not",
+    "now", "of", "off", "on", "once", "only", "or", "other", "our",
+    "ours", "ourselves", "out", "over", "own", "s", "same", "she",
+    "should", "so", "some", "such", "t", "than", "that", "the",
+    "their", "theirs", "them", "themselves", "then", "there", "these",
+    "they", "this", "those", "through", "to", "too", "under", "until",
+    "up", "very", "was", "we", "were", "what", "when", "where",
+    "which", "while", "who", "whom", "why", "will", "with", "you",
+    "your", "yours", "yourself", "yourselves", "also", "another",
+    "back", "come", "could", "even", "get", "give", "go", "like",
+    "make", "many", "must", "never", "new", "one", "say", "see",
+    "since", "still", "take", "well", "would",
+]
+

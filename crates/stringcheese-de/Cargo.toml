@@ -6,9 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "German language pack for the StringCheese toolkit: ~200-word stopword list, Snowball German stemmer, Kölner Phonetik (Postel 1969) encoder, and simple word tokenizer. Implements stringcheese-lang::Language."
+description = "German language pack for the StringCheese toolkit: ~250-word stopword list, Snowball German stemmer, Kölner Phonetik (Postel 1969) encoder, and simple word tokenizer. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["german", "stemmer", "snowball", "stopwords", "koelner-phonetik"]
+build = "build.rs"
+
+# Ship the rules TOML so downstream builds can regenerate against the shipped rules.
+include = [
+    "build.rs",
+    "rules/**/*.toml",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -26,6 +35,12 @@ alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+
+[build-dependencies]
+# Build-time codegen for the data-driven surface (stopwords,
+# capability record). Runs in build.rs, emits into OUT_DIR, never
+# reaches the shipped binary. See docs/design/language-architecture.md.
+stringcheese-lang-gen = { workspace = true }
 
 [dev-dependencies]
 

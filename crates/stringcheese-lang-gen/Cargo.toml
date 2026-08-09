@@ -1,0 +1,23 @@
+[package]
+name = "stringcheese-lang-gen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Build-time generator for StringCheese per-language crates. Reads a `rules/<bcp47>.toml` and emits a static `LanguageCapabilities` value the per-language crate `include!`s at build time. NEVER pulled in at runtime — this crate belongs in every per-language crate's `[build-dependencies]` and drops out of the compiled binary. See `docs/design/language-architecture.md` § 1 for the design."
+categories = ["development-tools", "text-processing", "internationalization"]
+keywords = ["build-script", "codegen", "language", "stopwords", "wit"]
+
+# NOTE: no `[lib] crate-type = ["cdylib", ...]`. This crate is a
+# build-time helper — consumers add it as a `[build-dependencies]`
+# entry and call `generate()` from their own `build.rs`. Nothing
+# emitted here reaches the consumer's runtime binary.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml  = "0.8"
+
+[lints]
+workspace = true
