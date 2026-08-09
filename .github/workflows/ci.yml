@@ -108,23 +108,48 @@ jobs:
           key: no_std-stable
 
       - name: Check --no-default-features and --features alloc
-        # Every crate below declares an `alloc` cargo feature that gates
-        # heap-allocating types. If a new alloc-gated crate lands, add it
-        # here. (The placeholder crates in the workspace also declare
-        # `alloc` today but hold no code; they are intentionally excluded
-        # from this list until they carry implementations worth checking.)
+        # Two lists:
+        #   * `pure_no_std_crates` — support the full `--no-default-features`
+        #     check AND the `--no-default-features --features alloc` check.
+        #     Every declaration is `no_std` by construction with no
+        #     alloc-mandatory public surface.
+        #   * `alloc_only_crates` — return owned `Vec`/`String` in their
+        #     public API; a pure-no_std build has no sensible shape.
+        #     Only the `--features alloc` variant is checked.
+        # If a new crate lands, add it to whichever list matches.
         run: |
           set -euo pipefail
-          crates=(
+          pure_no_std_crates=(
             stringcheese-core
             stringcheese-corpus
             stringcheese-compare
             stringcheese
+            stringcheese-segment
+            stringcheese-collate
           )
-          for crate in "${crates[@]}"; do
+          alloc_only_crates=(
+            stringcheese-stats
+            stringcheese-ident
+            stringcheese-escape
+            stringcheese-simhash
+            stringcheese-winnowing
+            stringcheese-normalize
+            stringcheese-textsplit
+            stringcheese-translit
+            stringcheese-diff
+            stringcheese-pattern
+            stringcheese-ngram
+            stringcheese-minhash
+          )
+          for crate in "${pure_no_std_crates[@]}"; do
             echo "::group::${crate} --no-default-features"
             cargo check -p "${crate}" --no-default-features --locked
             echo "::endgroup::"
+            echo "::group::${crate} --no-default-features --features alloc"
+            cargo check -p "${crate}" --no-default-features --features alloc --locked
+            echo "::endgroup::"
+          done
+          for crate in "${alloc_only_crates[@]}"; do
             echo "::group::${crate} --no-default-features --features alloc"
             cargo check -p "${crate}" --no-default-features --features alloc --locked
             echo "::endgroup::"
@@ -173,19 +198,38 @@ jobs:
           key: wasm-stable
 
       - name: cargo check — full (crate × target × features) matrix
+        # Two lists mirror the no_std job's split.
+        # `pure_no_std_crates` get all three feature configurations
+        # checked (all-features, no-default+alloc, no-default);
+        # `alloc_only_crates` skip the pure-no-default variant since
+        # their public API returns owned Vec/String.
         run: |
           set -euo pipefail
-          crates=(
+          pure_no_std_crates=(
             stringcheese
             stringcheese-core
             stringcheese-corpus
             stringcheese-compare
             stringcheese-unicode
             stringcheese-phonetic
+            stringcheese-segment
+            stringcheese-collate
+          )
+          alloc_only_crates=(
+            stringcheese-stats
+            stringcheese-ident
+            stringcheese-escape
+            stringcheese-simhash
+            stringcheese-winnowing
+            stringcheese-normalize
+            stringcheese-textsplit
+            stringcheese-translit
+            stringcheese-diff
+            stringcheese-pattern
+            stringcheese-ngram
+            stringcheese-minhash
           )
           targets=(wasm32-wasip1 wasm32-unknown-unknown)
-          # Feature-set label -> flag string. Kept as parallel arrays so
-          # the loop below stays legible.
           labels=(
             "all-features"
             "no-default+alloc"
@@ -196,9 +240,24 @@ jobs:
             "--no-default-features --features alloc"
             "--no-default-features"
           )
-          for crate in "${crates[@]}"; do
+          for crate in "${pure_no_std_crates[@]}"; do
             for target in "${targets[@]}"; do
               for i in 0 1 2; do
+                label="${labels[$i]}"
+                flags="${flag_sets[$i]}"
+                echo "::group::${crate} @ ${target} [${label}]"
+                # shellcheck disable=SC2086
+                cargo check -p "${crate}" --target "${target}" \
+                  ${flags} --locked
+                echo "::endgroup::"
+              done
+            done
+          done
+          # alloc-only crates: skip the "--no-default-features" (pure
+          # no_std) variant since their public API is Vec/String-heavy.
+          for crate in "${alloc_only_crates[@]}"; do
+            for target in "${targets[@]}"; do
+              for i in 0 1; do
                 label="${labels[$i]}"
                 flags="${flag_sets[$i]}"
                 echo "::group::${crate} @ ${target} [${label}]"
