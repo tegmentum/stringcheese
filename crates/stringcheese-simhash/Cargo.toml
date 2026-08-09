@@ -1,0 +1,25 @@
+[package]
+name = "stringcheese-simhash"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "SimHash fingerprints and Hamming-distance similarity for the StringCheese toolkit. Feed any `Hash` feature (character n-grams, token shingles, tf-idf-weighted words) into a fixed-width sketch; compare two sketches for a cosine-similar signal at 64-bit or 128-bit resolution. Sibling of stringcheese-minhash — SimHash answers 'how similar are these two weighted-feature bags?' where MinHash answers 'how similar are these two SETS?'."
+categories = ["algorithms", "text-processing"]
+keywords = ["simhash", "fingerprint", "near-duplicate", "hamming", "sketch"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# Same rationale as stringcheese-minhash — seedable, portable
+# non-crypto hasher. `RandomState::hash_one` gives us a stable
+# 64-bit hash per feature without dragging in a full crypto dep.
+ahash = { version = "0.8", default-features = false }
+
+[lints]
+workspace = true

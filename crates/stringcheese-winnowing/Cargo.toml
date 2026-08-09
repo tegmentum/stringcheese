@@ -1,0 +1,21 @@
+[package]
+name = "stringcheese-winnowing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Document fingerprinting via winnowing (Schleimer, Wilkerson & Aiken, 2003) for the StringCheese toolkit. Given a stream of hashed n-grams, select the minimum hash in each sliding window of size w — the classical 'local' fingerprint scheme used by Moss and every similar plagiarism-detection stack. O(w) memory via a monotonic deque; deterministic leftmost-min tie-breaking matches the reference paper."
+categories = ["algorithms", "text-processing"]
+keywords = ["winnowing", "fingerprint", "moss", "plagiarism-detection", "sketch"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+
+[lints]
+workspace = true

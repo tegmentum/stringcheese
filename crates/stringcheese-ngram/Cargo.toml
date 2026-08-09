@@ -1,0 +1,28 @@
+[package]
+name = "stringcheese-ngram"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Sliding-window n-gram generation for the StringCheese toolkit. Character grams (over Unicode code points), byte grams, token grams (shingles over a word list), and grapheme grams (behind the `graphemes` feature). Every constructor names the semantic unit explicitly — no silent choice between bytes and code points. Feeds `stringcheese-index`, `stringcheese-compare`, and any similarity / fingerprint pipeline."
+categories = ["text-processing", "algorithms"]
+keywords = ["ngram", "shingle", "sliding-window", "text-similarity", "unicode"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+# Grapheme-cluster n-grams via ICU4X. Delegates to
+# `stringcheese-segment/icu`. Without this feature grapheme grams
+# are unavailable (constructor returns None); character and byte
+# grams work regardless.
+graphemes = ["stringcheese-segment/icu", "std"]
+
+[dependencies]
+stringcheese-segment = { workspace = true, optional = true }
+
+[lints]
+workspace = true
