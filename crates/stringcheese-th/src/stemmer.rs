@@ -154,7 +154,7 @@ impl ThaiStemmer {
         // if the input has even length and the first half equals the
         // second half. The single-copy stem must itself satisfy the
         // min-stem guard.
-        if chars.len() >= 2 * MIN_STEM_CHARS && chars.len() % 2 == 0 {
+        if chars.len() >= 2 * MIN_STEM_CHARS && chars.len().is_multiple_of(2) {
             let half = chars.len() / 2;
             if chars[..half] == chars[half..] {
                 let stem: String = chars[..half].iter().collect();

@@ -48,7 +48,7 @@ fn ascii_words(count: usize, seed: u64) -> Vec<String> {
         let mut word = String::with_capacity(len);
         for _ in 0..len {
             // Mix upper + lowercase to give ASCII-CI actual work.
-            let base = if rng.next_u64() % 2 == 0 { b'a' } else { b'A' };
+            let base = if rng.next_u64().is_multiple_of(2) { b'a' } else { b'A' };
             let b = base + (rng.next_u64() % 26) as u8;
             word.push(b as char);
         }

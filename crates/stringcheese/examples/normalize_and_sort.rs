@@ -19,7 +19,7 @@ use stringcheese::normalize;
 fn main() {
     // Mixed input — different capitalisations, diacritics, smart
     // quotes, and version numbers embedded in filenames.
-    let raw = vec![
+    let raw = [
         "\u{201C}Café Résumé v10\u{201D}",
         "cafe resume v2",
         "CAFE RESUME V1",
@@ -38,8 +38,8 @@ fn main() {
     sorted.sort_by(|(ka, _), (kb, _)| collator.compare(ka, kb));
 
     println!("Sorted display names with search keys:\n");
-    println!("  {:<28}  {}", "search key", "display name");
-    println!("  {:<28}  {}", "----------", "------------");
+    println!("  {:<28}  display name", "search key");
+    println!("  {:<28}  ------------", "----------");
     for (key, display) in &sorted {
         println!("  {key:<28}  {display}");
     }

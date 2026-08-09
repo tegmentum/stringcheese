@@ -55,6 +55,10 @@ impl Lengths {
 }
 
 #[cfg(feature = "graphemes")]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "return type must match the feature-disabled variant, which returns None"
+)]
 fn grapheme_count(text: &str) -> Option<usize> {
     // Segment crate returns an iterator of `&str` grapheme slices;
     // count them without materialising a Vec.

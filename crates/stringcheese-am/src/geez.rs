@@ -223,7 +223,7 @@ pub fn compose(base: char, order: u8) -> Option<char> {
         return None;
     }
     // `base` must itself be a family-head (order 0).
-    if (base_cp - GEEZ_MAIN_START) % COLUMNS_PER_FAMILY != 0 {
+    if !(base_cp - GEEZ_MAIN_START).is_multiple_of(COLUMNS_PER_FAMILY) {
         return None;
     }
     char::from_u32(base_cp + u32::from(order))

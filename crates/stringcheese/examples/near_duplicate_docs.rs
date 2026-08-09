@@ -1,4 +1,4 @@
-//! # Find near-duplicate documents via MinHash + LSH
+//! # Find near-duplicate documents via `MinHash` + LSH
 //!
 //! Given a corpus of short documents, return every pair whose
 //! estimated Jaccard similarity meets a threshold. The pipeline
@@ -12,10 +12,10 @@
 //!    `stringcheese-ngram`. Character grams are language-agnostic
 //!    and robust to word-level rearrangements.
 //! 2. **Sketch** — each doc's gram set collapses to a 128-permutation
-//!    MinHash sketch via `stringcheese-minhash`.
+//!    `MinHash` sketch via `stringcheese-minhash`.
 //! 3. **Bucket** — each sketch's LSH bands go into a bucket map;
 //!    any two docs sharing a bucket are a candidate pair.
-//! 4. **Rescore** — every candidate pair's exact MinHash Jaccard
+//! 4. **Rescore** — every candidate pair's exact `MinHash` Jaccard
 //!    estimate is computed, and pairs above the threshold are
 //!    returned.
 //!
@@ -27,7 +27,7 @@ use stringcheese_minhash::{Sketch, Sketcher, lsh};
 
 fn main() {
     // Toy corpus — three near-duplicate pairs and one unrelated.
-    let docs = vec![
+    let docs = [
         ("doc-a1", "The quick brown fox jumps over the lazy dog."),
         ("doc-a2", "The quick brown fox jumped over the lazy dog."),
         (
@@ -50,7 +50,7 @@ fn main() {
     let rows = 8;
 
     // Sketch every document.
-    let sketches: Vec<(&str, Sketch)> = docs
+    let doc_sketches: Vec<(&str, Sketch)> = docs
         .iter()
         .map(|(name, text)| {
             let grams = stringcheese_ngram::char_ngrams(text, 5);
@@ -60,7 +60,7 @@ fn main() {
 
     // LSH bucket map: (band_index, band_signature) → docs sharing that bucket.
     let mut buckets: HashMap<(usize, u64), Vec<&str>> = HashMap::new();
-    for (name, sk) in &sketches {
+    for (name, sk) in &doc_sketches {
         let sigs = lsh::band_signatures(sk, bands, rows);
         for (band_idx, sig) in sigs.iter().enumerate() {
             buckets.entry((band_idx, *sig)).or_default().push(name);
@@ -84,7 +84,7 @@ fn main() {
     }
 
     // Rescore every candidate pair with the full MinHash estimate.
-    let sketch_by_name: HashMap<&str, &Sketch> = sketches.iter().map(|(n, s)| (*n, s)).collect();
+    let sketch_by_name: HashMap<&str, &Sketch> = doc_sketches.iter().map(|(n, s)| (*n, s)).collect();
     let threshold = 0.6;
 
     let mut hits: Vec<(&str, &str, f64)> = candidates
