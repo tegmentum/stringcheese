@@ -1,0 +1,33 @@
+[package]
+name = "stringcheese-pattern"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Unified pattern-matching subsystem for the StringCheese toolkit: literal / wildcard / glob / (future) regex all speak one Pattern trait and compile toward one IR. Explicit Unicode semantic units at the type level (bytes / codepoints / graphemes). This crate ships the trait, common IR primitives, and the three non-regex implementations; the finite-automata regex engine lands in a follow-up as its own subcrate that plugs into the same trait."
+categories = ["text-processing", "algorithms"]
+keywords = ["pattern", "glob", "wildcard", "search", "regex"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+# memchr accelerates literal substring search on x86_64 (SSE2/AVX2)
+# and aarch64 (NEON). The `alloc` feature is off — memchr's core
+# path doesn't need heap.
+memchr = { version = "2", default-features = false }
+
+# Wildcard and Glob delegate to globset for shell-style matching and
+# use the underlying regex engine (via globset's `.regex()`) for
+# find-anywhere. Both crates are mature, well-audited, and share
+# transitive deps with the rest of the workspace — the wrap is a
+# net reduction against a hand-rolled implementation.
+globset = { version = "0.4", default-features = false }
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+
+[lints]
+workspace = true

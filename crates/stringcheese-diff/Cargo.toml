@@ -1,0 +1,41 @@
+[package]
+name = "stringcheese-diff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Diff and sequence-alignment algorithms for the StringCheese toolkit. Myers (1986) and Patience diff over any `T: Eq` sequence — bytes, code points, graphemes, words, lines, or arbitrary tokens. Ships edit-script and unified-diff-format output; algorithm-agnostic post-processing hooks make room for a future diff-match-patch-style semantic-cleanup pipeline. Explicit Unicode semantic units at every boundary."
+categories = ["text-processing", "algorithms"]
+keywords = ["diff", "myers", "patience", "unified-diff", "lcs"]
+
+[features]
+default = ["std"]
+std = ["alloc", "stringcheese-segment/std"]
+alloc = ["stringcheese-segment/alloc"]
+
+# Unicode-aware segmentation for `DiffUnit::Graphemes` / `Words` /
+# `Sentences`. Passes through to `stringcheese-segment/icu`.
+segment-icu  = ["stringcheese-segment/icu", "std"]
+# UAX #14 line breaking for `DiffUnit::LinesUax14`. Passes through to
+# `stringcheese-segment/uax14-lines`.
+segment-lines-uax14 = ["stringcheese-segment/uax14-lines", "std"]
+
+[dependencies]
+# HashMap the Patience algorithm's anchor extraction needs. hashbrown
+# is no_std + alloc friendly, matching this crate's `alloc` feature
+# baseline — a std-only HashMap gate would exclude wasm targets that
+# rely on the alloc-only build path.
+hashbrown = { version = "0.14", default-features = false, features = ["ahash"] }
+# Segmentation is delegated to `stringcheese-segment` — same enum,
+# same iterator shape, same feature gates. This crate re-exports the
+# familiar `DiffUnit` name so existing call sites (`diff_at(..., DiffUnit::Lines)`)
+# stay stable.
+stringcheese-segment = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "stringcheese-pattern-regex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Regex adapter for the StringCheese toolkit — thin wrapper around the `regex` crate (BurntSushi's finite-automata engine) that plugs into `stringcheese-pattern`'s `Pattern` trait as the `Regex` implementation. Same trait shape as literal / wildcard / glob; callers dispatch uniformly. Design commitments (finite-automata, no backreferences, linear time, Unicode-aware, WASM-compatible, safe on untrusted patterns) are inherited from the underlying `regex` engine."
+categories = ["text-processing", "algorithms"]
+keywords = ["regex", "pattern", "unicode", "nfa"]
+
+[dependencies]
+stringcheese-pattern = { workspace = true, features = ["alloc"] }
+# The `regex` crate is finite-automata-oriented, has no
+# backreferences, guarantees linear-time matching, is Unicode-aware
+# by default, and compiles cleanly to WASM. Its design commitments
+# match StringCheese's regex philosophy documented in
+# docs/design/scope-and-decomposition.md — no PCRE compatibility,
+# no unbounded lookaround.
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+
+[lints]
+workspace = true

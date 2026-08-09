@@ -1,0 +1,31 @@
+[package]
+name = "stringcheese-segment"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Unicode-aware segmentation for the StringCheese toolkit: bytes, code points, graphemes, words, sentences, and lines. Zero-dependency for the trivial units (bytes / code points / \\n-lines); ICU4X-backed graphemes/words/sentences and UAX #14 line breaking behind feature gates. One SegmentUnit enum names the boundary explicitly at every call site — no silent-segmentation surprises."
+categories = ["text-processing", "internationalization"]
+keywords = ["segmentation", "grapheme", "word", "line-break", "unicode"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+# Unicode-aware segmentation for `SegmentUnit::Graphemes` /
+# `Words` / `Sentences`. Feature-gated so a caller who only wants
+# byte / code-point / line splitting doesn't pull ICU4X.
+icu = ["dep:icu_segmenter", "std"]
+# UAX #14 line breaking via `unicode-linebreak`. Off by default;
+# the plain-`\n` splitter is the standard `SegmentUnit::Lines` unit.
+uax14-lines = ["dep:unicode-linebreak", "std"]
+
+[dependencies]
+icu_segmenter    = { version = "1.5", optional = true, features = ["compiled_data"] }
+unicode-linebreak = { version = "0.1", optional = true }
+
+[lints]
+workspace = true
