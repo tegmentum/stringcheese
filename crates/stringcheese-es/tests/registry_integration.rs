@@ -10,6 +10,7 @@
 //! expansion has no wasm branch, per `stringcheese-lang/src/lib.rs`).
 //! The pack itself still builds and links on wasm; only the
 //! registry lookup is absent.
+#![cfg(not(target_family = "wasm"))]
 
 #![cfg(not(target_family = "wasm"))]
 

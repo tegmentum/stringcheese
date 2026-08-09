@@ -8,6 +8,7 @@
 // integration-test binary.
 #![cfg_attr(target_family = "wasm", allow(missing_docs))]
 #![cfg(not(target_family = "wasm"))]
+#![cfg(not(target_family = "wasm"))]
 
 //! Multi-language integration test for the [`registry`] module.
 //!

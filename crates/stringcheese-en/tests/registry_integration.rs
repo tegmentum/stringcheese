@@ -4,6 +4,7 @@
 //! in `stringcheese-en/src/lib.rs` is the sole opt-in — if it stops
 //! firing (for instance, if a linker strips the registration
 //! `static`), this test flips red.
+#![cfg(not(target_family = "wasm"))]
 
 use stringcheese_lang::registry;
 

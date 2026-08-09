@@ -10,6 +10,7 @@
 //! has no wasm branch. The registration on this pack is likewise
 //! wasm-gated; on wasm targets this whole test file compiles to
 //! nothing.
+#![cfg(not(target_family = "wasm"))]
 
 #![cfg(not(target_family = "wasm"))]
 

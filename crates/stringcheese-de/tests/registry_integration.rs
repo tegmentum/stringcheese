@@ -9,6 +9,7 @@
 //! module is itself only compiled on non-wasm targets (linkme's
 //! `distributed_slice` has no wasm branch), so a wasm test build
 //! would fail to resolve the import.
+#![cfg(not(target_family = "wasm"))]
 
 #![cfg(not(target_family = "wasm"))]
 

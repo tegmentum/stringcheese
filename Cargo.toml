@@ -104,6 +104,13 @@ pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 must_use_candidate = "allow"
+# `collapsible_if` — allowed workspace-wide as a style choice. Rust
+# 1.88 stabilised let-chains and Rust's newer stable clippy tightened
+# `collapsible_if` to flag many `if let X { if cond {}}` cases; the
+# mechanical rewrite is a let-chain, but there are far more sites in
+# tree than are worth churning through, and the nested form remains
+# widely used in the ecosystem.
+collapsible_if = "allow"
 
 [workspace.dependencies]
 stringcheese-core = { version = "0.1.0", path = "crates/stringcheese-core", default-features = false }
