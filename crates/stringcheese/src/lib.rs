@@ -17,6 +17,11 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+// Doc comments here reference technical acronyms (MinHash /
+// SimHash / LSH / NFKC / UCA / Moss / ISO 9) and non-code proper
+// nouns liberally. Wrapping each in backticks harms readability
+// of a facade doc whose whole purpose is orientation.
+#![allow(clippy::doc_markdown)]
 
 pub use stringcheese_core::*;
 
@@ -112,6 +117,103 @@ pub use stringcheese_lang as lang;
 /// not a byte of vocabulary data, not an entry in a merge table — at
 /// compile or runtime.
 pub use stringcheese_tokenizer as tokenizer;
+
+/// Unicode-aware segmentation: bytes, code points, graphemes,
+/// words, sentences, lines. `SegmentUnit` names the boundary
+/// explicitly at every call site. Re-exported from the
+/// `stringcheese-segment` crate.
+pub use stringcheese_segment as segment;
+
+/// String statistics and characterisation: Shannon entropy,
+/// Unicode general-category histograms, printable / control /
+/// whitespace / digit / alphabetic / punctuation ratios, and the
+/// byte / code-point / grapheme length triple. Re-exported from
+/// the `stringcheese-stats` crate.
+pub use stringcheese_stats as stats;
+
+/// Identifier utilities: case conversion (`Case::{Snake, Camel,
+/// Pascal, Kebab, ScreamingSnake, ScreamingKebab, Train}`),
+/// `Case::detect` best-effort classification, `slugify` /
+/// `Slugger` for URL/filename slugs, and `Sanitizer` for
+/// identifier coercion. Re-exported from the
+/// `stringcheese-ident` crate.
+pub use stringcheese_ident as ident;
+
+/// Escape / quote / encode utilities: URI percent-encoding, HTML
+/// entity escaping (text and attribute contexts), JSON string
+/// body escape, POSIX shell word quoting — one `Escape` target
+/// enum names the grammar explicitly. Re-exported from the
+/// `stringcheese-escape` crate.
+pub use stringcheese_escape as escape;
+
+/// SimHash fingerprints (64-bit / 128-bit) with weighted-feature
+/// support, Hamming-distance similarity, and permutation-band
+/// LSH. Re-exported from the `stringcheese-simhash` crate.
+///
+/// See [`compare::minhash`] for the older set-Jaccard MinHash
+/// sketches — SimHash is for weighted feature BAGS, MinHash for
+/// SETS.
+pub use stringcheese_simhash as simhash;
+
+/// Winnowing document fingerprints (Schleimer-Wilkerson-Aiken
+/// 2003) — the local-algorithm sketch used by Moss and other
+/// plagiarism detectors. Re-exported from the
+/// `stringcheese-winnowing` crate.
+pub use stringcheese_winnowing as winnowing;
+
+/// Named normalization pipelines: `identifier` (NFKC + case-fold +
+/// strip-diacritics), `display_safe` (strip-controls + NFC +
+/// collapse-whitespace), `search_key`, `punctuation_canonical`,
+/// plus the primitives that back them. Re-exported from the
+/// `stringcheese-normalize` crate.
+pub use stringcheese_normalize as normalize;
+
+/// Text splitters and semantic chunkers for LLM RAG pipelines:
+/// a `TextSplitter` trait, LangChain-style `RecursiveSplitter`,
+/// `ParagraphSplitter`, `SentenceSplitter`. Complements the
+/// byte-oriented content-defined chunking in [`cdc`].
+/// Re-exported from the `stringcheese-textsplit` crate.
+pub use stringcheese_textsplit as textsplit;
+
+/// Locale-aware collation: `UcaCollator` (Unicode Collation
+/// Algorithm via feruca), `NaturalCollator` (`file2 < file10`),
+/// `AsciiCiCollator` (ASCII case-insensitive fast path), all
+/// behind a common `Collator` trait. Re-exported from the
+/// `stringcheese-collate` crate.
+pub use stringcheese_collate as collate;
+
+/// Script-to-script transliteration: `DeunicodeTransliterator`
+/// for the general any-script → ASCII path, `TableTransliterator`
+/// for classic char-to-string lookup, a `Chained` combinator,
+/// and a built-in ISO 9 Cyrillic → Latin table. Re-exported from
+/// the `stringcheese-translit` crate.
+pub use stringcheese_translit as translit;
+
+/// Diff and sequence alignment: Myers (1986) and Patience diff
+/// over any `T: Eq` sequence, edit-script + unified-diff-format
+/// output, hunks, and `patch::apply`. Re-exported from the
+/// `stringcheese-diff` crate.
+pub use stringcheese_diff as diff;
+
+/// Pattern-matching subsystem: `Literal`, `Wildcard`, `Glob`
+/// (Wildcard + Glob wrap `globset` under the same `Pattern`
+/// trait) with explicit `MatchUnit` (Bytes / CodePoints /
+/// Graphemes) at construction. The finite-automata regex engine
+/// lives in `pattern_regex` (the sibling
+/// `stringcheese-pattern-regex` crate) behind the `pattern-regex`
+/// feature.
+/// Re-exported from the `stringcheese-pattern` crate.
+pub use stringcheese_pattern as pattern;
+
+/// Finite-automata regex engine — thin adapter over the `regex`
+/// crate that plugs into [`pattern::Pattern`]. Available when
+/// the `pattern-regex` feature is on; off by default because the
+/// underlying regex-engine data isn't negligible.
+///
+/// Callers who prefer a direct dep on `stringcheese-pattern-regex`
+/// get the same crate through that path.
+#[cfg(feature = "pattern-regex")]
+pub use stringcheese_pattern_regex as pattern_regex;
 
 /// Metadata about this release.
 pub mod meta {

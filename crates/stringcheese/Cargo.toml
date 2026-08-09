@@ -24,7 +24,26 @@ std = [
     "stringcheese-align/std",
     "stringcheese-lang/std",
     "stringcheese-tokenizer/std",
+    "stringcheese-segment/std",
+    "stringcheese-stats/std",
+    "stringcheese-ident/std",
+    "stringcheese-escape/std",
+    "stringcheese-simhash/std",
+    "stringcheese-winnowing/std",
+    "stringcheese-normalize/std",
+    "stringcheese-textsplit/std",
+    "stringcheese-collate/std",
+    "stringcheese-translit/std",
+    "stringcheese-diff/std",
+    "stringcheese-pattern/std",
 ]
+
+# Opt-in regex engine — pulls the `regex` crate's finite-automata
+# backend under `stringcheese-pattern-regex`. Off by default: the
+# facade's default install stays lean; callers who want regex
+# matching flip this feature (or take a direct dep on
+# `stringcheese-pattern-regex`).
+pattern-regex = ["dep:stringcheese-pattern-regex"]
 alloc = [
     "stringcheese-core/alloc",
     "stringcheese-compare/alloc",
@@ -36,6 +55,18 @@ alloc = [
     "stringcheese-align/alloc",
     "stringcheese-lang/alloc",
     "stringcheese-tokenizer/alloc",
+    "stringcheese-segment/alloc",
+    "stringcheese-stats/alloc",
+    "stringcheese-ident/alloc",
+    "stringcheese-escape/alloc",
+    "stringcheese-simhash/alloc",
+    "stringcheese-winnowing/alloc",
+    "stringcheese-normalize/alloc",
+    "stringcheese-textsplit/alloc",
+    "stringcheese-collate/alloc",
+    "stringcheese-translit/alloc",
+    "stringcheese-diff/alloc",
+    "stringcheese-pattern/alloc",
 ]
 
 [dependencies]
@@ -56,6 +87,40 @@ stringcheese-lang = { workspace = true }
 # and `-sentencepiece`) and pre-configured model packs (`-tiktoken`,
 # `-huggingface`) are opt-in per the umbrella pattern.
 stringcheese-tokenizer = { workspace = true }
+# Subsystems added after the original 10 crates — segmentation,
+# stats, identifiers, escape, three fingerprint sketches (simhash /
+# winnowing; the standalone stringcheese-minhash / -ngram crates
+# stay direct-dep to avoid colliding with the compare-crate
+# implementations already re-exported), normalization presets,
+# text splitters, collation, transliteration, diff, and pattern
+# matching. Detection crates stay direct-dep too — a caller who
+# doesn't need language detection shouldn't pay for the trigram
+# tables.
+stringcheese-segment = { workspace = true }
+stringcheese-stats = { workspace = true }
+stringcheese-ident = { workspace = true }
+stringcheese-escape = { workspace = true }
+stringcheese-simhash = { workspace = true }
+stringcheese-winnowing = { workspace = true }
+stringcheese-normalize = { workspace = true }
+stringcheese-textsplit = { workspace = true }
+stringcheese-collate = { workspace = true }
+stringcheese-translit = { workspace = true }
+stringcheese-diff = { workspace = true }
+stringcheese-pattern = { workspace = true }
+# Opt-in via the `pattern-regex` feature — non-trivial regex-engine
+# data footprint that leaner callers shouldn't pay for by default.
+stringcheese-pattern-regex = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Not re-exported through the facade (both collide with the older
+# minhash / ngram modules baked into stringcheese-compare) but
+# needed by integration tests that exercise the newer standalone
+# crates alongside the facade's other subsystems. Enable `std`
+# so the tests can rely on the standard `Vec` / `HashMap` surface
+# — the workspace-level dep declares `default-features = false`.
+stringcheese-minhash = { workspace = true, features = ["std"] }
+stringcheese-ngram = { workspace = true, features = ["std"] }
 
 [lints]
 workspace = true

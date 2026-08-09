@@ -16,14 +16,18 @@ after-the-fact bolt-ons.
 
 ## Status
 
-Version 0.1 is **under initial development**. The current crate skeleton
-covers only the type-system substrate: result types, metric traits,
-mathematical-property descriptors, algorithm-variant registry, workspace and
-sequence traits, and the golden-case validation schema. Concrete algorithm
-implementations arrive in subsequent milestones.
+Version 0.1 is under active development. Every subsystem in
+`docs/design/scope-and-decomposition.md`'s implementation-staging
+list ships as a dedicated crate today (see the workspace table
+below). Concrete algorithm coverage continues to fill in across
+minor releases — the current release surface is best treated as
+usable-but-evolving, and cross-crate integration tests catch API
+shape issues as new pieces land.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the full project vision, algorithm
-coverage, and validation strategy.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the full project
+vision and [`docs/design/scope-and-decomposition.md`](docs/design/scope-and-decomposition.md)
+for the subsystem decomposition and the wrap-vs-reimplement
+policy that guides each crate.
 
 ## Design principles
 
@@ -42,18 +46,88 @@ coverage, and validation strategy.
 
 ## Workspace layout
 
-| Crate                  | Purpose                                                                        |
-|------------------------|--------------------------------------------------------------------------------|
-| `stringcheese`            | Facade crate re-exporting the public API                                       |
-| `stringcheese-core`       | Foundational traits, result types, algorithm descriptors, workspace and sequence abstractions |
-| `stringcheese-corpus`     | Golden-case schema and validation corpus (separately versioned deliverable)    |
-| `stringcheese-compare`    | Comparison kernels: Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, n-gram, set similarity (Dice/Jaccard/Overlap/Cosine), substring search (Rabin-Karp/KMP/Boyer-Moore/Aho-Corasick/Horspool/Two-way), MinHash and LSH |
-| `stringcheese-unicode`    | Unicode normalization, case folding, grapheme handling                         |
-| `stringcheese-phonetic`   | Soundex, NYSIIS, Double Metaphone, phonetic-matcher composer                   |
-| `stringcheese-cdc`        | Content-defined chunking: FastCDC, Rabin CDC, Gear rolling-hash                |
-| `stringcheese-index`      | Index structures: BK-tree, VP-tree, q-gram inverted index                      |
-| `stringcheese-align`      | Pairwise alignment: Needleman-Wunsch, Smith-Waterman, affine gaps              |
-| `stringcheese-bench`      | Benchmark suite and comparative reporting                                      |
+The umbrella `stringcheese` crate re-exports the subsystem crates
+grouped below. Language packs and data-heavy algorithm crates
+(tokenizer model packs, per-tier language-detection shards, the
+regex engine) stay opt-in — callers pull them by direct
+dependency so a build that doesn't need them pays nothing.
+
+**Foundations**
+
+| Crate                    | Purpose                                                                        |
+|--------------------------|--------------------------------------------------------------------------------|
+| `stringcheese`           | Facade crate re-exporting the public API                                       |
+| `stringcheese-core`      | Foundational traits, result types, algorithm descriptors, workspace / sequence abstractions |
+| `stringcheese-corpus`    | Golden-case schema and validation corpus (separately versioned deliverable)    |
+| `stringcheese-bench`     | Benchmark suite and comparative reporting                                      |
+
+**Comparison, search, alignment**
+
+| Crate                    | Purpose                                                                        |
+|--------------------------|--------------------------------------------------------------------------------|
+| `stringcheese-compare`   | Comparison kernels: Levenshtein, Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, set similarity (Dice/Jaccard/Overlap/Cosine), substring search (Rabin-Karp/KMP/Boyer-Moore/Aho-Corasick/Horspool/Two-way) |
+| `stringcheese-align`     | Pairwise alignment: Needleman-Wunsch, Smith-Waterman, affine gaps              |
+| `stringcheese-diff`      | Myers + Patience diff, unified-diff format, hunks, patch apply                 |
+| `stringcheese-pattern`   | Pattern matching: `Literal`, `Wildcard`, `Glob` behind a shared `Pattern` trait with explicit `MatchUnit` |
+| `stringcheese-pattern-regex` | Finite-automata regex engine plugging into the same `Pattern` trait (opt-in) |
+
+**Segmentation, normalization, transliteration**
+
+| Crate                    | Purpose                                                                        |
+|--------------------------|--------------------------------------------------------------------------------|
+| `stringcheese-segment`   | Bytes, code points, graphemes, words, sentences, lines with explicit `SegmentUnit` |
+| `stringcheese-unicode`   | Unicode NFC/NFKC/NFD/NFKD, case folding, diacritic stripping, `PreprocessingPipeline` |
+| `stringcheese-normalize` | Named pipeline presets (`identifier`, `display_safe`, `search_key`) + punctuation canonicalisation |
+| `stringcheese-collate`   | UCA / natural-order / ASCII-CI collation behind a `Collator` trait             |
+| `stringcheese-translit`  | `Transliterator` trait, `deunicode`-backed general path, table-based per-script romanisation |
+| `stringcheese-phonetic`  | Soundex, NYSIIS, Double Metaphone, phonetic-matcher composer                   |
+
+**Chunking, sketches, indexing**
+
+| Crate                    | Purpose                                                                        |
+|--------------------------|--------------------------------------------------------------------------------|
+| `stringcheese-cdc`       | Byte-oriented content-defined chunking: FastCDC, Rabin CDC, Buzhash, Gear rolling-hash |
+| `stringcheese-textsplit` | Text splitters for LLM RAG: `RecursiveSplitter`, `ParagraphSplitter`, `SentenceSplitter` |
+| `stringcheese-ngram`     | Sliding-window char / byte / token / grapheme n-grams                          |
+| `stringcheese-minhash`   | MinHash sketches, Jaccard estimation, LSH banding                              |
+| `stringcheese-simhash`   | 64/128-bit SimHash fingerprints, weighted-feature support, permutation-band LSH |
+| `stringcheese-winnowing` | Schleimer-Wilkerson-Aiken document fingerprints                                 |
+| `stringcheese-index`     | Index structures: BK-tree, VP-tree, q-gram inverted index                       |
+
+**Statistics, identifiers, escaping**
+
+| Crate                    | Purpose                                                                        |
+|--------------------------|--------------------------------------------------------------------------------|
+| `stringcheese-stats`     | Shannon entropy, Unicode general-category histograms, ratios, lengths          |
+| `stringcheese-ident`     | Case conversion, `Case::detect`, slugify, identifier sanitisation              |
+| `stringcheese-escape`    | URI / HTML / JSON / POSIX-shell escape and unescape                             |
+| `stringcheese-manip`     | Broad string-manipulation utilities (case, trim, find, replace, quote, template) |
+
+**Tokenizers**
+
+| Crate                                | Purpose                                                                        |
+|--------------------------------------|--------------------------------------------------------------------------------|
+| `stringcheese-tokenizer`             | Tokenizer/segmenter trait + built-in segmenters (whitespace, delimiter, identifier, grapheme, n-gram) |
+| `stringcheese-tokenizer-bpe`         | Byte-Pair-Encoding tokenizer (opt-in)                                          |
+| `stringcheese-tokenizer-tiktoken`    | tiktoken-compatible pre-configured tokenizer (opt-in)                          |
+
+**Language detection**
+
+| Crate                              | Purpose                                                                          |
+|------------------------------------|----------------------------------------------------------------------------------|
+| `stringcheese-detect`              | Tier-walking dispatcher over the detection stack                                 |
+| `stringcheese-detect-script`       | Tier 0: ~5 KB Unicode-block script classifier                                    |
+| `stringcheese-detect-whatlang`     | Tier 1: per-script whatlang shard (WASM component)                               |
+| `stringcheese-detect-lingua`       | Tier 2: per-language lingua shard (WASM component)                               |
+
+**Language packs**
+
+Per-language crates (`stringcheese-en`, `stringcheese-de`,
+`stringcheese-ja`, …) ship stopwords, stemmers, tokenisers, and
+phonetic hookups for each supported language. Opt-in per pack.
+See `stringcheese-lang` and `stringcheese-lang-gen` for the
+plugin traits and the build-time generator that emits per-pack
+capability descriptors.
 
 ## License
 

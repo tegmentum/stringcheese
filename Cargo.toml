@@ -11,8 +11,28 @@ members = [
     "crates/stringcheese-cdc",
     "crates/stringcheese-index",
     "crates/stringcheese-align",
+    "crates/stringcheese-diff",
+    "crates/stringcheese-segment",
+    "crates/stringcheese-stats",
+    "crates/stringcheese-ident",
+    "crates/stringcheese-escape",
+    "crates/stringcheese-ngram",
+    "crates/stringcheese-minhash",
+    "crates/stringcheese-simhash",
+    "crates/stringcheese-winnowing",
+    "crates/stringcheese-normalize",
+    "crates/stringcheese-textsplit",
+    "crates/stringcheese-collate",
+    "crates/stringcheese-translit",
+    "crates/stringcheese-pattern",
+    "crates/stringcheese-pattern-regex",
     "crates/stringcheese-manip",
     "crates/stringcheese-lang",
+    "crates/stringcheese-lang-gen",
+    "crates/stringcheese-detect-script",
+    "crates/stringcheese-detect-whatlang",
+    "crates/stringcheese-detect-lingua",
+    "crates/stringcheese-detect",
     "crates/stringcheese-en",
     "crates/stringcheese-de",
     "crates/stringcheese-es",
@@ -94,8 +114,28 @@ stringcheese-index = { version = "0.1.0", path = "crates/stringcheese-index", de
 stringcheese-corpus = { version = "0.1.0", path = "crates/stringcheese-corpus", default-features = false }
 stringcheese-compare = { version = "0.1.0", path = "crates/stringcheese-compare", default-features = false }
 stringcheese-align = { version = "0.1.0", path = "crates/stringcheese-align", default-features = false }
+stringcheese-diff = { version = "0.1.0", path = "crates/stringcheese-diff", default-features = false }
+stringcheese-segment = { version = "0.1.0", path = "crates/stringcheese-segment", default-features = false }
+stringcheese-stats = { version = "0.1.0", path = "crates/stringcheese-stats", default-features = false }
+stringcheese-ident = { version = "0.1.0", path = "crates/stringcheese-ident", default-features = false }
+stringcheese-escape = { version = "0.1.0", path = "crates/stringcheese-escape", default-features = false }
+stringcheese-ngram = { version = "0.1.0", path = "crates/stringcheese-ngram", default-features = false }
+stringcheese-minhash = { version = "0.1.0", path = "crates/stringcheese-minhash", default-features = false }
+stringcheese-simhash = { version = "0.1.0", path = "crates/stringcheese-simhash", default-features = false }
+stringcheese-winnowing = { version = "0.1.0", path = "crates/stringcheese-winnowing", default-features = false }
+stringcheese-normalize = { version = "0.1.0", path = "crates/stringcheese-normalize", default-features = false }
+stringcheese-textsplit = { version = "0.1.0", path = "crates/stringcheese-textsplit", default-features = false }
+stringcheese-collate = { version = "0.1.0", path = "crates/stringcheese-collate", default-features = false }
+stringcheese-translit = { version = "0.1.0", path = "crates/stringcheese-translit", default-features = false }
+stringcheese-pattern = { version = "0.1.0", path = "crates/stringcheese-pattern", default-features = false }
+stringcheese-pattern-regex = { version = "0.1.0", path = "crates/stringcheese-pattern-regex" }
 stringcheese-manip = { version = "0.1.0", path = "crates/stringcheese-manip", default-features = false }
 stringcheese-lang = { version = "0.1.0", path = "crates/stringcheese-lang", default-features = false }
+stringcheese-lang-gen = { version = "0.1.0", path = "crates/stringcheese-lang-gen" }
+stringcheese-detect-script = { version = "0.1.0", path = "crates/stringcheese-detect-script", default-features = false }
+stringcheese-detect-whatlang = { version = "0.1.0", path = "crates/stringcheese-detect-whatlang", default-features = false }
+stringcheese-detect-lingua = { version = "0.1.0", path = "crates/stringcheese-detect-lingua", default-features = false }
+stringcheese-detect = { version = "0.1.0", path = "crates/stringcheese-detect", default-features = false }
 stringcheese-en = { version = "0.1.0", path = "crates/stringcheese-en", default-features = false }
 stringcheese-de = { version = "0.1.0", path = "crates/stringcheese-de", default-features = false }
 stringcheese-es = { version = "0.1.0", path = "crates/stringcheese-es", default-features = false }

@@ -3,7 +3,7 @@
 //!
 //! A segmenter that yields one [`Segment`] per UAX #29 word. In the
 //! default "words only" mode the segmenter matches
-//! [`stringcheese_unicode::words`] — apostrophes join adjacent
+//! [`stringcheese_unicode::words()`] — apostrophes join adjacent
 //! letters (`"don't"` is one word), numeric decimals stay intact
 //! (`"3.14"` is one word), and whitespace / punctuation is dropped.
 //! In "all boundaries" mode it matches

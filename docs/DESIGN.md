@@ -12,6 +12,30 @@ Subordinate design documents — comparison type system, preprocessing pipeline,
 phonetic subsystem, n-gram and fingerprinting subsystem, WebAssembly/WIT
 interface — will be added under `docs/` as their scope is fleshed out.
 
+Two subordinate docs capture the current architectural target:
+
+- [`docs/design/scope-and-decomposition.md`](./design/scope-and-decomposition.md)
+  — the boundary drawing (what's in vs. explicitly out — notably,
+  entity resolution is a separate library), the target module layout
+  (`compare / normalize / unicode / tokenize / transform / search /
+  diff / chunk / index / hash / case / encode / benchmark`), the
+  unified comparison model, the capability-based selection story, the
+  regex / pattern subsystem as a finite-automata-oriented major
+  subsystem, and the "operations over text sequences, not string
+  utilities" framing.
+- [`docs/design/language-architecture.md`](./design/language-architecture.md)
+  — the per-language-pack restructuring (data-driven, build-time
+  generator, per-language crates preserved for small dependency
+  footprint), the `LanguageDetector` trait (explicit, never silent,
+  three-layer API model), the WebAssembly / WIT / browser story
+  (rlib + WASM component + `wit-js-bindgen`-emitted npm module for the
+  `wasmos` runtime, all from one source), and the
+  three-tier detection stack (script-detect → whatlang per-script →
+  lingua per-language, all speaking one shared WIT contract).
+
+Read both alongside this document before making cross-cutting
+architectural decisions.
+
 ---
 
 ## Vision
