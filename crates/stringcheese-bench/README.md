@@ -84,8 +84,8 @@ capturing the baseline that motivated the change.
 | 8 | `stringcheese-stats::histogram` | Fixed-size ASCII-slot accumulator + late `HashMap` merge | +30 % (366 → 476 MiB/s) |
 | 9 | `stringcheese-diff::algo` (baseline only) | – | at-risk revisit trigger discharged |
 
-Two attempts landed as **principled neutral results** rather
-than wins — the bench itself was the answer:
+Three attempts landed as **principled neutral or negative
+results** rather than wins — the bench itself was the answer:
 
 - **`collapse_whitespace` — first attempt**: "coalesce
   non-whitespace ASCII runs" pattern regressed the primitive by
@@ -97,12 +97,31 @@ than wins — the bench itself was the answer:
   Bench (2s + 5s measurements) confirmed no meaningful throughput
   change — the "fix" was purely a code-cleanup, kept for
   maintenance value only.
+- **`Ratios::of` NEON attempt**: aarch64 SIMD prototype with
+  16-byte vector loads and range-based classifications
+  regressed 30 % (700 → 540 MiB/s). Three causes: (1) scattered
+  ASCII punctuation forced per-byte scalar fallback inside every
+  SIMD chunk, (2) six `vaddvq_u8` cross-lane reductions per
+  chunk add latency, (3) the scalar baseline with an
+  L1-resident 128-byte lookup table is already fast. Reverted;
+  a real SIMD win would need nibble-decomposition
+  byte-classification (Langdale/Lemire style) + deferred
+  reduction across ~200-chunk batches. See the crate's own
+  `## Bench-driven negative result` section.
 
 The pattern is: coalescing wins when the special case is rare
 (JSON metachars, punctuation-canonicalisation targets).
 Byte-per-byte-with-a-lookup wins when the special case is
 frequent (whitespace, sentence terminators). Bench evidence
 dictates which pattern applies — not intuition.
+
+For SIMD: the current lesson is that the scalar path with an
+L1-resident lookup table is a very high bar. SIMD needs a
+matching sophistication (nibble-decomposition classification,
+deferred reduction, per-target backends) to beat it. The
+existing SIMD story in `stringcheese-compare` demonstrates
+what "sophistication" looks like: 6,364 lines of per-target
+kernels across five algorithms.
 
 ## Adding a new bench
 

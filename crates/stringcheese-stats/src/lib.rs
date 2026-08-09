@@ -61,6 +61,36 @@
 //! the design tradeoff (map choice → scaling curve) doesn't
 //! silently regress.
 //!
+//! ## Bench-driven negative result: NEON did NOT help `Ratios::of`
+//!
+//! An aarch64 NEON implementation was prototyped: 16-byte
+//! vectorised loads, five range-based classifications in-lane
+//! (`printable`/`control`/`whitespace`/`digit`/`alphabetic`),
+//! per-flag popcount into running counters. **Bench measured a
+//! 30 % regression** at every input size (700 → 540 MiB/s).
+//!
+//! Three concrete causes surfaced:
+//!
+//! 1. ASCII punctuation is scattered (`! " # % & ' ( ) * , - . /
+//!    : ; ? @ [ \ ] _ { }`), can't be range-classified with a
+//!    handful of compares. The prototype fell back to a per-byte
+//!    scalar loop inside every SIMD chunk — cancelling most of
+//!    the vectorisation win.
+//! 2. Six `vaddvq_u8` cross-lane reductions per 16-byte chunk
+//!    are expensive on aarch64. Deferred reduction (`uint8x16_t`
+//!    accumulators across ~200 chunks then a single reduction)
+//!    was not landed here; would be needed to reclaim the win.
+//! 3. Modern scalar CPUs with an L1-resident 128-byte lookup
+//!    table are already very fast — the scalar baseline was
+//!    ~700 MiB/s. The SIMD ceiling was competitive at best.
+//!
+//! Kept the scalar `ASCII_CLASS` table + `is_ascii_punctuation`
+//! path. A future SIMD attempt would need: nibble-decomposition
+//! byte-classification (Langdale/Lemire), deferred reduction,
+//! and per-target backends (AVX2 / SSE2 / NEON / SIMD128). That
+//! is a substantial engineering arc; the current scalar shape
+//! is the sweet spot for the effort budget.
+//!
 //! ## Example
 //!
 //! ```
