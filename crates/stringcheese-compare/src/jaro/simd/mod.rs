@@ -25,24 +25,37 @@
 //! * `scalar` — portable SIMD-shaped scalar Jaro. Always compiled;
 //!   the reference against which every arch-specific backend is
 //!   differentially tested.
-//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`.
-//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`.
-//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`.
-//! * `wasm_simd128` — wasm SIMD128-gated, `m ≤ 128`. Same 16-byte block
-//!   shape as SSE2/NEON, using `u8x16_eq` + `u8x16_bitmask` for the
-//!   window-scan reduction. Compiled only on `wasm32` and only when the
+//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`. 32-byte block
+//!   width; broadcasts `a[i]` with `_mm256_set1_epi8`, loads `b`-blocks
+//!   with `_mm256_loadu_si256`, compares with `_mm256_cmpeq_epi8`, and
+//!   reduces to a 32-bit mask via `_mm256_movemask_epi8`.
+//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`. 16-byte block
+//!   width; broadcasts with `_mm_set1_epi8`, loads with
+//!   `_mm_loadu_si128`, compares with `_mm_cmpeq_epi8`, reduces to a
+//!   16-bit mask via `_mm_movemask_epi8`.
+//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`. 16-byte
+//!   block width; broadcasts with `vdupq_n_u8`, loads with `vld1q_u8`,
+//!   compares with `vceqq_u8`. NEON has no direct byte-lane movemask,
+//!   so the reduction uses the standard `vshrn_n_u16::<4>` idiom that
+//!   maps each source byte's compare result to a 4-bit nibble in a
+//!   `u64` — `trailing_zeros() / 4` recovers the first-set-lane index.
+//! * `wasm_simd128` — wasm SIMD128-gated. 16-byte block width; broadcasts
+//!   with `u8x16_splat`, loads with `v128_load`, compares with `u8x16_eq`,
+//!   reduces to a 16-bit mask via `u8x16_bitmask` (the wasm analogue of
+//!   `_mm_movemask_epi8`). Compiled only on `wasm32` and only when the
 //!   `simd128` target-feature is enabled — wasm-SIMD feature detection
 //!   is a compile-time gate, not a runtime one.
 //!
-//! The three arch-specific backends currently share the scalar
-//! implementation under a `#[target_feature(enable = "...")]` context;
-//! this puts the runtime-dispatch scaffolding in place and lets the
-//! compiler use the enabled ISA for its own auto-vectorization of the
-//! window-scan inner loop. A true wide-block Jaro window scan using
-//! 128-bit / 256-bit byte-lane compares (SSE2 `_mm_cmpeq_epi8`, AVX2
-//! `_mm256_cmpeq_epi8`, NEON `vceqq_u8`) with a packed-bitmap mask and
-//! `movemask` / `vaddvq_u8` reduction is documented as follow-up work —
-//! landing it does not require any API change.
+//! All four arch-specific backends share the same shape: for each byte
+//! of `a`, broadcast it across a SIMD register and walk the matching
+//! window in `b` in fixed-width blocks. Each block is `cmpeq_epi8`'d
+//! against the broadcast, `AND`ed with the negation of the corresponding
+//! slice of the packed `b_matched` bitmap (extracted via the shared
+//! `Bitmap::read_bits` in the private `common` submodule) and with a
+//! valid-lanes mask on the trailing partial block, then reduced to the
+//! first-set-bit position via `trailing_zeros()`. Transposition counting
+//! and the final score compute stay scalar because they walk sparse
+//! matched positions and don't vectorize.
 //!
 //! # `unsafe` policy
 //!
