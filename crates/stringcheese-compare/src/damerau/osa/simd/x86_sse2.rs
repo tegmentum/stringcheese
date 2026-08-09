@@ -210,18 +210,13 @@ unsafe fn wide_block_128(pattern: &[u8], text: &[u8], m: usize) -> u32 {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn add128(a: __m128i, b: __m128i) -> __m128i {
-    // Register-only SSE2 intrinsics — no memory access. The outer
-    // `unsafe fn` covers only the `#[target_feature]` precondition,
-    // which the caller upholds.
-    unsafe {
-        let a_lo = _mm_cvtsi128_si64(a) as u64;
-        let a_hi = _mm_cvtsi128_si64(_mm_srli_si128(a, 8)) as u64;
-        let b_lo = _mm_cvtsi128_si64(b) as u64;
-        let b_hi = _mm_cvtsi128_si64(_mm_srli_si128(b, 8)) as u64;
-        let (s_lo, carry) = a_lo.overflowing_add(b_lo);
-        let s_hi = a_hi.wrapping_add(b_hi).wrapping_add(u64::from(carry));
-        _mm_set_epi64x(s_hi as i64, s_lo as i64)
-    }
+    let a_lo = _mm_cvtsi128_si64(a) as u64;
+    let a_hi = _mm_cvtsi128_si64(_mm_srli_si128(a, 8)) as u64;
+    let b_lo = _mm_cvtsi128_si64(b) as u64;
+    let b_hi = _mm_cvtsi128_si64(_mm_srli_si128(b, 8)) as u64;
+    let (s_lo, carry) = a_lo.overflowing_add(b_lo);
+    let s_hi = a_hi.wrapping_add(b_hi).wrapping_add(u64::from(carry));
+    _mm_set_epi64x(s_hi as i64, s_lo as i64)
 }
 
 /// Shift a full 128-bit value left by one bit; the outgoing bit 127 is
@@ -233,12 +228,10 @@ unsafe fn add128(a: __m128i, b: __m128i) -> __m128i {
 #[inline]
 #[target_feature(enable = "sse2")]
 unsafe fn shl1(v: __m128i) -> __m128i {
-    unsafe {
-        let shifted = _mm_slli_epi64(v, 1);
-        let top_bits = _mm_srli_epi64(v, 63);
-        let carry = _mm_slli_si128(top_bits, 8);
-        _mm_or_si128(shifted, carry)
-    }
+    let shifted = _mm_slli_epi64(v, 1);
+    let top_bits = _mm_srli_epi64(v, 63);
+    let carry = _mm_slli_si128(top_bits, 8);
+    _mm_or_si128(shifted, carry)
 }
 
 /// Extract bit `i` (0..128) from a 128-bit vector.
@@ -250,14 +243,12 @@ unsafe fn shl1(v: __m128i) -> __m128i {
 #[target_feature(enable = "sse2")]
 unsafe fn bit_at(v: __m128i, i: usize) -> bool {
     debug_assert!(i < W_SSE2);
-    unsafe {
-        if i < W_SCALAR {
-            let lo = _mm_cvtsi128_si64(v) as u64;
-            (lo >> i) & 1 != 0
-        } else {
-            let hi = _mm_cvtsi128_si64(_mm_srli_si128(v, 8)) as u64;
-            (hi >> (i - W_SCALAR)) & 1 != 0
-        }
+    if i < W_SCALAR {
+        let lo = _mm_cvtsi128_si64(v) as u64;
+        (lo >> i) & 1 != 0
+    } else {
+        let hi = _mm_cvtsi128_si64(_mm_srli_si128(v, 8)) as u64;
+        (hi >> (i - W_SCALAR)) & 1 != 0
     }
 }
 

@@ -62,6 +62,15 @@
     reason = "SIMD intrinsics require unsafe by declaration; every unsafe fn and every unsafe block here has a safety comment naming the CPU-feature precondition the dispatcher upholds"
 )]
 
+// `common` hosts helpers shared across the arch-specific backends. When
+// no arch backend is compiled (e.g. wasm32 without simd128), nothing
+// references it and `-D warnings` promotes the dead-code lint to an
+// error. Gate the module on the union of the arch cfgs that use it.
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "wasm32", target_feature = "simd128")
+))]
 mod common;
 pub mod scalar;
 

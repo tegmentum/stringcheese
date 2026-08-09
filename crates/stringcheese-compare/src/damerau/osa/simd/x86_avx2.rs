@@ -248,17 +248,15 @@ unsafe fn add256(
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn shl1_256(v: __m256i, hi_lanes_mask: __m256i) -> __m256i {
-    unsafe {
-        let shifted = _mm256_slli_epi64(v, 1);
-        let top_bits = _mm256_srli_epi64(v, 63);
-        // Rotate `top_bits` one 64-bit lane toward higher indices, then
-        // mask out the wrap-around lane. Same technique as the
-        // Levenshtein AVX2 backend — see its `shl1_256` for the immediate
-        // derivation.
-        let rotated = _mm256_permute4x64_epi64::<0b_10_01_00_11>(top_bits);
-        let carry = _mm256_and_si256(rotated, hi_lanes_mask);
-        _mm256_or_si256(shifted, carry)
-    }
+    let shifted = _mm256_slli_epi64(v, 1);
+    let top_bits = _mm256_srli_epi64(v, 63);
+    // Rotate `top_bits` one 64-bit lane toward higher indices, then
+    // mask out the wrap-around lane. Same technique as the
+    // Levenshtein AVX2 backend — see its `shl1_256` for the immediate
+    // derivation.
+    let rotated = _mm256_permute4x64_epi64::<0b_10_01_00_11>(top_bits);
+    let carry = _mm256_and_si256(rotated, hi_lanes_mask);
+    _mm256_or_si256(shifted, carry)
 }
 
 /// Extract bit `(lane * 64 + lane_bit)` from a 256-bit vector.

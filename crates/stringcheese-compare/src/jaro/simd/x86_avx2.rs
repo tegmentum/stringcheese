@@ -192,7 +192,7 @@ unsafe fn find_match_in_window(
                 _mm256_loadu_si256(buf.as_ptr().cast::<__m256i>())
             };
             let cmp = _mm256_cmpeq_epi8(block, needle_bcast);
-            let eq_mask = _mm256_movemask_epi8(cmp) as u32;
+            let eq_mask = _mm256_movemask_epi8(cmp).cast_unsigned();
             let bm = b_matched.read_bits(off, valid_len) as u32;
             let valid_lanes_mask: u32 = if valid_len == BLOCK {
                 u32::MAX
