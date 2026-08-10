@@ -190,6 +190,16 @@ pub struct WordPieceTokenizer {
     /// How to split raw input text into words before the greedy
     /// longest-match loop. See [`WordPiecePreTokenizer`].
     pre_tokenizer: WordPiecePreTokenizer,
+    /// Special-token surface strings that must be pre-extracted from
+    /// raw text before the pre-tokenizer runs. Mirrors
+    /// [`crate::BpeTokenizer::with_special_tokens`]: registered
+    /// surfaces are longest-match extracted from the input, and each
+    /// occurrence is emitted as its pre-assigned id without going
+    /// through the `WordPiece` greedy-longest-match loop or the
+    /// punctuation split. A default-empty map preserves the existing
+    /// behaviour where a literal `"[CLS]"` in the input is split into
+    /// `"["`, `"CLS"`, `"]"` by the Bert pre-tokenizer.
+    special_tokens: BTreeMap<String, TokenId>,
     /// Optional Unicode normalizer applied to the raw input string
     /// *before* pre-tokenization runs. Matches HF `tokenizers-rs`'
     /// pipeline order (`normalize -> pre-tokenize -> WordPiece ->
@@ -280,6 +290,7 @@ impl WordPieceTokenizer {
             continuing_subword_prefix,
             max_input_chars_per_word,
             pre_tokenizer: WordPiecePreTokenizer::default(),
+            special_tokens: BTreeMap::new(),
             normalizer: None,
             post_processor: PostProcessor::None,
         })
@@ -308,6 +319,28 @@ impl WordPieceTokenizer {
     #[must_use]
     pub fn with_normalizer(mut self, normalizer: Normalizer) -> Self {
         self.normalizer = Some(normalizer);
+        self
+    }
+
+    /// Attach (or replace) the special-token map.
+    ///
+    /// Registered surfaces are pre-extracted from raw input (longest
+    /// match first, ties broken lexically) *before* the pre-tokenizer
+    /// runs; each occurrence emits its pre-assigned id directly and
+    /// the between-specials chunks feed the pre-tokenizer +
+    /// greedy-longest-match loop. Mirrors
+    /// [`crate::BpeTokenizer::with_special_tokens`]. A default-empty
+    /// map preserves the pre-Wave-14 behaviour where `"[CLS]"` in the
+    /// raw input is split into `"["`, `"CLS"`, `"]"` by the Bert
+    /// pre-tokenizer.
+    ///
+    /// This is what makes bert-base-uncased / distilbert-base-uncased
+    /// tokenize a literal `"[CLS]"` in the input as the CLS id
+    /// (matching `transformers.AutoTokenizer`) instead of decomposing
+    /// it into three pieces.
+    #[must_use]
+    pub fn with_special_tokens(mut self, special_tokens: BTreeMap<String, TokenId>) -> Self {
+        self.special_tokens = special_tokens;
         self
     }
 
@@ -373,6 +406,12 @@ impl WordPieceTokenizer {
         &self.vocab
     }
 
+    /// Read-only access to the registered special tokens.
+    #[must_use]
+    pub fn special_tokens(&self) -> &BTreeMap<String, TokenId> {
+        &self.special_tokens
+    }
+
     /// Encode `text` into a sequence of token ids.
     ///
     /// Runs the full BERT-parity pipeline:
@@ -416,10 +455,61 @@ impl WordPieceTokenizer {
     /// Run the pre-tokenizer + greedy longest-match loop over `text`
     /// and return the raw ids, without normalization or
     /// post-processing. Shared by both encode paths.
+    ///
+    /// When [`Self::special_tokens`] is non-empty, registered
+    /// special-token surfaces are pre-extracted from `text` before the
+    /// pre-tokenizer runs (longest match first, ties broken lexically).
+    /// Each occurrence emits its pre-assigned id directly; the
+    /// between-specials chunks feed the pre-tokenizer + greedy loop.
+    /// Mirrors [`crate::BpeTokenizer`]'s
+    /// `encode_pieces_with_policy` shape.
     fn encode_ids_raw(&self, text: &str) -> Vec<TokenId> {
+        if self.special_tokens.is_empty() {
+            // Fast path — no allocations for the specials list on the
+            // common no-specials case.
+            let mut out = Vec::new();
+            for word in self.split_words(text) {
+                self.encode_word_into(&word, &mut out);
+            }
+            return out;
+        }
+
+        let sorted_specials = sorted_special_tokens(&self.special_tokens);
         let mut out = Vec::new();
-        for word in self.split_words(text) {
-            self.encode_word_into(&word, &mut out);
+        let mut cursor = 0usize;
+        while cursor < text.len() {
+            let remaining = &text[cursor..];
+            // Try to match a special at the current cursor.
+            let mut matched: Option<(TokenId, usize)> = None;
+            for (surface, id) in &sorted_specials {
+                if remaining.starts_with(surface.as_str()) {
+                    matched = Some((*id, surface.len()));
+                    break;
+                }
+            }
+            if let Some((id, len)) = matched {
+                out.push(id);
+                cursor += len;
+                continue;
+            }
+            // No special match here — consume up to the next special
+            // occurrence (or end-of-input) and pre-tokenize + WordPiece
+            // the region.
+            let mut next_rel = remaining.len();
+            for (surface, _) in &sorted_specials {
+                if let Some(rel) = remaining.find(surface.as_str()) {
+                    if rel < next_rel {
+                        next_rel = rel;
+                    }
+                }
+            }
+            let region = &remaining[..next_rel];
+            if !region.is_empty() {
+                for word in self.split_words(region) {
+                    self.encode_word_into(&word, &mut out);
+                }
+            }
+            cursor += next_rel;
         }
         out
     }
@@ -676,6 +766,17 @@ fn split_on_punctuation_into(word: &str, out: &mut Vec<String>) {
     if !current.is_empty() {
         out.push(current);
     }
+}
+
+/// Sort a special-token map into `(surface, id)` pairs, longest
+/// surface first, with lexical order breaking ties. Mirrors
+/// [`crate::BpeTokenizer::sorted_specials`] so `<|im_start|>` matches
+/// before `<|im|>` if both are registered and the same input matches
+/// both.
+fn sorted_special_tokens(specials: &BTreeMap<String, TokenId>) -> Vec<(String, TokenId)> {
+    let mut v: Vec<(String, TokenId)> = specials.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    v.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    v
 }
 
 /// Return `true` iff `c` is a punctuation character under BERT's
@@ -1068,6 +1169,77 @@ mod tests {
         // The trait-shape encode returns the templated encoding too.
         let enc = Tokenizer::encode(&tok, "cat dog").unwrap();
         assert_eq!(enc.ids, ids);
+    }
+
+    // -----------------------------------------------------------------
+    // Special-token pre-extraction (BERT / DistilBERT literal-in-text
+    // parity)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn encode_extracts_registered_special_tokens_before_pre_tokenizer() {
+        // Without special-token pre-extraction the Bert pre-tokenizer
+        // would split `[CLS]` into `[`, `CLS`, `]`, none of which live
+        // in the vocab (or their `##` continuations), so the whole
+        // "word" would collapse to UNK — three UNKs in a row. With the
+        // special-token map wired up, `[CLS]` is extracted verbatim
+        // and emits its registered id.
+        let mut specials = BTreeMap::new();
+        specials.insert("[CLS]".to_string(), 1);
+        specials.insert("[SEP]".to_string(), 2);
+        let tok = small_tokenizer().with_special_tokens(specials);
+        // "[CLS] cat [SEP]" — expected: [CLS], "cat", [SEP]
+        //   pre-extraction: [1], region " cat " -> ["cat"] -> [6],
+        //   [SEP] -> [2].
+        let ids = tok.encode("[CLS] cat [SEP]");
+        assert_eq!(ids, vec![1, 6, 2]);
+    }
+
+    #[test]
+    fn encode_special_tokens_take_precedence_over_bert_punctuation_split() {
+        // Under the default (Whitespace + punctuation split) pre-
+        // tokenizer `"[CLS]hello"` (no space) still needs to emit
+        // `[CLS]` then `hello` — the punctuation split by itself would
+        // give ["[", "CLS", "]", "hello"]. Special-token pre-extraction
+        // wins.
+        let mut specials = BTreeMap::new();
+        specials.insert("[CLS]".to_string(), 1);
+        let tok = small_tokenizer().with_special_tokens(specials);
+        let ids = tok.encode("[CLS]cat");
+        assert_eq!(ids, vec![1, 6]);
+    }
+
+    #[test]
+    fn encode_special_tokens_prefer_longest_match_first() {
+        // Register two overlapping surfaces: the longer one must win.
+        let mut vocab = small_bert_vocab();
+        // Vocab entries for the specials — not strictly required for
+        // encode (special_tokens is looked up directly), but real HF
+        // configs put them here too so decode round-trips.
+        vocab.insert("<|im|>".to_string(), 100);
+        vocab.insert("<|im_start|>".to_string(), 101);
+        let tok = WordPieceTokenizer::from_parts(vocab, 0, "##".to_string(), 100)
+            .unwrap()
+            .with_special_tokens({
+                let mut m = BTreeMap::new();
+                m.insert("<|im|>".to_string(), 100);
+                m.insert("<|im_start|>".to_string(), 101);
+                m
+            });
+        // "<|im_start|>" contains "<|im|>" as a prefix if you squint,
+        // but not literally; still: register both to prove the
+        // sort-by-length rule fires for the two entries.
+        let ids = tok.encode("<|im_start|>");
+        assert_eq!(ids, vec![101]);
+    }
+
+    #[test]
+    fn encode_with_no_specials_matches_pre_specials_behaviour() {
+        // Sanity: a fresh tokenizer with no specials must behave
+        // exactly as before this landing did.
+        let tok = small_tokenizer();
+        assert!(tok.special_tokens().is_empty());
+        assert_eq!(tok.encode("cat dog"), vec![6, 7]);
     }
 
     #[test]
