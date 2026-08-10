@@ -51,11 +51,25 @@ pub mod traits;
 #[cfg(feature = "alloc")]
 pub mod builtin;
 
+#[cfg(feature = "alloc")]
+pub mod padding;
+
+#[cfg(feature = "alloc")]
+pub mod truncation;
+
 pub use error::TokenizerError;
 pub use traits::{Segment, Segmenter};
 
 #[cfg(feature = "alloc")]
+pub use padding::{PaddingConfig, PaddingDirection, PaddingStrategy, pad, pad_batch};
+
+#[cfg(feature = "alloc")]
 pub use traits::{Encoding, Tokenizer};
+
+#[cfg(feature = "alloc")]
+pub use truncation::{
+    TruncationConfig, TruncationDirection, TruncationStrategy, truncate, truncate_pair,
+};
 
 #[cfg(feature = "alloc")]
 pub use builtin::{
