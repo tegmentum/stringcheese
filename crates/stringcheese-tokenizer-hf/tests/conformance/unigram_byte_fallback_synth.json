@@ -1,0 +1,208 @@
+{
+  "checkpoint": "unigram-byte-fallback-synth",
+  "source": "hand-crafted synthetic Unigram vocab; expected ids computed by gen_unigram_byte_fallback_synth.py against the vocab in tests/conformance/vocabs/unigram-byte-fallback-synth/tokenizer.json",
+  "note": "Synthetic Llama-shape Unigram vocabulary with SentencePiece byte_fallback enabled; exercises the <0xXX> byte-fallback path for a mix of ASCII / Latin / CJK / emoji OOV characters. The vocab is hand-crafted (no upstream reference tool involved) - its whole purpose is to exercise the byte-fallback code path in the conformance runner. IDs 3..=258 are the reserved <0x00>..<0xFF> byte-fallback tokens; ids 259.. are the six seed word tokens (hi, hello, world, the, quick, fox).",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "hi",
+      "expected_ids": [
+        259
+      ],
+      "note": "single-word-hi"
+    },
+    {
+      "input": "hello",
+      "expected_ids": [
+        260
+      ],
+      "note": "single-word-hello"
+    },
+    {
+      "input": "hihello",
+      "expected_ids": [
+        259,
+        260
+      ],
+      "note": "two-words-nospace"
+    },
+    {
+      "input": "?",
+      "expected_ids": [
+        66
+      ],
+      "note": "ascii-oov-question"
+    },
+    {
+      "input": "hi?",
+      "expected_ids": [
+        259,
+        66
+      ],
+      "note": "ascii-oov-mixed"
+    },
+    {
+      "input": "??!",
+      "expected_ids": [
+        66,
+        66,
+        36
+      ],
+      "note": "ascii-oov-only"
+    },
+    {
+      "input": "hié",
+      "expected_ids": [
+        259,
+        198,
+        172
+      ],
+      "note": "word-plus-2byte-utf8"
+    },
+    {
+      "input": "é",
+      "expected_ids": [
+        198,
+        172
+      ],
+      "note": "2byte-utf8-only"
+    },
+    {
+      "input": "☃",
+      "expected_ids": [
+        229,
+        155,
+        134
+      ],
+      "note": "3byte-utf8-snowman"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "4byte-utf8-emoji-smile"
+    },
+    {
+      "input": "hello😀",
+      "expected_ids": [
+        260,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "word-plus-4byte-emoji"
+    },
+    {
+      "input": "hi?world",
+      "expected_ids": [
+        259,
+        66,
+        261
+      ],
+      "note": "mixed-word-oov-word"
+    },
+    {
+      "input": "😀😀😀",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131,
+        243,
+        162,
+        155,
+        131,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "repeated-emoji"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        211,
+        183,
+        212,
+        131
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        231,
+        192,
+        163,
+        232,
+        168,
+        192
+      ],
+      "note": "chinese-3byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        227,
+        167,
+        171,
+        227,
+        167,
+        177,
+        227,
+        167,
+        187
+      ],
+      "note": "hindi-3byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        220,
+        136,
+        219,
+        180
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        218,
+        172,
+        218,
+        159,
+        218,
+        152,
+        218,
+        160
+      ],
+      "note": "obscure-unicode-hebrew-2byte"
+    },
+    {
+      "input": "😀hi🎉",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131,
+        259,
+        243,
+        162,
+        145,
+        140
+      ],
+      "note": "emoji-plus-word-plus-emoji"
+    }
+  ]
+}

@@ -488,6 +488,307 @@ fn hf_loader_wires_metaspace_inside_sequence_wrapper() {
     assert_eq!(tok.encode("hi").unwrap(), vec![1]);
 }
 
+// ---------------------------------------------------------------------
+// Byte-fallback (SentencePiece `byte_fallback: true`)
+// ---------------------------------------------------------------------
+
+/// Build a vocabulary containing the 256 reserved `<0x00>`..`<0xFF>`
+/// byte-fallback tokens (at ids 3..259) plus the word tokens listed in
+/// `extra_words`. Every byte token gets score `-3.0`, matching HF's
+/// on-disk convention (byte tokens are cheaper than a real `unk` so
+/// the fallback path is the natural loser when a vocab-only path
+/// exists but the natural winner over `unk`). Extra words get score
+/// `-1.0` — cheap enough that the whole-word path beats the byte
+/// fallback whenever the word is in the vocab.
+///
+/// Returned tuple: `(json, byte_id_base)`. `byte_id_base` is the id of
+/// the `<0x00>` token (so id of `<0xXX>` is `byte_id_base + XX`);
+/// tests use this to spell out expected id lists.
+fn byte_fallback_vocab_json(extra_words: &[&str]) -> (String, u32) {
+    // ids 0..=2 reserved for <unk>, <s>, </s> — matches the Llama
+    // convention. The byte-fallback tokens follow.
+    let mut vocab_entries: Vec<String> = Vec::new();
+    vocab_entries.push(r#"["<unk>", 0.0]"#.to_string());
+    vocab_entries.push(r#"["<s>", 0.0]"#.to_string());
+    vocab_entries.push(r#"["</s>", 0.0]"#.to_string());
+    let byte_id_base: u32 = 3;
+    for b in 0u32..=255 {
+        vocab_entries.push(format!(r#"["<0x{b:02X}>", -3.0]"#));
+    }
+    for w in extra_words {
+        // Extra words: score cheap enough to win against byte-fallback.
+        vocab_entries.push(format!("[{w:?}, -1.0]"));
+    }
+    let json = format!(
+        r#"{{
+            "added_tokens": [],
+            "model": {{
+                "type": "Unigram",
+                "vocab": [{}],
+                "unk_id": 0,
+                "byte_fallback": true
+            }}
+        }}"#,
+        vocab_entries.join(",")
+    );
+    (json, byte_id_base)
+}
+
+#[test]
+fn byte_fallback_construction_detects_all_256_tokens() {
+    // A well-formed vocab: the 256 <0xXX> tokens are present so
+    // construction succeeds.
+    let (json, _base) = byte_fallback_vocab_json(&[]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert!(tok.byte_fallback_enabled());
+}
+
+#[test]
+fn byte_fallback_missing_tokens_are_rejected() {
+    // A vocab that turns byte_fallback on but is missing the byte
+    // tokens must fail construction with the specific error.
+    let json = r#"{
+        "added_tokens": [],
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["<0x00>", -3.0],
+                ["<0x01>", -3.0]
+            ],
+            "unk_id": 0,
+            "byte_fallback": true
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let err = to_unigram_tokenizer(&config).unwrap_err();
+    match err {
+        HfConversionError::ByteFallbackTokensMissing {
+            missing_count,
+            first_missing_byte,
+        } => {
+            // 256 total - 2 present = 254 missing, first missing byte
+            // is 0x02.
+            assert_eq!(missing_count, 254);
+            assert_eq!(first_missing_byte, 0x02);
+        }
+        other => panic!("expected ByteFallbackTokensMissing, got {other:?}"),
+    }
+}
+
+#[test]
+fn byte_fallback_disabled_still_returns_untokenizable_char() {
+    // A config with `byte_fallback: false` (and no unk_id) should
+    // still surface `UntokenizableChar` for an OOV character — the
+    // byte-fallback path is opt-in.
+    let json = r#"{
+        "added_tokens": [],
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["h", -1.0],
+                ["i", -1.0]
+            ],
+            "byte_fallback": false
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert!(!tok.byte_fallback_enabled());
+    let err = tok.encode("h?").unwrap_err();
+    match err {
+        UnigramEncodeError::UntokenizableChar { char_offset } => {
+            assert_eq!(char_offset, 1);
+        }
+        other => panic!("expected UntokenizableChar, got {other:?}"),
+    }
+}
+
+#[test]
+fn byte_fallback_emits_utf8_bytes_for_oov_char() {
+    // A vocab with byte-fallback enabled AND a word entry: the word
+    // must survive (whole-word path wins against bytes) and any OOV
+    // char is emitted as its UTF-8 byte ids in order.
+    let (json, base) = byte_fallback_vocab_json(&["hi"]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+
+    // "hi" is in the vocab, so it wins over 2 byte-fallback tokens.
+    // With 256 byte tokens at ids 3..=258, the word "hi" sits at id 259.
+    let ids = tok.encode("hi").unwrap();
+    assert_eq!(ids, vec![259_usize]);
+
+    // A single ASCII OOV char — `?` (0x3F). Byte fallback emits one
+    // id: base + 0x3F.
+    let ids = tok.encode("?").unwrap();
+    assert_eq!(ids, vec![(base as usize) + 0x3F]);
+
+    // A multi-byte UTF-8 OOV char — `é` (U+00E9 = 0xC3 0xA9). Byte
+    // fallback emits two ids in forward byte order.
+    let ids = tok.encode("é").unwrap();
+    assert_eq!(ids, vec![(base as usize) + 0xC3, (base as usize) + 0xA9]);
+
+    // A 3-byte OOV char — snowman `☃` (U+2603 = 0xE2 0x98 0x83).
+    let ids = tok.encode("☃").unwrap();
+    assert_eq!(
+        ids,
+        vec![
+            (base as usize) + 0xE2,
+            (base as usize) + 0x98,
+            (base as usize) + 0x83
+        ]
+    );
+
+    // A 4-byte OOV char — grinning-face emoji `😀`
+    // (U+1F600 = 0xF0 0x9F 0x98 0x80).
+    let ids = tok.encode("😀").unwrap();
+    assert_eq!(
+        ids,
+        vec![
+            (base as usize) + 0xF0,
+            (base as usize) + 0x9F,
+            (base as usize) + 0x98,
+            (base as usize) + 0x80
+        ]
+    );
+
+    // Mixed word + OOV char + word — the byte-fallback path composes
+    // with the vocab path.
+    let ids = tok.encode("hi?hi").unwrap();
+    assert_eq!(ids, vec![259_usize, (base as usize) + 0x3F, 259_usize]);
+}
+
+#[test]
+fn byte_fallback_round_trips_through_decode() {
+    // Round-trip: encode → decode reconstructs the original input,
+    // even for OOV characters that go through the byte-fallback path.
+    let (json, _base) = byte_fallback_vocab_json(&["hi"]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+
+    // Every input here contains characters that must go through byte
+    // fallback (none of them are in the extra_words list).
+    let inputs = [
+        "?",      // ASCII OOV
+        "é",      // 2-byte
+        "☃",      // 3-byte
+        "😀",     // 4-byte
+        "hi?",    // vocab + 1-byte
+        "hi😀hi", // vocab + 4-byte + vocab
+        "?éhi",   // mixed
+        "?????",  // repeated 1-byte
+    ];
+    let mut passed = 0usize;
+    for input in inputs {
+        let ids = tok.encode(input).unwrap();
+        let decoded = tok.decode(&ids).unwrap();
+        assert_eq!(decoded, input, "round-trip failed for {input:?}");
+        passed += 1;
+    }
+    assert_eq!(passed, inputs.len());
+}
+
+#[test]
+fn byte_fallback_wins_over_unk_when_both_configured() {
+    // With byte-fallback on and an unk_id also configured, an OOV
+    // char takes the byte-fallback path (not the unk path).
+    let (json, base) = byte_fallback_vocab_json(&[]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert_eq!(tok.unk_id(), Some(0));
+    // "?" — ASCII 0x3F. byte-fallback emits one id at base + 0x3F.
+    // The unk_id (0) must NOT appear.
+    let ids = tok.encode("?").unwrap();
+    assert_eq!(ids, vec![(base as usize) + 0x3F]);
+    assert!(!ids.contains(&0_usize));
+}
+
+#[test]
+fn byte_fallback_accepts_lowercase_hex_surface() {
+    // Some vocabs might ship `<0xff>` instead of `<0xFF>`. Both must
+    // be recognised as the byte-0xFF token. Build a vocab by hand
+    // that uses lowercase hex for byte 0xFF only.
+    let mut vocab_entries: Vec<String> = Vec::new();
+    vocab_entries.push(r#"["<unk>", 0.0]"#.to_string());
+    for b in 0u32..0xFF {
+        vocab_entries.push(format!(r#"["<0x{b:02X}>", -3.0]"#));
+    }
+    // The last byte token uses lowercase hex — still valid.
+    vocab_entries.push(r#"["<0xff>", -3.0]"#.to_string());
+    let json = format!(
+        r#"{{
+            "added_tokens": [],
+            "model": {{
+                "type": "Unigram",
+                "vocab": [{}],
+                "unk_id": 0,
+                "byte_fallback": true
+            }}
+        }}"#,
+        vocab_entries.join(",")
+    );
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert!(tok.byte_fallback_enabled());
+    // Encoding a character whose UTF-8 includes byte 0xFF hits the
+    // lowercase-hex entry. Byte 0xFF alone is not valid UTF-8, but a
+    // 2-byte char like `ÿ` (U+00FF = 0xC3 0xBF) doesn't hit 0xFF; use
+    // the 4-byte char U+10FFFF (last valid Unicode scalar) which
+    // encodes as F4 8F BF BF — still no 0xFF.
+    // Confirm via a synthetic decode instead: build an id list that
+    // uses the 0xFF entry and check its byte is recovered on decode.
+    // <unk> at 0, byte tokens at 1..=256. Byte 0xFF is at id 256.
+    let decoded = tok.decode(&[256_usize]).unwrap();
+    // Byte 0xFF alone is invalid UTF-8; from_utf8_lossy emits U+FFFD.
+    assert_eq!(decoded, "\u{FFFD}");
+}
+
+#[test]
+fn byte_fallback_survives_normalization_ordering() {
+    // The audit called out a specific interaction: byte-fallback fires
+    // in the Viterbi loop, which runs AFTER the normalizer. A
+    // Precompiled charsmap (or NFC, or any other normalizer) may
+    // rewrite the input before Viterbi sees it — the byte-fallback
+    // path must apply to the normalized bytes, not the raw ones.
+    //
+    // NFC on ASCII is identity, so use a decomposed input that NFC
+    // composes: "e\u{0301}" (e + combining acute accent) → "é" under
+    // NFC. Without byte-fallback the composed char would be OOV; with
+    // byte-fallback + NFC the composed 2-byte char goes through byte
+    // fallback correctly.
+    let (json, base) = byte_fallback_vocab_json(&[]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_normalizer(Normalizer::Nfc);
+    // "e\u{0301}" is 3 bytes (`e` + 2-byte combining acute). NFC
+    // composes it to `é` (2 bytes: 0xC3 0xA9). Byte fallback should
+    // emit the 2-byte encoding, not the raw 3-byte pre-NFC one.
+    let ids = tok.encode("e\u{0301}").unwrap();
+    assert_eq!(ids, vec![(base as usize) + 0xC3, (base as usize) + 0xA9]);
+}
+
+#[test]
+fn byte_fallback_hf_loader_wires_it_end_to_end() {
+    // A minimal Llama-shape config: Unigram model with byte_fallback,
+    // no normalizer, no pre-tokenizer. Verify to_tokenizer routes
+    // through the Unigram materialiser and the byte-fallback path is
+    // active on the returned tokenizer.
+    let (json, base) = byte_fallback_vocab_json(&["hi"]);
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_tokenizer(&config).unwrap();
+    match tok {
+        HfTokenizer::Unigram(uni) => {
+            assert!(uni.byte_fallback_enabled());
+            // ASCII `?` (0x3F) — the byte-fallback path fires.
+            let ids = uni.encode("?").unwrap();
+            assert_eq!(ids, vec![(base as usize) + 0x3F]);
+        }
+        other => panic!("expected HfTokenizer::Unigram, got {other:?}"),
+    }
+}
+
 #[test]
 fn hf_loader_rejects_ambiguous_multi_entry_pre_tokenizer_sequence() {
     // A Sequence with two children is ambiguous — the loader must

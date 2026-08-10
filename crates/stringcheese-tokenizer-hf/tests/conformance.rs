@@ -357,6 +357,7 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "cl100k_base.json",
     "bert_base_uncased.json",
     "xlm_roberta_base.json",
+    "unigram_byte_fallback_synth.json",
 ];
 
 #[test]
@@ -438,4 +439,24 @@ fn conformance_bert_base_uncased() {
 )]
 fn conformance_xlm_roberta_base() {
     run_fixture("xlm_roberta_base.json", "xlm-roberta-base");
+}
+
+// The synthetic `unigram-byte-fallback-synth` fixture ships its own
+// tokenizer.json under `tests/conformance/vocabs/` (it is a hand-crafted
+// Unigram vocab, not a real upstream one — see the fixture's `source`
+// field for the rationale). It exercises the SentencePiece `<0xXX>`
+// byte-fallback path added to the Unigram runtime for Llama / Mistral /
+// Qwen checkpoint support. The `#[ignore]` gate still applies for
+// consistency with the rest of the conformance runner — activating the
+// suite requires `--features parity-real-vocab`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_unigram_byte_fallback_synth() {
+    run_fixture(
+        "unigram_byte_fallback_synth.json",
+        "unigram-byte-fallback-synth",
+    );
 }
