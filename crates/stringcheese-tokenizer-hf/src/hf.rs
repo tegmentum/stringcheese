@@ -1801,8 +1801,8 @@ impl UnigramTokenizer {
 
     /// Attach (or replace) the post-processor.
     ///
-    /// The post-processor runs on the finished [`Encoding`] before
-    /// [`Tokenizer::encode`] returns it. See
+    /// The post-processor runs on the finished `Encoding` before
+    /// `Tokenizer::encode` returns it. See
     /// [`crate::post_processor::PostProcessor`] for the shape; the
     /// default [`PostProcessor::None`] is a pass-through, so callers
     /// who never configure one see the unchanged Unigram output.
@@ -1851,11 +1851,11 @@ impl UnigramTokenizer {
     /// 2. If a [`Metaspace`] pre-tokenizer is configured, split the
     ///    normalized string into pieces per its `apply` rule; else
     ///    treat the whole normalized string as one piece.
-    /// 3. Run [`Self::encode_piece_ids`] (Viterbi forward-DP) on each
-    ///    piece and concatenate the resulting ids in order.
+    /// 3. Run `encode_piece_ids` (Viterbi forward-DP) on each piece
+    ///    and concatenate the resulting ids in order.
     /// 4. The [`PostProcessor`] is not applied here — it operates on
-    ///    an [`Encoding`], not a bare `Vec<usize>`, so the trait
-    ///    [`Tokenizer::encode`] entry point is the one that splices
+    ///    an `Encoding`, not a bare `Vec<usize>`, so the trait
+    ///    `Tokenizer::encode` entry point is the one that splices
     ///    the CLS / SEP wrapping. This inherent method returns the
     ///    raw piece ids so callers who want them without post-
     ///    processing keep the pre-composition surface.
@@ -2161,7 +2161,7 @@ impl std::error::Error for UnigramEncodeError {}
 ///
 /// Supported ancillary features today:
 ///
-/// * `normalizer` — every variant [`to_runtime_normalizer`] materialises
+/// * `normalizer` — every variant `to_runtime_normalizer` materialises
 ///   is attached to the produced [`UnigramTokenizer`] via
 ///   [`UnigramTokenizer::with_normalizer`]. This is what runs the
 ///   XLM-RoBERTa `Precompiled` charsmap on the raw input before
@@ -2191,12 +2191,12 @@ impl std::error::Error for UnigramEncodeError {}
 /// * [`HfConversionError::UnigramUnkIdOutOfRange`] — the config's
 ///   `unk_id` points past the end of the vocabulary.
 /// * [`HfConversionError::UnsupportedNormalizer`] —
-///   [`to_runtime_normalizer`]'s error.
+///   `to_runtime_normalizer`'s error.
 /// * [`HfConversionError::UnsupportedPreTokenizer`] — the
 ///   `pre_tokenizer` block is not a Metaspace shape (nor a single-entry
 ///   Sequence wrapping one).
 /// * [`HfConversionError::UnsupportedPostProcessor`] —
-///   [`to_runtime_post_processor`]'s error.
+///   `to_runtime_post_processor`'s error.
 ///
 /// # Examples
 ///
