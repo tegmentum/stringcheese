@@ -83,6 +83,12 @@ members = [
 ]
 exclude = [
     "fuzz",
+    # Parity harness — deliberately kept out of the main workspace so
+    # its opt-in `parity-real-vocab` feature (network fetch +
+    # multi-MB tiktoken-rs oracle) never leaks into
+    # `cargo test --workspace --all-features`. See the crate's
+    # README for the rationale and the CI wiring.
+    "crates/stringcheese-tokenizer-tiktoken-conformance",
 ]
 
 [workspace.package]
