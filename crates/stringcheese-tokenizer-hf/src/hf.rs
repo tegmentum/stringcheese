@@ -1804,6 +1804,25 @@ pub fn to_wordpiece_tokenizer(
         }
     })?;
 
+    // Special tokens — `added_tokens[*]` entries with `special == true`
+    // must be pre-extracted from raw input before the Bert
+    // pre-tokenizer's punctuation split otherwise splits `[CLS]` into
+    // `[`, `CLS`, `]`. Mirrors `to_bpe_tokenizer`'s specials wiring.
+    // HF's own schema treats `special` as `false` when absent, and
+    // some checkpoints ship added_tokens with `special: false`
+    // (`##`-continuations added by tokenizer training loops, etc.);
+    // filtering to `special == true` is the same rule
+    // `to_bpe_tokenizer` uses.
+    let mut wp_specials: BTreeMap<String, TokenId> = BTreeMap::new();
+    for at in &config.added_tokens {
+        if at.special {
+            wp_specials.insert(at.content.clone(), at.id);
+        }
+    }
+    if !wp_specials.is_empty() {
+        tok = tok.with_special_tokens(wp_specials);
+    }
+
     // Pre-tokenizer routing. `WordPiece` cares only about the
     // whitespace / punctuation split; the shape carried in a
     // `Sequence` around one of the supported entries is unwrapped.
@@ -2178,6 +2197,17 @@ pub struct UnigramTokenizer {
     /// [`PostProcessor::None`] is a pass-through so callers who never
     /// configure one see the raw Viterbi output.
     post_processor: PostProcessor,
+    /// Special-token surface strings that must be pre-extracted from
+    /// raw (post-normalized) input before the Metaspace pre-tokenizer
+    /// and the Viterbi loop see it. Mirrors
+    /// [`BpeTokenizer::with_special_tokens`] /
+    /// [`crate::wordpiece::WordPieceTokenizer::with_special_tokens`]:
+    /// registered surfaces are longest-match extracted, each occurrence
+    /// emits its pre-assigned id, and the between-specials chunks feed
+    /// the pre-tokenizer + Viterbi pipeline. A default-empty map
+    /// preserves the pre-Wave-14 behaviour where a literal `"<s>"` in
+    /// the input goes through Viterbi as regular text.
+    special_tokens: BTreeMap<String, TokenId>,
     /// Optional byte-fallback table: `byte_fallback[b]` is the vocab
     /// id of the `<0xBB>` token reserved for byte value `b`. Populated
     /// by [`Self::with_byte_fallback`] after scanning the vocab for
@@ -2229,6 +2259,17 @@ fn parse_byte_fallback_surface(s: &str) -> Option<u8> {
     let hi = decode_hex_digit(bytes[3])?;
     let lo = decode_hex_digit(bytes[4])?;
     Some((hi << 4) | lo)
+}
+
+/// Sort a Unigram special-token map into `(surface, id)` pairs,
+/// longest surface first, with lexical order breaking ties. Mirrors
+/// [`BpeTokenizer::sorted_specials`] /
+/// [`crate::wordpiece`]'s helper so `<|im_start|>` matches before
+/// `<|im|>` if both are registered.
+fn sorted_unigram_special_tokens(specials: &BTreeMap<String, TokenId>) -> Vec<(String, TokenId)> {
+    let mut v: Vec<(String, TokenId)> = specials.iter().map(|(k, v)| (k.clone(), *v)).collect();
+    v.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    v
 }
 
 /// Decode one ASCII hex digit (`0-9`, `A-F`, `a-f`) to its 0..=15
@@ -2285,6 +2326,7 @@ impl UnigramTokenizer {
             pre_tokenizer: None,
             post_processor: PostProcessor::None,
             byte_fallback: None,
+            special_tokens: BTreeMap::new(),
         })
     }
 
@@ -2327,6 +2369,29 @@ impl UnigramTokenizer {
     #[must_use]
     pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
         self.post_processor = post_processor;
+        self
+    }
+
+    /// Attach (or replace) the special-token map.
+    ///
+    /// Registered surfaces are pre-extracted from the normalized input
+    /// (longest match first, ties broken lexically) *before* the
+    /// Metaspace pre-tokenizer and Viterbi loop run; each occurrence
+    /// emits its pre-assigned id directly and the between-specials
+    /// chunks flow through the normal pipeline. Mirrors
+    /// [`BpeTokenizer::with_special_tokens`] /
+    /// [`crate::wordpiece::WordPieceTokenizer::with_special_tokens`].
+    /// A default-empty map preserves the previous behaviour where a
+    /// literal `"<s>"` in the input flowed through Viterbi as regular
+    /// text.
+    ///
+    /// This is what makes xlm-roberta-base tokenize a literal `"<s>"`
+    /// in the input as the CLS id (matching
+    /// `transformers.AutoTokenizer`) instead of decomposing it into
+    /// unrelated Metaspace pieces.
+    #[must_use]
+    pub fn with_special_tokens(mut self, special_tokens: BTreeMap<String, TokenId>) -> Self {
+        self.special_tokens = special_tokens;
         self
     }
 
@@ -2418,6 +2483,12 @@ impl UnigramTokenizer {
         &self.post_processor
     }
 
+    /// Read-only access to the registered special tokens.
+    #[must_use]
+    pub fn special_tokens(&self) -> &BTreeMap<String, TokenId> {
+        &self.special_tokens
+    }
+
     /// `true` when [`Self::with_byte_fallback`] has been called on
     /// this tokenizer and the byte-fallback path is active.
     #[must_use]
@@ -2460,10 +2531,60 @@ impl UnigramTokenizer {
         };
         let text: &str = normalized.as_ref();
 
-        // Step 2 + 3: pre-tokenize into pieces and run Viterbi on
-        // each. Without a Metaspace configured we run on the whole
-        // string (preserving the original pre-composition behaviour
-        // for callers that never call `with_pre_tokenizer`).
+        if self.special_tokens.is_empty() {
+            // Fast path — the pre-Wave-14 shape. Skip allocating a
+            // specials list on the common no-specials call site.
+            return self.encode_regions(text);
+        }
+
+        // Step 2': pre-extract registered special-token surfaces from
+        // the normalized text. Regions between (and around) matches
+        // flow through the normal pre-tokenize + Viterbi pipeline via
+        // [`Self::encode_regions`]. Mirrors
+        // [`BpeTokenizer::encode_pieces_with_policy`] /
+        // [`crate::wordpiece::WordPieceTokenizer::encode_ids_raw`].
+        let sorted_specials = sorted_unigram_special_tokens(&self.special_tokens);
+        let mut ids = Vec::new();
+        let mut cursor = 0usize;
+        while cursor < text.len() {
+            let remaining = &text[cursor..];
+            // Try to match a special at the current cursor.
+            let mut matched: Option<(usize, usize)> = None;
+            for (surface, id) in &sorted_specials {
+                if remaining.starts_with(surface.as_str()) {
+                    matched = Some((*id as usize, surface.len()));
+                    break;
+                }
+            }
+            if let Some((id, len)) = matched {
+                ids.push(id);
+                cursor += len;
+                continue;
+            }
+            // No special match — take the region up to the next match
+            // (or end-of-input) and hand it to the normal pipeline.
+            let mut next_rel = remaining.len();
+            for (surface, _) in &sorted_specials {
+                if let Some(rel) = remaining.find(surface.as_str()) {
+                    if rel < next_rel {
+                        next_rel = rel;
+                    }
+                }
+            }
+            let region = &remaining[..next_rel];
+            if !region.is_empty() {
+                let region_ids = self.encode_regions(region)?;
+                ids.extend(region_ids);
+            }
+            cursor += next_rel;
+        }
+        Ok(ids)
+    }
+
+    /// Run the pre-tokenize + Viterbi pipeline on `text`, treating it
+    /// as one already-normalized region without any special-token
+    /// extraction. Shared by [`Self::encode`]'s fast and slow paths.
+    fn encode_regions(&self, text: &str) -> Result<Vec<usize>, UnigramEncodeError> {
         let mut ids = Vec::new();
         if let Some(ms) = &self.pre_tokenizer {
             for piece in ms.apply(text) {
@@ -2924,6 +3045,23 @@ pub fn to_unigram_tokenizer(
     if let Some(hp) = &config.post_processor {
         let pp = to_runtime_post_processor(hp)?;
         tok = tok.with_post_processor(pp);
+    }
+
+    // Special tokens — `added_tokens[*]` entries with `special == true`
+    // must be pre-extracted from the (normalized) input before the
+    // Metaspace pre-tokenizer and Viterbi loop see them. Otherwise a
+    // literal `"<s>"` in the input would flow through Viterbi as
+    // regular text and (on xlm-r) come out as `▁<`, `s`, `>` pieces
+    // instead of the CLS id. Same filter rule as
+    // [`to_bpe_tokenizer`] / [`to_wordpiece_tokenizer`].
+    let mut uni_specials: BTreeMap<String, TokenId> = BTreeMap::new();
+    for at in &config.added_tokens {
+        if at.special {
+            uni_specials.insert(at.content.clone(), at.id);
+        }
+    }
+    if !uni_specials.is_empty() {
+        tok = tok.with_special_tokens(uni_specials);
     }
 
     Ok(tok)
@@ -5914,6 +6052,226 @@ mod tests {
         // WhitespaceSplit -> ["hello", "world"] -> [3, 4] ->
         // template splice -> [1, 3, 4, 2].
         assert_eq!(wl.encode("Hello WORLD").unwrap(), vec![1, 3, 4, 2]);
+    }
+
+    // -----------------------------------------------------------------
+    // Special-token pre-extraction (BERT-family + XLM-R literal-in-text
+    // parity) — WordPiece and Unigram loaders.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn to_wordpiece_tokenizer_pre_extracts_registered_special_tokens() {
+        // BERT-style config: `[CLS]` (101) and `[SEP]` (102) are
+        // registered as `special: true` in `added_tokens`, and the
+        // default pre-tokenizer (BertPreTokenizer) would otherwise
+        // split `[CLS]` into `[`, `CLS`, `]`. With special-token
+        // pre-extraction wired up on the loader, a literal `[CLS]` in
+        // the input emits id 101 directly — matching
+        // `transformers.AutoTokenizer`.
+        //
+        // The BERT-style TemplateProcessing here splices `[CLS]`/`[SEP]`
+        // as the outer wrapping; the inner ids come from the pre-
+        // extraction of the literal specials plus the WordPiece encode
+        // of `"hello"`.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 101, "content": "[CLS]", "special": true},
+                {"id": 102, "content": "[SEP]", "special": true}
+            ],
+            "pre_tokenizer": {"type": "BertPreTokenizer"},
+            "post_processor": {
+                "type": "TemplateProcessing",
+                "single": [
+                    {"SpecialToken": {"id": "[CLS]", "type_id": 0}},
+                    {"Sequence":     {"id": "A",     "type_id": 0}},
+                    {"SpecialToken": {"id": "[SEP]", "type_id": 0}}
+                ],
+                "pair": [],
+                "special_tokens": {
+                    "[CLS]": {"id": "[CLS]", "ids": [101], "tokens": ["[CLS]"]},
+                    "[SEP]": {"id": "[SEP]", "ids": [102], "tokens": ["[SEP]"]}
+                }
+            },
+            "model": {
+                "type": "WordPiece",
+                "unk_token": "[UNK]",
+                "vocab": {
+                    "[UNK]": 100,
+                    "[CLS]": 101,
+                    "[SEP]": 102,
+                    "hello": 7592
+                }
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        // The tokenizer must carry the two specials pre-extracted from
+        // added_tokens (not the whole vocab).
+        assert_eq!(tok.special_tokens().len(), 2);
+        assert_eq!(tok.special_tokens().get("[CLS]"), Some(&101));
+        assert_eq!(tok.special_tokens().get("[SEP]"), Some(&102));
+        // "[CLS] hello [SEP]" — expected (matching HF's shape):
+        //   outer CLS (101, from template) + literal CLS (101) +
+        //   "hello" (7592) + literal SEP (102) + outer SEP (102).
+        let ids = tok.encode("[CLS] hello [SEP]");
+        assert_eq!(ids, vec![101, 101, 7592, 102, 102]);
+    }
+
+    #[test]
+    fn to_wordpiece_tokenizer_filters_added_tokens_by_special_flag() {
+        // Confirm the `special: false` bit does what HF's schema says:
+        // added_tokens with `special == false` land in the vocab (they
+        // affect WordPiece lookups) but are NOT pre-extracted. Only
+        // `special == true` entries reach the special_tokens map.
+        //
+        // Example: `[NORMAL]` is `special: false`; `[SPECIAL]` is
+        // `special: true`. Only `[SPECIAL]` shows up in
+        // `special_tokens()`.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 200, "content": "[NORMAL]",  "special": false},
+                {"id": 201, "content": "[SPECIAL]", "special": true}
+            ],
+            "model": {
+                "type": "WordPiece",
+                "unk_token": "[UNK]",
+                "vocab": {"[UNK]": 0}
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        assert_eq!(tok.special_tokens().len(), 1);
+        assert!(tok.special_tokens().contains_key("[SPECIAL]"));
+        assert!(!tok.special_tokens().contains_key("[NORMAL]"));
+        // Both surfaces land in the vocab regardless of the flag.
+        assert!(tok.vocab().contains_key("[NORMAL]"));
+        assert!(tok.vocab().contains_key("[SPECIAL]"));
+    }
+
+    #[test]
+    fn to_unigram_tokenizer_pre_extracts_registered_special_tokens() {
+        // XLM-R style: `<s>` and `</s>` are `special: true` in
+        // added_tokens. Without pre-extraction the Metaspace
+        // pre-tokenizer would fold `▁` onto the `<` and the Viterbi
+        // loop would decompose `<s>` into unrelated pieces (or fall
+        // back to `unk`/byte-fallback). With pre-extraction, a literal
+        // `<s>` in the input emits its registered id directly.
+        //
+        // The vocab is inline (no real xlm-r bytes) so the test can
+        // ship without a materialised tokenizer.json — the ids for
+        // `▁hello` and `hello` are hand-picked.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 0, "content": "<s>",   "special": true},
+                {"id": 2, "content": "</s>",  "special": true}
+            ],
+            "pre_tokenizer": {
+                "type": "Metaspace",
+                "replacement": "▁",
+                "prepend_scheme": "always",
+                "split": true
+            },
+            "model": {
+                "type": "Unigram",
+                "unk_id": 1,
+                "vocab": [
+                    ["<s>",     0.0],
+                    ["<unk>",   -100.0],
+                    ["</s>",    0.0],
+                    ["▁hello",  -1.0],
+                    ["▁world",  -2.0]
+                ]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_unigram_tokenizer(&config).unwrap();
+        // The loader must have populated special_tokens from
+        // added_tokens with `special == true`.
+        assert_eq!(tok.special_tokens().len(), 2);
+        assert_eq!(tok.special_tokens().get("<s>"), Some(&0));
+        assert_eq!(tok.special_tokens().get("</s>"), Some(&2));
+        // "<s> hello </s>" — expected: [0, id("▁hello"), 2].
+        //   pre-extraction: [0], region " hello " -> Metaspace ->
+        //     ["▁", "▁hello", "▁"] -> Viterbi -> [id_for_▁hello]
+        //     (leading/trailing bare `▁` may or may not be in the
+        //     vocab; on this hand-crafted vocab it isn't, so they fall
+        //     back to `unk` id 1). So the full sequence is:
+        //     [<s>, ...region..., </s>].
+        let ids = tok.encode("<s> hello </s>").unwrap();
+        // Check the anchors: first id must be `<s>`, last must be
+        // `</s>`, and `▁hello` (id 3) must appear somewhere in the
+        // middle. We don't over-constrain the exact region encoding
+        // because the Metaspace + Viterbi interaction on the bare `▁`
+        // is not the subject of this test.
+        assert_eq!(ids.first(), Some(&0));
+        assert_eq!(ids.last(), Some(&2));
+        assert!(ids.contains(&3), "expected `▁hello` (id 3) in {ids:?}");
+    }
+
+    #[test]
+    fn to_unigram_tokenizer_filters_added_tokens_by_special_flag() {
+        // Same guarantee as the WordPiece test: only `special: true`
+        // entries land in `special_tokens()`.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 4, "content": "<normal>",  "special": false},
+                {"id": 5, "content": "<special>", "special": true}
+            ],
+            "model": {
+                "type": "Unigram",
+                "unk_id": 0,
+                "vocab": [
+                    ["<unk>",     -100.0],
+                    ["hello",     -1.0],
+                    ["world",     -2.0],
+                    ["<extra>",   -3.0],
+                    ["<normal>",  -4.0],
+                    ["<special>", -5.0]
+                ]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_unigram_tokenizer(&config).unwrap();
+        assert_eq!(tok.special_tokens().len(), 1);
+        assert!(tok.special_tokens().contains_key("<special>"));
+        assert!(!tok.special_tokens().contains_key("<normal>"));
+    }
+
+    // -----------------------------------------------------------------
+    // Inline unit tests for the special-token surface API on
+    // UnigramTokenizer (mirrors the WordPiece coverage in
+    // `src/wordpiece.rs`).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn unigram_encode_extracts_registered_special_tokens() {
+        // Hand-built Unigram tokenizer with a small vocab, no
+        // Metaspace, and two registered specials.
+        let vocab = vec![
+            ("<unk>".to_string(), -100.0),
+            ("hello".to_string(), -1.0),
+            ("world".to_string(), -2.0),
+        ];
+        let tok = UnigramTokenizer::from_parts(vocab, Some(0)).unwrap();
+        let mut specials = BTreeMap::new();
+        specials.insert("<s>".to_string(), 10u32);
+        specials.insert("</s>".to_string(), 11u32);
+        let tok = tok.with_special_tokens(specials);
+        // "<s>hello</s>" — expected: [10, id("hello")=1, 11].
+        let ids = tok.encode("<s>hello</s>").unwrap();
+        assert_eq!(ids, vec![10, 1, 11]);
+    }
+
+    #[test]
+    fn unigram_encode_special_tokens_prefer_longest_match_first() {
+        let vocab = vec![("<unk>".to_string(), -100.0), ("hello".to_string(), -1.0)];
+        let tok = UnigramTokenizer::from_parts(vocab, Some(0)).unwrap();
+        let mut specials = BTreeMap::new();
+        specials.insert("<|im|>".to_string(), 42u32);
+        specials.insert("<|im_start|>".to_string(), 43u32);
+        let tok = tok.with_special_tokens(specials);
+        let ids = tok.encode("<|im_start|>").unwrap();
+        assert_eq!(ids, vec![43]);
     }
 
     #[test]
