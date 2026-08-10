@@ -1,6 +1,6 @@
 //! # Tier-2 lingua wrapper (per-language, WIT-shaped)
 //!
-//! Wraps [`lingua`] behind the shared `tegmentum:lang-detect@0.2.0`
+//! Wraps [`lingua`](https://docs.rs/lingua) behind the shared `tegmentum:lang-detect@0.2.0`
 //! WIT contract, with per-language Cargo features selecting which
 //! language models get embedded. A build with `--features en,de`
 //! compiles in English + German models only (~9 MB of FST data)
@@ -93,8 +93,6 @@ mod bindings;
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 mod wit;
 
-use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
-
 /// A single language-detection result. Mirrors the `detection` record
 /// in the WIT interface so callers can trivially map into the WIT
 /// world when compiled as a component.
@@ -140,255 +138,342 @@ pub struct Capabilities {
     pub can_segment: bool,
 }
 
-/// Report which backend + version this build is running against and
-/// which languages it can distinguish.
-#[must_use]
-pub fn capabilities() -> Capabilities {
-    Capabilities {
-        backend: "lingua",
-        version: env!("CARGO_PKG_VERSION"),
-        supports: enabled_languages()
+// ---------------------------------------------------------------------
+// Public API — real impl vs. no-language stub
+//
+// When at least one per-language feature is enabled the `_any-lang`
+// marker feature is on and the crate exports its real, lingua-backed
+// detector. When no language feature is enabled (e.g. a workspace-wide
+// `--no-default-features` strips this crate's `en`+`de` defaults) the
+// `lingua` optional dependency isn't in the graph at all and the same
+// public functions are exported as no-op stubs — `detect`/`detect_from`
+// return `None`, `detect_ranked` returns an empty vec, `capabilities`
+// reports zero supported languages. Downstream callers link and run
+// unchanged; a build that asked for no languages is honestly told the
+// backend can classify nothing. This keeps lingua's uninhabited-enum
+// / `match self` E0004 out of the compile.
+// ---------------------------------------------------------------------
+
+#[cfg(feature = "_any-lang")]
+mod imp {
+    use super::{Capabilities, Detection};
+    use lingua::{Language, LanguageDetector, LanguageDetectorBuilder};
+
+    /// Report which backend + version this build is running against and
+    /// which languages it can distinguish.
+    #[must_use]
+    pub fn capabilities() -> Capabilities {
+        Capabilities {
+            backend: "lingua",
+            version: env!("CARGO_PKG_VERSION"),
+            supports: enabled_languages()
+                .iter()
+                .map(|l| iso_639_3(*l).to_string())
+                .collect(),
+            can_rank: true,
+            can_constrain: true,
+            can_segment: true,
+        }
+    }
+
+    /// Baseline single-best-guess detection. Returns `None` when lingua
+    /// can't reach its confidence threshold for any enabled language.
+    #[must_use]
+    pub fn detect(text: &str) -> Option<Detection> {
+        let detector = build_detector(None)?;
+        detector
+            .detect_language_of(text)
+            .map(|lang| to_detection(lang, detector.compute_language_confidence(text, lang)))
+    }
+
+    /// Constrained detection — considers only ISO 639-3 codes in `langs`
+    /// from the crate's already-enabled feature set. Codes not enabled
+    /// at compile time are silently dropped (we can't score what wasn't
+    /// compiled in).
+    #[must_use]
+    pub fn detect_from(text: &str, langs: &[&str]) -> Option<Detection> {
+        let allow: Vec<Language> = langs
             .iter()
-            .map(|l| iso_639_3(*l).to_string())
-            .collect(),
-        can_rank: true,
-        can_constrain: true,
-        can_segment: true,
+            .filter_map(|code| iso_639_3_to_language(code))
+            .filter(|lang| enabled_languages().contains(lang))
+            .collect();
+        if allow.len() < 2 {
+            // Lingua's builder requires ≥2 languages; a caller-supplied
+            // list that doesn't intersect the compile-time set (or gives
+            // only one intersecting entry) can't produce a detector.
+            return None;
+        }
+        let detector = LanguageDetectorBuilder::from_languages(&allow).build();
+        detector
+            .detect_language_of(text)
+            .map(|lang| to_detection(lang, detector.compute_language_confidence(text, lang)))
     }
-}
 
-/// Baseline single-best-guess detection. Returns `None` when lingua
-/// can't reach its confidence threshold for any enabled language.
-#[must_use]
-pub fn detect(text: &str) -> Option<Detection> {
-    let detector = build_detector(None)?;
-    detector
-        .detect_language_of(text)
-        .map(|lang| to_detection(lang, detector.compute_language_confidence(text, lang)))
-}
-
-/// Constrained detection — considers only ISO 639-3 codes in `langs`
-/// from the crate's already-enabled feature set. Codes not enabled
-/// at compile time are silently dropped (we can't score what wasn't
-/// compiled in).
-#[must_use]
-pub fn detect_from(text: &str, langs: &[&str]) -> Option<Detection> {
-    let allow: Vec<Language> = langs
-        .iter()
-        .filter_map(|code| iso_639_3_to_language(code))
-        .filter(|lang| enabled_languages().contains(lang))
-        .collect();
-    if allow.len() < 2 {
-        // Lingua's builder requires ≥2 languages; a caller-supplied
-        // list that doesn't intersect the compile-time set (or gives
-        // only one intersecting entry) can't produce a detector.
-        return None;
+    /// Ranked distribution across the enabled languages, ordered by
+    /// descending confidence.
+    #[must_use]
+    pub fn detect_ranked(text: &str) -> Vec<(String, f64)> {
+        let Some(detector) = build_detector(None) else {
+            return Vec::new();
+        };
+        detector
+            .compute_language_confidence_values(text)
+            .into_iter()
+            .map(|(lang, conf)| (iso_639_3(lang).to_string(), conf))
+            .collect()
     }
-    let detector = LanguageDetectorBuilder::from_languages(&allow).build();
-    detector
-        .detect_language_of(text)
-        .map(|lang| to_detection(lang, detector.compute_language_confidence(text, lang)))
-}
 
-/// Ranked distribution across the enabled languages, ordered by
-/// descending confidence.
-#[must_use]
-pub fn detect_ranked(text: &str) -> Vec<(String, f64)> {
-    let Some(detector) = build_detector(None) else {
-        return Vec::new();
-    };
-    detector
-        .compute_language_confidence_values(text)
-        .into_iter()
-        .map(|(lang, conf)| (iso_639_3(lang).to_string(), conf))
-        .collect()
-}
-
-/// Compute a bare confidence score for `language` against `text`. Does
-/// NOT require the target language to be the winning candidate — this
-/// is the "how much does this text look like `<lang>`?" query, useful
-/// for tier-2 verification of a tier-1 guess.
-///
-/// Returns `None` when the language isn't compiled in for this build.
-#[must_use]
-pub fn compute_confidence(text: &str, iso_639_3_code: &str) -> Option<f64> {
-    let language = iso_639_3_to_language(iso_639_3_code)?;
-    if !enabled_languages().contains(&language) {
-        return None;
+    /// Compute a bare confidence score for `language` against `text`. Does
+    /// NOT require the target language to be the winning candidate — this
+    /// is the "how much does this text look like `<lang>`?" query, useful
+    /// for tier-2 verification of a tier-1 guess.
+    ///
+    /// Returns `None` when the language isn't compiled in for this build.
+    #[must_use]
+    pub fn compute_confidence(text: &str, iso_639_3_code: &str) -> Option<f64> {
+        let language = iso_639_3_to_language(iso_639_3_code)?;
+        if !enabled_languages().contains(&language) {
+            return None;
+        }
+        build_detector(None).map(|d| d.compute_language_confidence(text, language))
     }
-    build_detector(None).map(|d| d.compute_language_confidence(text, language))
-}
 
-// ---------------------------------------------------------------------
-// Internal — detector construction and language routing
-// ---------------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Internal — detector construction and language routing
+    // -----------------------------------------------------------------
 
-fn build_detector(explicit_allow: Option<Vec<Language>>) -> Option<LanguageDetector> {
-    let langs = explicit_allow.unwrap_or_else(|| enabled_languages().to_vec());
-    if langs.len() < 2 {
-        return None;
+    fn build_detector(explicit_allow: Option<Vec<Language>>) -> Option<LanguageDetector> {
+        let langs = explicit_allow.unwrap_or_else(|| enabled_languages().to_vec());
+        if langs.len() < 2 {
+            return None;
+        }
+        Some(LanguageDetectorBuilder::from_languages(&langs).build())
     }
-    Some(LanguageDetectorBuilder::from_languages(&langs).build())
-}
 
-/// The `Language` values enabled by the crate's feature set.
-///
-/// Compile-time selection: every enabled feature contributes its
-/// `Language` variant. The result is what lingua's detector considers
-/// candidates for `detect_language_of`.
-fn enabled_languages() -> &'static [Language] {
-    // Build the enabled set once. Written with an explicit `vec![]`
-    // literal so clippy doesn't fire `vec-init-then-push` for the
-    // feature-gated pushes — the vec always starts populated by
-    // whichever features are on. `#[allow(clippy::vec_init_then_push)]`
-    // would be equivalent but noisier at each callsite.
-    static ENABLED: std::sync::OnceLock<Vec<Language>> = std::sync::OnceLock::new();
-    ENABLED.get_or_init(|| {
-        let out: Vec<Language> = vec![
+    /// The `Language` values enabled by the crate's feature set.
+    ///
+    /// Compile-time selection: every enabled feature contributes its
+    /// `Language` variant. The result is what lingua's detector considers
+    /// candidates for `detect_language_of`.
+    fn enabled_languages() -> &'static [Language] {
+        // Build the enabled set once. Written with an explicit `vec![]`
+        // literal so clippy doesn't fire `vec-init-then-push` for the
+        // feature-gated pushes — the vec always starts populated by
+        // whichever features are on. `#[allow(clippy::vec_init_then_push)]`
+        // would be equivalent but noisier at each callsite.
+        static ENABLED: std::sync::OnceLock<Vec<Language>> = std::sync::OnceLock::new();
+        ENABLED.get_or_init(|| {
+            let out: Vec<Language> = vec![
+                #[cfg(feature = "en")]
+                Language::English,
+                #[cfg(feature = "de")]
+                Language::German,
+                #[cfg(feature = "fr")]
+                Language::French,
+                #[cfg(feature = "es")]
+                Language::Spanish,
+                #[cfg(feature = "it")]
+                Language::Italian,
+                #[cfg(feature = "pt")]
+                Language::Portuguese,
+                #[cfg(feature = "ja")]
+                Language::Japanese,
+                #[cfg(feature = "ru")]
+                Language::Russian,
+            ];
+            out
+        })
+    }
+
+    /// Map lingua's `Language` to ISO 639-3 — matches the codes the
+    /// tier-0 / tier-1 components emit, so a caller can carry a language
+    /// code through the tier cascade without translation.
+    ///
+    /// The `Language` enum only carries the variants for the features
+    /// this build enabled, so the match arms are per-feature-gated to
+    /// stay exhaustive without referencing variants that don't exist.
+    /// The fallback delegates to lingua's own `iso_code_639_3` for any
+    /// language that gets added upstream faster than we tabulate it.
+    #[allow(unreachable_patterns)]
+    fn iso_639_3(lang: Language) -> &'static str {
+        match lang {
             #[cfg(feature = "en")]
-            Language::English,
+            Language::English => "eng",
             #[cfg(feature = "de")]
-            Language::German,
+            Language::German => "deu",
             #[cfg(feature = "fr")]
-            Language::French,
+            Language::French => "fra",
             #[cfg(feature = "es")]
-            Language::Spanish,
+            Language::Spanish => "spa",
             #[cfg(feature = "it")]
-            Language::Italian,
+            Language::Italian => "ita",
             #[cfg(feature = "pt")]
-            Language::Portuguese,
+            Language::Portuguese => "por",
             #[cfg(feature = "ja")]
-            Language::Japanese,
+            Language::Japanese => "jpn",
             #[cfg(feature = "ru")]
-            Language::Russian,
-        ];
-        out
-    })
-}
+            Language::Russian => "rus",
+            _ => lang_iso_639_3_fallback(lang),
+        }
+    }
 
-/// Map lingua's `Language` to ISO 639-3 — matches the codes the
-/// tier-0 / tier-1 components emit, so a caller can carry a language
-/// code through the tier cascade without translation.
-///
-/// The `Language` enum only carries the variants for the features
-/// this build enabled, so the match arms are per-feature-gated to
-/// stay exhaustive without referencing variants that don't exist.
-/// The fallback delegates to lingua's own `iso_code_639_3` for any
-/// language that gets added upstream faster than we tabulate it.
-#[allow(unreachable_patterns)]
-fn iso_639_3(lang: Language) -> &'static str {
-    match lang {
-        #[cfg(feature = "en")]
-        Language::English => "eng",
-        #[cfg(feature = "de")]
-        Language::German => "deu",
-        #[cfg(feature = "fr")]
-        Language::French => "fra",
-        #[cfg(feature = "es")]
-        Language::Spanish => "spa",
-        #[cfg(feature = "it")]
-        Language::Italian => "ita",
-        #[cfg(feature = "pt")]
-        Language::Portuguese => "por",
-        #[cfg(feature = "ja")]
-        Language::Japanese => "jpn",
-        #[cfg(feature = "ru")]
-        Language::Russian => "rus",
-        _ => lang_iso_639_3_fallback(lang),
+    fn lang_iso_639_3_fallback(lang: Language) -> &'static str {
+        // lingua::Language::iso_code_639_3 returns an IsoCode639_3 whose
+        // Display impl produces the 3-letter code. Leaked once per
+        // never-tabulated variant — the enumerated set doesn't hit this
+        // path, so leak volume is bounded.
+        let code = format!("{}", lang.iso_code_639_3()).to_lowercase();
+        Box::leak(code.into_boxed_str())
+    }
+
+    fn iso_639_3_to_language(code: &str) -> Option<Language> {
+        match code {
+            #[cfg(feature = "en")]
+            "eng" => Some(Language::English),
+            #[cfg(feature = "de")]
+            "deu" => Some(Language::German),
+            #[cfg(feature = "fr")]
+            "fra" => Some(Language::French),
+            #[cfg(feature = "es")]
+            "spa" => Some(Language::Spanish),
+            #[cfg(feature = "it")]
+            "ita" => Some(Language::Italian),
+            #[cfg(feature = "pt")]
+            "por" => Some(Language::Portuguese),
+            #[cfg(feature = "ja")]
+            "jpn" => Some(Language::Japanese),
+            #[cfg(feature = "ru")]
+            "rus" => Some(Language::Russian),
+            _ => None,
+        }
+    }
+
+    // Feature-gated arms mean the fallback `_` is unreachable under some
+    // feature sets but essential under others. Silence the lint at the
+    // function level so we don't have to hand-craft the wildcard's
+    // applicability per feature combination.
+    #[allow(unreachable_patterns)]
+    fn iso_15924(lang: Language) -> &'static str {
+        match lang {
+            #[cfg(any(
+                feature = "en",
+                feature = "de",
+                feature = "fr",
+                feature = "es",
+                feature = "it",
+                feature = "pt"
+            ))]
+            _ if is_latin(lang) => "Latn",
+            #[cfg(feature = "ru")]
+            Language::Russian => "Cyrl",
+            #[cfg(feature = "ja")]
+            Language::Japanese => "Jpan",
+            _ => "Zzzz",
+        }
+    }
+
+    #[cfg(any(
+        feature = "en",
+        feature = "de",
+        feature = "fr",
+        feature = "es",
+        feature = "it",
+        feature = "pt"
+    ))]
+    #[allow(unreachable_patterns, clippy::match_like_matches_macro)]
+    fn is_latin(lang: Language) -> bool {
+        match lang {
+            #[cfg(feature = "en")]
+            Language::English => true,
+            #[cfg(feature = "de")]
+            Language::German => true,
+            #[cfg(feature = "fr")]
+            Language::French => true,
+            #[cfg(feature = "es")]
+            Language::Spanish => true,
+            #[cfg(feature = "it")]
+            Language::Italian => true,
+            #[cfg(feature = "pt")]
+            Language::Portuguese => true,
+            _ => false,
+        }
+    }
+
+    fn to_detection(lang: Language, confidence: f64) -> Detection {
+        Detection {
+            lang: iso_639_3(lang).to_string(),
+            lang_name: format!("{lang:?}"),
+            script: iso_15924(lang).to_string(),
+            confidence,
+            reliable: confidence >= 0.5,
+        }
     }
 }
 
-fn lang_iso_639_3_fallback(lang: Language) -> &'static str {
-    // lingua::Language::iso_code_639_3 returns an IsoCode639_3 whose
-    // Display impl produces the 3-letter code. Leaked once per
-    // never-tabulated variant — the enumerated set doesn't hit this
-    // path, so leak volume is bounded.
-    let code = format!("{}", lang.iso_code_639_3()).to_lowercase();
-    Box::leak(code.into_boxed_str())
-}
+#[cfg(feature = "_any-lang")]
+pub use imp::{capabilities, compute_confidence, detect, detect_from, detect_ranked};
 
-fn iso_639_3_to_language(code: &str) -> Option<Language> {
-    match code {
-        #[cfg(feature = "en")]
-        "eng" => Some(Language::English),
-        #[cfg(feature = "de")]
-        "deu" => Some(Language::German),
-        #[cfg(feature = "fr")]
-        "fra" => Some(Language::French),
-        #[cfg(feature = "es")]
-        "spa" => Some(Language::Spanish),
-        #[cfg(feature = "it")]
-        "ita" => Some(Language::Italian),
-        #[cfg(feature = "pt")]
-        "por" => Some(Language::Portuguese),
-        #[cfg(feature = "ja")]
-        "jpn" => Some(Language::Japanese),
-        #[cfg(feature = "ru")]
-        "rus" => Some(Language::Russian),
-        _ => None,
+// -----------------------------------------------------------------------
+// No-language stub. Present only when zero per-language features are on;
+// keeps the public API's shape stable so downstream code (notably the
+// `stringcheese-detect` umbrella's `tier2_confidence_for`) compiles in a
+// zero-language configuration and receives well-defined "nothing to
+// classify" answers. Under this configuration the `lingua` dependency
+// is dropped from the graph entirely — see the Cargo.toml `_any-lang`
+// note for why that matters.
+// -----------------------------------------------------------------------
+
+#[cfg(not(feature = "_any-lang"))]
+mod imp_stub {
+    use super::{Capabilities, Detection};
+
+    /// Zero-language build: reports the backend identity but an empty
+    /// `supports` set. Kept in shape parity with the real
+    /// `capabilities()` so callers can query the backend without a
+    /// feature-cascade around every call site.
+    #[must_use]
+    pub fn capabilities() -> Capabilities {
+        Capabilities {
+            backend: "lingua",
+            version: env!("CARGO_PKG_VERSION"),
+            supports: Vec::new(),
+            can_rank: true,
+            can_constrain: true,
+            can_segment: true,
+        }
+    }
+
+    /// Zero-language build: no languages compiled in, so no detection
+    /// possible.
+    #[must_use]
+    pub fn detect(_text: &str) -> Option<Detection> {
+        None
+    }
+
+    /// Zero-language build: no languages compiled in, so nothing can
+    /// intersect the caller's allow-list.
+    #[must_use]
+    pub fn detect_from(_text: &str, _langs: &[&str]) -> Option<Detection> {
+        None
+    }
+
+    /// Zero-language build: the ranked-candidate distribution is
+    /// empty.
+    #[must_use]
+    pub fn detect_ranked(_text: &str) -> Vec<(String, f64)> {
+        Vec::new()
+    }
+
+    /// Zero-language build: no compile-time language matches
+    /// `iso_639_3_code`, so the answer is always `None`.
+    #[must_use]
+    pub fn compute_confidence(_text: &str, _iso_639_3_code: &str) -> Option<f64> {
+        None
     }
 }
 
-// Feature-gated arms mean the fallback `_` is unreachable under some
-// feature sets but essential under others. Silence the lint at the
-// function level so we don't have to hand-craft the wildcard's
-// applicability per feature combination.
-#[allow(unreachable_patterns)]
-fn iso_15924(lang: Language) -> &'static str {
-    match lang {
-        #[cfg(any(
-            feature = "en",
-            feature = "de",
-            feature = "fr",
-            feature = "es",
-            feature = "it",
-            feature = "pt"
-        ))]
-        _ if is_latin(lang) => "Latn",
-        #[cfg(feature = "ru")]
-        Language::Russian => "Cyrl",
-        #[cfg(feature = "ja")]
-        Language::Japanese => "Jpan",
-        _ => "Zzzz",
-    }
-}
-
-#[cfg(any(
-    feature = "en",
-    feature = "de",
-    feature = "fr",
-    feature = "es",
-    feature = "it",
-    feature = "pt"
-))]
-#[allow(unreachable_patterns, clippy::match_like_matches_macro)]
-fn is_latin(lang: Language) -> bool {
-    match lang {
-        #[cfg(feature = "en")]
-        Language::English => true,
-        #[cfg(feature = "de")]
-        Language::German => true,
-        #[cfg(feature = "fr")]
-        Language::French => true,
-        #[cfg(feature = "es")]
-        Language::Spanish => true,
-        #[cfg(feature = "it")]
-        Language::Italian => true,
-        #[cfg(feature = "pt")]
-        Language::Portuguese => true,
-        _ => false,
-    }
-}
-
-fn to_detection(lang: Language, confidence: f64) -> Detection {
-    Detection {
-        lang: iso_639_3(lang).to_string(),
-        lang_name: format!("{lang:?}"),
-        script: iso_15924(lang).to_string(),
-        confidence,
-        reliable: confidence >= 0.5,
-    }
-}
+#[cfg(not(feature = "_any-lang"))]
+pub use imp_stub::{capabilities, compute_confidence, detect, detect_from, detect_ranked};
 
 #[cfg(test)]
 mod tests {
@@ -460,5 +545,31 @@ mod tests {
         assert!(caps.can_rank);
         assert!(caps.can_constrain);
         assert!(caps.can_segment);
+    }
+
+    // Zero-language stub coverage. Exercised under
+    // `cargo test -p stringcheese-detect-lingua --no-default-features
+    // --locked`, which strips `en`+`de`, drops the lingua optional
+    // dependency, and swaps the public API for `imp_stub`. Under any
+    // other feature configuration these preconditions don't hold and
+    // the test is compiled out — the shape is symmetric with
+    // `compute_confidence_returns_none_for_disabled_language` above.
+    #[cfg(not(feature = "_any-lang"))]
+    #[test]
+    fn stub_capabilities_report_no_supported_languages() {
+        let caps = capabilities();
+        assert!(
+            caps.supports.is_empty(),
+            "zero-language build advertises no supported languages"
+        );
+    }
+
+    #[cfg(not(feature = "_any-lang"))]
+    #[test]
+    fn stub_detection_is_always_none() {
+        assert!(detect("some english text").is_none());
+        assert!(detect_from("some english text", &["eng", "deu"]).is_none());
+        assert!(detect_ranked("some english text").is_empty());
+        assert!(compute_confidence("some english text", "eng").is_none());
     }
 }

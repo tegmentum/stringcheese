@@ -40,14 +40,33 @@ crate-type = ["cdylib", "rlib"]
 # `--no-default-features --features <lang>,en` explicitly.
 default = ["en", "de"]
 
-en = ["lingua/english"]
-de = ["lingua/german"]
-fr = ["lingua/french"]
-es = ["lingua/spanish"]
-it = ["lingua/italian"]
-pt = ["lingua/portuguese"]
-ja = ["lingua/japanese"]
-ru = ["lingua/russian"]
+# Internal marker feature: activated by every per-language feature.
+# The crate's lingua-touching code sits behind
+# `#[cfg(feature = "_any-lang")]`; when zero language features are
+# enabled (e.g. a `cargo build --workspace --no-default-features`
+# strips this crate's `en`+`de` defaults) the lingua dependency is
+# omitted entirely and the public API degrades to no-op stubs.
+#
+# This exists because lingua-1.8.0's `Language` enum is uninhabited
+# with no language features enabled, and its `iso_code_639_1` /
+# `iso_code_639_3` methods contain `match self { ... }` bodies whose
+# arms are all `#[cfg(feature = "<lang>")]`-gated. An uninhabited
+# enum reached through `&Language` is still considered inhabited by
+# rustc (references never satisfy uninhabitedness), so those bodies
+# fail `E0004: non-exhaustive patterns` — a lingua-upstream bug that
+# only surfaces when every language feature is off. Making lingua
+# optional here keeps that unreachable code out of the crate graph
+# in the zero-language configuration.
+_any-lang = []
+
+en = ["_any-lang", "dep:lingua", "lingua/english"]
+de = ["_any-lang", "dep:lingua", "lingua/german"]
+fr = ["_any-lang", "dep:lingua", "lingua/french"]
+es = ["_any-lang", "dep:lingua", "lingua/spanish"]
+it = ["_any-lang", "dep:lingua", "lingua/italian"]
+pt = ["_any-lang", "dep:lingua", "lingua/portuguese"]
+ja = ["_any-lang", "dep:lingua", "lingua/japanese"]
+ru = ["_any-lang", "dep:lingua", "lingua/russian"]
 
 # `wit-component` opts into the WIT `Guest` implementation and the
 # `export!` invocation that turns this crate into a standalone
@@ -67,7 +86,13 @@ wit-component = ["dep:wit-bindgen-rt"]
 # Apache-2.0 licensed. `default-features = false` disables every
 # language model; per-`<lang>` features above pull in exactly the
 # ones the crate asked for.
-lingua = { version = "1.8", default-features = false }
+#
+# `optional = true` because lingua-1.8.0 fails to compile at all when
+# zero language features are enabled — see the `_any-lang` note under
+# `[features]`. Every per-language feature (`en`, `de`, …) pulls the
+# `dep:lingua` marker along with `lingua/<lang>`, so lingua is present
+# exactly when there is a language for it to model.
+lingua = { version = "1.8", default-features = false, optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 # Pulled in only when the `wit-component` feature is enabled — see the
