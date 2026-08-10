@@ -78,10 +78,13 @@
 //!   [`HfConversionError::UnsupportedNormalizer`]. See
 //!   [`HfNormalizer`] for the exhaustive list.
 //! * `post_processor` — [`HfPostProcessor::TemplateProcessing`]
-//!   (Llama / BERT shape) and [`HfPostProcessor::ByteLevel`] (GPT-2
-//!   shape; no-op on the encoding this crate ships — see
-//!   [`PostProcessor::ByteLevel`] for the rationale) are materialised
-//!   at conversion; every other tag string surfaces
+//!   (Llama / BERT shape), [`HfPostProcessor::BertProcessing`] (stock
+//!   BERT shape), [`HfPostProcessor::RobertaProcessing`] (`XLM-RoBERTa`
+//!   / `RoBERTa`), [`HfPostProcessor::ByteLevel`] (GPT-2 shape; no-op
+//!   on the encoding this crate ships — see [`PostProcessor::ByteLevel`]
+//!   for the rationale), and [`HfPostProcessor::Sequence`] (composition
+//!   of nested post-processors) are materialised at conversion; every
+//!   other tag string surfaces
 //!   [`HfConversionError::UnsupportedPostProcessor`].
 //!
 //! # Errors
@@ -111,7 +114,8 @@ use crate::bpe::{
 };
 use crate::normalizer::Normalizer;
 use crate::post_processor::{
-    PostProcessor, RobertaProcessing, SpecialTokenInfo, TemplatePiece, TemplateProcessing,
+    BertProcessing, PostProcessor, RobertaProcessing, SpecialTokenInfo, TemplatePiece,
+    TemplateProcessing,
 };
 use crate::pre_tokenizer::{
     GPT2_PATTERN, Metaspace, PreTokenizerCompileError, PrependScheme, RegexPreTokenizer,
@@ -170,11 +174,14 @@ pub struct HfTokenizerConfig {
     pub pre_tokenizer: Option<HfPreTokenizer>,
     /// The `"post_processor"` config, deserialised into a typed
     /// [`HfPostProcessor`] value. Honoured at conversion:
-    /// [`HfPostProcessor::TemplateProcessing`] (Llama / BERT shape)
-    /// and [`HfPostProcessor::ByteLevel`] (GPT-2 shape — see
-    /// [`PostProcessor::ByteLevel`] for the no-op-on-offsets
-    /// policy this crate applies). Every other tag string falls
-    /// through to [`HfPostProcessor::Other`] and produces
+    /// [`HfPostProcessor::TemplateProcessing`] (Llama / BERT shape),
+    /// [`HfPostProcessor::BertProcessing`] (stock BERT),
+    /// [`HfPostProcessor::RobertaProcessing`] (`XLM-RoBERTa` /
+    /// `RoBERTa`), [`HfPostProcessor::ByteLevel`] (GPT-2 shape — see
+    /// [`PostProcessor::ByteLevel`] for the no-op-on-offsets policy
+    /// this crate applies), and [`HfPostProcessor::Sequence`]
+    /// (composition of nested post-processors). Every other tag string
+    /// falls through to [`HfPostProcessor::Other`] and produces
     /// [`HfConversionError::UnsupportedPostProcessor`].
     #[serde(default)]
     pub post_processor: Option<HfPostProcessor>,
@@ -841,10 +848,12 @@ pub enum HfNormalizer {
 /// The `post_processor` block of a `tokenizer.json` file.
 ///
 /// Honoured at [`to_bpe_tokenizer`] time: [`Self::TemplateProcessing`]
-/// (Llama / BERT shape) and [`Self::ByteLevel`] (GPT-2 shape). Every
-/// other tag string falls through to [`Self::Other`] via serde's
-/// `#[serde(other)]` and surfaces
-/// [`HfConversionError::UnsupportedPostProcessor`].
+/// (Llama / BERT shape), [`Self::BertProcessing`] (stock BERT shape),
+/// [`Self::RobertaProcessing`] (`XLM-RoBERTa` / `RoBERTa`),
+/// [`Self::ByteLevel`] (GPT-2 shape), and [`Self::Sequence`]
+/// (composition of nested post-processors). Every other tag string
+/// falls through to [`Self::Other`] via serde's `#[serde(other)]` and
+/// surfaces [`HfConversionError::UnsupportedPostProcessor`].
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 #[non_exhaustive]
@@ -852,6 +861,12 @@ pub enum HfPostProcessor {
     /// The Llama-shape template that injects BOS/EOS around the
     /// primary encoding. See [`TemplateProcessing`] for the semantics.
     TemplateProcessing(HfTemplateProcessing),
+    /// The stock BERT `BertProcessing` shape — a fixed
+    /// `[CLS] $A [SEP]` splice with no byte-level flags. Both `cls`
+    /// and `sep` are the on-disk `[surface_string, id]` two-element
+    /// tuples HF stores. See [`BertProcessing`] for the runtime
+    /// semantics.
+    BertProcessing(HfBertProcessing),
     /// The `XLM-RoBERTa` / `RoBERTa` `RobertaProcessing` shape — a
     /// fixed `[CLS] $A [SEP]` splice. Both `cls` and `sep` are the
     /// on-disk `[surface_string, id]` two-element tuples HF stores.
@@ -878,11 +893,47 @@ pub enum HfPostProcessor {
         #[serde(default = "default_true")]
         use_regex: bool,
     },
-    /// Any other post-processor (`BertProcessing`, `Sequence`, ...).
-    /// Rejected at conversion time.
+    /// Composition of nested post-processors. HF's on-disk shape is
+    /// `{"type": "Sequence", "processors": [...]}` — the `processors`
+    /// field carries the ordered child list, which is threaded through
+    /// each child's `apply` at process time. See [`PostProcessor::Sequence`]
+    /// for the runtime semantics; nested `Sequence` values are permitted.
+    Sequence {
+        /// The ordered child post-processors. HF's on-disk field
+        /// name is `processors` — mirrored verbatim here.
+        #[serde(default)]
+        processors: Vec<HfPostProcessor>,
+    },
+    /// Any other post-processor tag string. Rejected at conversion time.
     #[serde(other)]
     Other,
 }
+
+/// The typed shape of a `BertProcessing` post-processor.
+///
+/// Field names mirror HF's on-disk layout verbatim. `sep` and `cls`
+/// are the two-element `[surface_string, id]` tuples HF writes. Unlike
+/// [`HfRobertaProcessing`] there are no `trim_offsets` or
+/// `add_prefix_space` fields — HF's own `BertProcessing` type has
+/// none.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfBertProcessing {
+    /// The `[surface_string, id]` tuple emitted at the SEP slot after
+    /// the primary encoding.
+    pub sep: HfBertSpecial,
+    /// The `[surface_string, id]` tuple emitted at the CLS slot before
+    /// the primary encoding.
+    pub cls: HfBertSpecial,
+}
+
+/// The `[surface_string, id]` pair HF stores under `sep` / `cls` in a
+/// `BertProcessing` block. Deserialised via a serde two-element-tuple
+/// newtype so `["[CLS]", 101]` parses directly. Structurally identical
+/// to [`HfRobertaSpecial`] but kept separate for documentation
+/// clarity.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct HfBertSpecial(pub String, pub TokenId);
 
 /// The typed shape of a `RobertaProcessing` post-processor.
 ///
@@ -1144,9 +1195,10 @@ pub enum HfConversionError {
         /// for a nested rejection (`"Replace(Regex)"`, ...).
         type_name: String,
     },
-    /// The `post_processor` block used a variant this crate does not
-    /// materialise yet (`BertProcessing`, `RobertaProcessing`,
-    /// `Sequence`).
+    /// The `post_processor` block used a tag string this crate does
+    /// not materialise (any variant not in the honoured set —
+    /// `TemplateProcessing`, `BertProcessing`, `RobertaProcessing`,
+    /// `ByteLevel`, `Sequence`).
     UnsupportedPostProcessor {
         /// The `post_processor.type` string.
         type_name: String,
@@ -1231,8 +1283,8 @@ impl fmt::Display for HfConversionError {
                 f,
                 "unsupported HF post_processor type {type_name:?}: \
                  this crate materialises \"TemplateProcessing\", \
-                 \"RobertaProcessing\", and \"ByteLevel\" \
-                 (BertProcessing/Sequence are deferred to later landings)"
+                 \"BertProcessing\", \"RobertaProcessing\", \"ByteLevel\", \
+                 and \"Sequence\""
             ),
             Self::TemplateSpecialTokenNotDeclared { name } => write!(
                 f,
@@ -2765,6 +2817,10 @@ fn to_runtime_post_processor(hp: &HfPostProcessor) -> Result<PostProcessor, HfCo
                 special_tokens: specials,
             }))
         }
+        HfPostProcessor::BertProcessing(bp) => Ok(PostProcessor::BertProcessing(BertProcessing {
+            sep: (bp.sep.0.clone(), bp.sep.1),
+            cls: (bp.cls.0.clone(), bp.cls.1),
+        })),
         HfPostProcessor::RobertaProcessing(rp) => {
             Ok(PostProcessor::RobertaProcessing(RobertaProcessing {
                 sep: (rp.sep.0.clone(), rp.sep.1),
@@ -2772,6 +2828,16 @@ fn to_runtime_post_processor(hp: &HfPostProcessor) -> Result<PostProcessor, HfCo
                 trim_offsets: rp.trim_offsets,
                 add_prefix_space: rp.add_prefix_space,
             }))
+        }
+        HfPostProcessor::Sequence { processors } => {
+            // Recursively materialise each child. Nested Sequence
+            // configs are permitted — the recursion re-enters this
+            // same function.
+            let mut children = Vec::with_capacity(processors.len());
+            for child in processors {
+                children.push(to_runtime_post_processor(child)?);
+            }
+            Ok(PostProcessor::Sequence(children))
         }
         HfPostProcessor::Other => Err(HfConversionError::UnsupportedPostProcessor {
             type_name: "Other".to_string(),
@@ -4007,7 +4073,11 @@ mod tests {
     }
 
     #[test]
-    fn bert_post_processor_reports_deferred_error() {
+    fn bert_post_processor_parses_and_materialises_on_bpe_loader() {
+        // Regression: BertProcessing now materialises (it used to be
+        // deferred and surfaced HfConversionError::UnsupportedPostProcessor
+        // on any loader). The BPE loader route through
+        // `to_runtime_post_processor` must attach the runtime variant.
         let json = r#"{
             "added_tokens": [],
             "post_processor": {
@@ -4020,12 +4090,12 @@ mod tests {
         let config = parse_tokenizer_json(json).unwrap();
         assert!(matches!(
             config.post_processor,
-            Some(HfPostProcessor::Other)
+            Some(HfPostProcessor::BertProcessing(_))
         ));
-        let err = to_bpe_tokenizer(&config).unwrap_err();
+        let tok = to_bpe_tokenizer(&config).unwrap();
         assert!(matches!(
-            err,
-            HfConversionError::UnsupportedPostProcessor { .. }
+            tok.post_processor(),
+            crate::post_processor::PostProcessor::BertProcessing(_)
         ));
     }
 
@@ -4860,5 +4930,249 @@ mod tests {
             msg.contains("BPE requires") || msg.contains("missing `type`"),
             "expected typeless-shape rejection, got: {msg}"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // BertProcessing loader
+    // -----------------------------------------------------------------
+
+    /// Inline minimal BERT-shape tokenizer JSON that uses the
+    /// `BertProcessing` post-processor tag (the stock BERT shape,
+    /// distinct from the `TemplateProcessing` shape [`BERT_JSON`]
+    /// uses).
+    const MINIMAL_BERT_PROCESSING_JSON: &str = r###"{
+        "version": "1.0",
+        "added_tokens": [
+            {"id": 100, "content": "[UNK]", "special": true},
+            {"id": 101, "content": "[CLS]", "special": true},
+            {"id": 102, "content": "[SEP]", "special": true}
+        ],
+        "pre_tokenizer": {"type": "BertPreTokenizer"},
+        "post_processor": {
+            "type": "BertProcessing",
+            "sep": ["[SEP]", 102],
+            "cls": ["[CLS]", 101]
+        },
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "##",
+            "max_input_chars_per_word": 100,
+            "vocab": {
+                "[UNK]": 100,
+                "[CLS]": 101,
+                "[SEP]": 102,
+                "cat": 203,
+                "dog": 204
+            }
+        }
+    }"###;
+
+    #[test]
+    fn bert_processing_parses_typed() {
+        let config = parse_tokenizer_json(MINIMAL_BERT_PROCESSING_JSON).unwrap();
+        match config
+            .post_processor
+            .as_ref()
+            .expect("post_processor present")
+        {
+            HfPostProcessor::BertProcessing(bp) => {
+                assert_eq!(bp.sep.0, "[SEP]");
+                assert_eq!(bp.sep.1, 102);
+                assert_eq!(bp.cls.0, "[CLS]");
+                assert_eq!(bp.cls.1, 101);
+            }
+            other => panic!("expected BertProcessing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bert_processing_wired_end_to_end_via_wordpiece_loader() {
+        let config = parse_tokenizer_json(MINIMAL_BERT_PROCESSING_JSON).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        // "cat" (203), "dog" (204). BertProcessing splices [CLS]=101
+        // before and [SEP]=102 after.
+        assert_eq!(tok.encode("cat dog"), vec![101, 203, 204, 102]);
+        // `count` must agree with `encode(text)?.ids.len()`.
+        assert_eq!(
+            stringcheese_tokenizer::Tokenizer::count(&tok, "cat dog").unwrap(),
+            4
+        );
+    }
+
+    #[test]
+    fn bert_processing_runtime_variant_wraps_bertprocessing() {
+        let config = parse_tokenizer_json(MINIMAL_BERT_PROCESSING_JSON).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        assert!(matches!(
+            tok.post_processor(),
+            crate::post_processor::PostProcessor::BertProcessing(_)
+        ));
+    }
+
+    // -----------------------------------------------------------------
+    // Sequence loader
+    // -----------------------------------------------------------------
+
+    /// Inline minimal `WordPiece` config with a `Sequence` post-processor
+    /// composing two `BertProcessing` children. Contrived but exercises
+    /// the composition path end-to-end.
+    const SEQUENCE_POST_PROCESSOR_JSON: &str = r###"{
+        "added_tokens": [
+            {"id": 100, "content": "[UNK]", "special": true},
+            {"id": 101, "content": "[CLS]", "special": true},
+            {"id": 102, "content": "[SEP]", "special": true},
+            {"id": 103, "content": "[CLS2]", "special": true},
+            {"id": 104, "content": "[SEP2]", "special": true}
+        ],
+        "pre_tokenizer": {"type": "BertPreTokenizer"},
+        "post_processor": {
+            "type": "Sequence",
+            "processors": [
+                {
+                    "type": "BertProcessing",
+                    "sep": ["[SEP]", 102],
+                    "cls": ["[CLS]", 101]
+                },
+                {
+                    "type": "BertProcessing",
+                    "sep": ["[SEP2]", 104],
+                    "cls": ["[CLS2]", 103]
+                }
+            ]
+        },
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "##",
+            "max_input_chars_per_word": 100,
+            "vocab": {
+                "[UNK]": 100,
+                "[CLS]": 101,
+                "[SEP]": 102,
+                "[CLS2]": 103,
+                "[SEP2]": 104,
+                "cat": 203,
+                "dog": 204
+            }
+        }
+    }"###;
+
+    #[test]
+    fn sequence_post_processor_parses_typed() {
+        let config = parse_tokenizer_json(SEQUENCE_POST_PROCESSOR_JSON).unwrap();
+        match config
+            .post_processor
+            .as_ref()
+            .expect("post_processor present")
+        {
+            HfPostProcessor::Sequence { processors } => {
+                assert_eq!(processors.len(), 2);
+                assert!(matches!(processors[0], HfPostProcessor::BertProcessing(_)));
+                assert!(matches!(processors[1], HfPostProcessor::BertProcessing(_)));
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sequence_post_processor_wired_end_to_end() {
+        let config = parse_tokenizer_json(SEQUENCE_POST_PROCESSOR_JSON).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        // "cat dog" primary: [203, 204].
+        // First BertProcessing wraps: [101, 203, 204, 102].
+        // Second BertProcessing wraps that: [103, 101, 203, 204, 102, 104].
+        assert_eq!(tok.encode("cat dog"), vec![103, 101, 203, 204, 102, 104]);
+        // `count` must agree with `encode(text)?.ids.len()`.
+        assert_eq!(
+            stringcheese_tokenizer::Tokenizer::count(&tok, "cat dog").unwrap(),
+            6
+        );
+    }
+
+    #[test]
+    fn sequence_post_processor_runtime_variant_shape() {
+        let config = parse_tokenizer_json(SEQUENCE_POST_PROCESSOR_JSON).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        match tok.post_processor() {
+            crate::post_processor::PostProcessor::Sequence(children) => {
+                assert_eq!(children.len(), 2);
+                for child in children {
+                    assert!(matches!(
+                        child,
+                        crate::post_processor::PostProcessor::BertProcessing(_)
+                    ));
+                }
+            }
+            other => panic!("expected PostProcessor::Sequence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_sequence_post_processor_is_identity() {
+        // A `Sequence` with an empty processors array — HF's schema
+        // permits it (default = empty vec) and the runtime treats it
+        // as identity.
+        let json = r###"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "BertPreTokenizer"},
+            "post_processor": {
+                "type": "Sequence",
+                "processors": []
+            },
+            "model": {
+                "type": "WordPiece",
+                "unk_token": "[UNK]",
+                "continuing_subword_prefix": "##",
+                "max_input_chars_per_word": 100,
+                "vocab": {"[UNK]": 100, "cat": 203, "dog": 204}
+            }
+        }"###;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        assert_eq!(tok.encode("cat dog"), vec![203, 204]);
+    }
+
+    #[test]
+    fn nested_sequence_post_processor_composes_recursively() {
+        // Sequence inside Sequence — the outer Sequence's second child
+        // is itself a Sequence containing a single BertProcessing. The
+        // materialiser must recurse.
+        let json = r###"{
+            "added_tokens": [
+                {"id": 100, "content": "[UNK]", "special": true},
+                {"id": 101, "content": "[CLS]", "special": true},
+                {"id": 102, "content": "[SEP]", "special": true}
+            ],
+            "pre_tokenizer": {"type": "BertPreTokenizer"},
+            "post_processor": {
+                "type": "Sequence",
+                "processors": [
+                    {
+                        "type": "Sequence",
+                        "processors": [
+                            {
+                                "type": "BertProcessing",
+                                "sep": ["[SEP]", 102],
+                                "cls": ["[CLS]", 101]
+                            }
+                        ]
+                    }
+                ]
+            },
+            "model": {
+                "type": "WordPiece",
+                "unk_token": "[UNK]",
+                "continuing_subword_prefix": "##",
+                "max_input_chars_per_word": 100,
+                "vocab": {"[UNK]": 100, "[CLS]": 101, "[SEP]": 102, "cat": 203}
+            }
+        }"###;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        // Primary: [203]. Inner Sequence -> BertProcessing wraps:
+        // [101, 203, 102]. Outer Sequence over that single-child
+        // result: same output.
+        assert_eq!(tok.encode("cat"), vec![101, 203, 102]);
     }
 }

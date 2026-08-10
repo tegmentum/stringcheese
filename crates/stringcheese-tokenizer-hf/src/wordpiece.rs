@@ -597,23 +597,31 @@ impl Tokenizer for WordPieceTokenizer {
             // (see [`crate::post_processor::PostProcessor::ByteLevel`]);
             // token count is unchanged.
             PostProcessor::None | PostProcessor::ByteLevel { .. } => base,
-            PostProcessor::TemplateProcessing(_) => {
+            PostProcessor::TemplateProcessing(_)
+            | PostProcessor::BertProcessing(_)
+            | PostProcessor::RobertaProcessing(_) => {
                 // Cheapest correct answer: run the splice against a
                 // synthetic encoding of the right length and count the
                 // ids field. Matches BpeTokenizer's own approach.
+                // All three variants add a fixed number of tokens
+                // irrespective of the ids themselves. BertProcessing
+                // is the shape stock BERT / DistilBERT ships and is
+                // the primary consumer of this arm on the WordPiece
+                // side.
                 let mut synth: Encoding<TokenId> = Encoding::new();
                 synth.ids.resize(base, 0);
                 self.post_processor.apply(&synth, true).ids.len()
             }
-            PostProcessor::RobertaProcessing(_) => {
-                // Same synthetic-encoding shape as TemplateProcessing.
-                // WordPiece tokenizers rarely ship RobertaProcessing —
-                // XLM-RoBERTa is Unigram-shaped, not WordPiece — but
-                // the arm keeps the internal exhaustive match
-                // compiling in the presence of the new variant.
+            PostProcessor::Sequence(children) => {
+                // Walk the sequence and thread a synthetic encoding of
+                // the current length through each child. Matches
+                // BpeTokenizer::count's shape.
                 let mut synth: Encoding<TokenId> = Encoding::new();
                 synth.ids.resize(base, 0);
-                self.post_processor.apply(&synth, true).ids.len()
+                for child in children {
+                    synth = child.apply(&synth, true);
+                }
+                synth.ids.len()
             }
         })
     }
