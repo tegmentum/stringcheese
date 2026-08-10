@@ -8,8 +8,8 @@
 //! walks a contiguous slice of `b` and compares each cell against a
 //! broadcast `a[i]` plus a "not-already-matched" bitmap mask. On a
 //! scalar-only host that shape lowers to a tight scalar loop; the
-//! four sibling arch backends ([`super::x86_avx2`], [`super::x86_sse2`],
-//! [`super::aarch64_neon`], [`super::wasm_simd128`]) lift the same shape
+//! four sibling arch backends (`x86_avx2`, `x86_sse2`, `aarch64_neon`,
+//! `wasm_simd128`) lift the same shape
 //! into arch-specific byte-lane compares (`_mm256_cmpeq_epi8` on AVX2,
 //! `_mm_cmpeq_epi8` on SSE2, `vceqq_u8` on NEON, `u8x16_eq` on wasm
 //! SIMD128) with the matching mask-reduction (`_mm256_movemask_epi8`,
@@ -44,7 +44,7 @@
 //! `b_matched` is a packed bit-vector (one bit per position of `b`)
 //! rather than a `Vec<bool>` of one byte per position. Packing lets the
 //! four arch backends AND the bitmap against the block's comparison-mask
-//! word directly — the shared [`super::common::Bitmap::read_bits`] hands
+//! word directly — the shared `common::Bitmap::read_bits` hands
 //! back the exact slice of `b_matched` corresponding to a block's window
 //! range as one integer — and it halves the memory traffic of the scalar
 //! path too.
@@ -177,7 +177,7 @@ pub fn similarity(a: &[u8], b: &[u8]) -> f64 {
 /// contiguous slice is what makes the SIMD lowering direct: the four
 /// arch backends load a vector-register block of `window`, compare
 /// against a broadcast `needle`, AND against the corresponding slice of
-/// `b_matched` (via [`super::common::Bitmap::read_bits`]) plus a valid-
+/// `b_matched` (via `common::Bitmap::read_bits`) plus a valid-
 /// lanes mask on the trailing partial block, and reduce to the first
 /// set bit — all without touching the outer loop.
 #[inline]

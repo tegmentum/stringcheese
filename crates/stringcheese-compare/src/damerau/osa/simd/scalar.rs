@@ -34,9 +34,8 @@
 //!
 //! # Why the scalar reference stays rolling-rows
 //!
-//! The four arch-specific backends ([`super::x86_avx2`],
-//! [`super::x86_sse2`], [`super::aarch64_neon`],
-//! [`super::wasm_simd128`]) implement Hyyrö's (2003) bit-parallel OSA
+//! The four arch-specific backends (`x86_avx2`, `x86_sse2`,
+//! `aarch64_neon`, `wasm_simd128`) implement Hyyrö's (2003) bit-parallel OSA
 //! — Myers's word-parallel Levenshtein extended with an extra bit-vector
 //! `Pm_old` that carries the transposition-match state between adjacent
 //! columns. The recurrence is more delicate than the classical Myers

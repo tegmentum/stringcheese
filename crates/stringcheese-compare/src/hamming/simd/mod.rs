@@ -15,35 +15,35 @@
 //!
 //! Callers interact with this backend through:
 //!
-//! * [`distance`] — the runtime-dispatching entry point that picks the
+//! * `distance` — the runtime-dispatching entry point that picks the
 //!   best available backend for the host and delegates to it. This is
 //!   what [`crate::hamming::algorithm::Hamming::distance_bytes`] calls
 //!   when the `simd` feature is on and `is_byte_amenable_for_hamming`
 //!   is satisfied.
-//! * [`distance_within`] — the cutoff-aware sibling. Every arch backend
+//! * `distance_within` — the cutoff-aware sibling. Every arch backend
 //!   returns the exact mismatch count when it is at most `cutoff`, or a
 //!   value strictly greater than `cutoff` (a sentinel meaning "exceeded")
 //!   when the true count is above. The caller is responsible for mapping
 //!   the sentinel to [`stringcheese_core::BoundedDistance::Exceeded`].
-//! * [`is_byte_amenable_for_hamming`] — the guard used by the public API
+//! * `is_byte_amenable_for_hamming` — the guard used by the public API
 //!   to decide whether an input pair is a good fit for the SIMD backend.
 //!   Very short inputs (below the block width on both sides) stay on the
 //!   scalar path.
 //!
 //! # Backends
 //!
-//! * [`scalar`] — portable SIMD-shaped scalar Hamming. Always compiled;
+//! * `scalar` — portable SIMD-shaped scalar Hamming. Always compiled;
 //!   the reference against which every arch-specific backend is
 //!   differentially tested.
-//! * [`x86_avx2`] — AVX2-gated, compiled only on `x86_64`. 32-byte block
+//! * `x86_avx2` — AVX2-gated, compiled only on `x86_64`. 32-byte block
 //!   width; `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` + `count_ones`.
-//! * [`x86_sse2`] — SSE2-gated, compiled only on `x86_64`. 16-byte block
+//! * `x86_sse2` — SSE2-gated, compiled only on `x86_64`. 16-byte block
 //!   width; `_mm_cmpeq_epi8` + `_mm_movemask_epi8` + `count_ones`.
-//! * [`aarch64_neon`] — NEON-gated, compiled only on `aarch64`. 16-byte
+//! * `aarch64_neon` — NEON-gated, compiled only on `aarch64`. 16-byte
 //!   block width; `vceqq_u8` + `vshrq_n_u8::<7>` + `vaddlvq_u8` (the
 //!   widening horizontal add — the load-bearing NEON idiom, since NEON
 //!   has no direct byte-lane movemask).
-//! * [`wasm_simd128`] — wasm SIMD128-gated. 16-byte block width;
+//! * `wasm_simd128` — wasm SIMD128-gated. 16-byte block width;
 //!   `u8x16_eq` + `u8x16_bitmask` + `count_ones`. Compiled only on
 //!   `wasm32` and only when the `simd128` target-feature is enabled.
 //!
@@ -91,7 +91,7 @@ const HAMMING_MIN_LEN: usize = 32;
 /// Hamming backend.
 ///
 /// The current criterion is a length threshold: both inputs must be at
-/// least [`HAMMING_MIN_LEN`] (32) bytes. Hamming requires equal-length
+/// least `HAMMING_MIN_LEN` (32) bytes. Hamming requires equal-length
 /// inputs, so the check is effectively on `a.len()` alone once the
 /// upstream length-mismatch guard has fired.
 ///
