@@ -366,6 +366,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "unigram_byte_fallback_synth.json",
     "bpe_byte_fallback_synth.json",
     "llama_2_7b.json",
+    "mistral_7b_v01.json",
+    "qwen2_7b.json",
 ];
 
 #[test]
@@ -561,4 +563,38 @@ fn conformance_bpe_byte_fallback_synth() {
 )]
 fn conformance_llama_2_7b() {
     run_fixture("llama_2_7b.json", "llama-2-7b-hf");
+}
+
+// Real Mistral-7B-v0.1 tokenizer.json — a second real target for the
+// BPE-side byte-fallback landing. Mistral ships the same Llama-family
+// character-BPE + SentencePiece byte_fallback shape as Llama-2, over a
+// distinct 32k vocabulary, so parity here confirms our BPE runtime
+// handles the byte-fallback path independent of vocab. Reference ids
+// come from `transformers.AutoTokenizer.from_pretrained(
+// 'mistralai/Mistral-7B-v0.1')`. The runner soft-skips when no real
+// `tokenizer.json` is provisioned.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mistral_7b_v01() {
+    run_fixture("mistral_7b_v01.json", "mistral-7b-v0.1");
+}
+
+// Real Qwen2-7B tokenizer.json — a byte-level BPE (GPT-2-family)
+// checkpoint with an NFC normalizer and a Sequence[Split(Regex),
+// ByteLevel] pre-tokenizer over a 151k vocabulary. Distinct model
+// family from Llama/Mistral (no SentencePiece byte_fallback; the
+// GPT-2 byte↔char mapping is what covers non-vocab bytes), so parity
+// here exercises the byte-level BPE side of the loader against a
+// modern LLM checkpoint. Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained('Qwen/Qwen2-7B')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_qwen2_7b() {
+    run_fixture("qwen2_7b.json", "qwen2-7b");
 }
