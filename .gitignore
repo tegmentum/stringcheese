@@ -13,3 +13,10 @@ target/
 # `--locked`) has a reproducible dependency graph.
 crates/*/Cargo.lock
 !crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.lock
+
+# Real HF-shape tokenizer.json blobs materialised into the
+# `stringcheese-tokenizer-hf` conformance runner's local lookup root.
+# These are tens of MB per checkpoint and belong under a per-contributor
+# cache or the env-var `STRINGCHEESE_REAL_VOCABS_DIR`, not in-tree — see
+# `docs/design/tokenizer-conformance.md` for the lookup contract.
+crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/

@@ -357,6 +357,12 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "cl100k_base.json",
     "bert_base_uncased.json",
     "xlm_roberta_base.json",
+    "distilbert_base_uncased.json",
+    "roberta_base.json",
+    "bert_base_multilingual_cased.json",
+    "bart_base.json",
+    "deberta_v3_base.json",
+    "mdeberta_v3_base.json",
     "unigram_byte_fallback_synth.json",
 ];
 
@@ -439,6 +445,63 @@ fn conformance_bert_base_uncased() {
 )]
 fn conformance_xlm_roberta_base() {
     run_fixture("xlm_roberta_base.json", "xlm-roberta-base");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_distilbert_base_uncased() {
+    run_fixture("distilbert_base_uncased.json", "distilbert-base-uncased");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_roberta_base() {
+    run_fixture("roberta_base.json", "roberta-base");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_bert_base_multilingual_cased() {
+    run_fixture(
+        "bert_base_multilingual_cased.json",
+        "bert-base-multilingual-cased",
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_bart_base() {
+    run_fixture("bart_base.json", "bart-base");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_deberta_v3_base() {
+    run_fixture("deberta_v3_base.json", "deberta-v3-base");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mdeberta_v3_base() {
+    run_fixture("mdeberta_v3_base.json", "mdeberta-v3-base");
 }
 
 // The synthetic `unigram-byte-fallback-synth` fixture ships its own
