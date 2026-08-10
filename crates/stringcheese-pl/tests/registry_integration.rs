@@ -9,39 +9,19 @@
 //! expansion has no wasm branch, per `stringcheese-lang/src/lib.rs`).
 //! The pack itself still builds and links on wasm; only the registry
 //! lookup is absent.
+//!
+//! The three `#[test] fn`s and the pack-anchoring `KEEP` const are
+//! emitted by the shared `stringcheese_lang::pack_registry_smoke_test!`
+//! macro — see its docs for the field-level contract.
 #![cfg(not(target_family = "wasm"))]
 
-use stringcheese_lang::registry;
-
-// Force the `stringcheese_pl` rlib into the test binary's link — a
-// test that only names `stringcheese_lang` items would leave the
-// pack's registration `static` outside the closure the linker walks,
-// hiding the fact that `register_language!` fired. Naming the pack's
-// singleton constant here keeps its object file (and thus its
-// `#[linkme::distributed_slice(...)]` section) alive.
-#[allow(dead_code)]
-const KEEP_PL: &stringcheese_pl::Polish = &stringcheese_pl::POLISH;
-
-#[test]
-fn polish_pack_is_registered() {
-    let lang = registry::language("pl").expect("Polish pack must be registered");
-    assert_eq!(lang.code(), "pl");
-    assert_eq!(lang.name(), "Polish");
-}
-
-#[test]
-fn polish_pack_registration_is_case_insensitive() {
-    for probe in ["PL", "Pl", "pL"] {
-        assert!(
-            registry::language(probe).is_some(),
-            "{probe:?} did not resolve to Polish"
-        );
-    }
-}
-
-#[test]
-fn polish_pack_functions_through_registry() {
-    let lang = registry::language("pl").expect("Polish pack must be registered");
-    assert!(lang.is_stopword("i"));
-    assert_eq!(lang.stem("książki"), "książ");
+stringcheese_lang::pack_registry_smoke_test! {
+    pack: stringcheese_pl::POLISH,
+    pack_ty: stringcheese_pl::Polish,
+    code: "pl",
+    name: "Polish",
+    smoke: |lang| {
+        assert!(lang.is_stopword("i"));
+        assert_eq!(lang.stem("książki"), "książ");
+    },
 }
