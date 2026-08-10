@@ -129,8 +129,8 @@ pub mod hf;
 
 #[cfg(feature = "alloc")]
 pub use bpe::{
-    BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, PreTokenizerRegex, TokenId,
-    VocabularyBuilderError,
+    BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, DisallowedSpecials, PreTokenizerRegex,
+    TokenId, VocabularyBuilderError,
 };
 
 #[cfg(feature = "std")]

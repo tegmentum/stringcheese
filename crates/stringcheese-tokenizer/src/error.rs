@@ -60,6 +60,20 @@ pub enum TokenizerError {
     #[cfg(not(feature = "alloc"))]
     UnknownToken,
 
+    /// The input contained a special-token surface string that the
+    /// caller marked as *disallowed* at encode time (see the BPE
+    /// tokenizer's `encode_with_special_policy` entry point, which
+    /// mirrors tiktoken's `disallowed_special` argument). The payload
+    /// carries the offending surface string when the crate feature
+    /// `alloc` is available.
+    #[cfg(feature = "alloc")]
+    DisallowedSpecialToken(String),
+    /// The input contained a disallowed special-token surface string.
+    /// The no-alloc form carries no context; enable `alloc` to receive
+    /// the offending surface string.
+    #[cfg(not(feature = "alloc"))]
+    DisallowedSpecialToken,
+
     /// A merge table, vocabulary, or special-token map is internally
     /// inconsistent. For BPE this fires when a merge references a token
     /// that is not in the vocabulary; for pack loaders it fires when the
@@ -93,6 +107,10 @@ impl fmt::Display for TokenizerError {
             Self::UnknownToken(s) => write!(f, "unknown token: {s}"),
             #[cfg(not(feature = "alloc"))]
             Self::UnknownToken => f.write_str("unknown token"),
+            #[cfg(feature = "alloc")]
+            Self::DisallowedSpecialToken(s) => write!(f, "disallowed special token: {s}"),
+            #[cfg(not(feature = "alloc"))]
+            Self::DisallowedSpecialToken => f.write_str("disallowed special token"),
             Self::VocabularyMismatch => {
                 f.write_str("vocabulary and merge table are internally inconsistent")
             }
@@ -122,6 +140,8 @@ mod tests {
         {
             let e = TokenizerError::UnknownToken(String::from("<oops>"));
             assert!(format!("{e}").contains("<oops>"));
+            let e = TokenizerError::DisallowedSpecialToken(String::from("<|endoftext|>"));
+            assert!(format!("{e}").contains("<|endoftext|>"));
         }
     }
 
