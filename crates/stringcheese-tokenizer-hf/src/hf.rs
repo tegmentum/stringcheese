@@ -461,9 +461,16 @@ pub struct HfUnigramModel {
     /// [`Self::vocab`]).
     #[serde(default)]
     pub unk_id: Option<usize>,
-    /// Whether byte-fallback is enabled. Preserved but not applied —
-    /// callers who need `SentencePiece`'s byte-fallback behaviour
-    /// should implement the mapping themselves.
+    /// Whether byte-fallback is enabled — the `SentencePiece`
+    /// mechanism that emits the UTF-8 bytes of an out-of-vocab
+    /// character as a run of `<0xXX>` tokens (256 reserved ids) instead
+    /// of failing. When [`to_unigram_tokenizer`] materialises a config
+    /// with `Some(true)` here it scans the vocabulary for the 256
+    /// `<0x00>`..`<0xFF>` surface strings and enables the fallback on
+    /// the produced [`UnigramTokenizer`]. A config that turns byte-
+    /// fallback on but is missing any of the 256 byte tokens is
+    /// rejected at conversion with
+    /// [`HfConversionError::ByteFallbackTokensMissing`].
     #[serde(default)]
     pub byte_fallback: Option<bool>,
 }
@@ -1157,6 +1164,21 @@ pub enum HfConversionError {
         /// The offending name.
         name: String,
     },
+    /// The `Unigram` config set `byte_fallback: true` but the
+    /// vocabulary is missing one or more of the 256 `<0xXX>`
+    /// byte-fallback tokens the mechanism requires. Every byte value
+    /// from `0x00` to `0xFF` needs its own reserved id in the vocab
+    /// (surface string exactly `<0x00>`, `<0x01>`, ..., `<0xFF>`);
+    /// without them, encoding an out-of-vocab character has no
+    /// well-defined fallback path.
+    ByteFallbackTokensMissing {
+        /// How many of the 256 required tokens are missing.
+        missing_count: usize,
+        /// The lowest byte value whose `<0xXX>` token is missing —
+        /// enough to give the caller a starting point without dumping
+        /// all 256 possible values.
+        first_missing_byte: u8,
+    },
 }
 
 impl fmt::Display for HfConversionError {
@@ -1238,6 +1260,15 @@ impl fmt::Display for HfConversionError {
                 f,
                 "TemplateProcessing template references special-token name \
                  {name:?} that is missing from its own \"special_tokens\" map"
+            ),
+            Self::ByteFallbackTokensMissing {
+                missing_count,
+                first_missing_byte,
+            } => write!(
+                f,
+                "Unigram model sets byte_fallback: true but its vocabulary \
+                 is missing {missing_count} of the required 256 <0xXX> \
+                 byte-fallback tokens (first missing byte: 0x{first_missing_byte:02X})"
             ),
         }
     }
@@ -1775,16 +1806,27 @@ fn extract_wordpiece_pre_tokenizer(
 /// # Unknown-token fallback
 ///
 /// When no vocabulary entry can reach a position `i` from any earlier
-/// reachable position, and [`Self::unk_id`] is `Some`, the runtime
-/// falls back to a single-character `unk` transition from `i - 1` to
-/// `i`, scored by the `unk` token's own log probability minus a fixed
-/// penalty. The penalty is chosen large enough that the fallback is
-/// only ever preferred when no vocab-only path exists.
+/// reachable position, the runtime tries three strategies in order:
 ///
-/// If `unk_id` is `None` and a position is unreachable,
-/// [`Self::encode`] returns
-/// [`UnigramEncodeError::UntokenizableChar`] pointing at the offending
-/// character.
+/// 1. **Byte-fallback** — if [`Self::with_byte_fallback`] was called
+///    (typically because the source `tokenizer.json` set
+///    `byte_fallback: true`), the offending character's UTF-8 bytes
+///    are emitted as a run of `<0xXX>` reserved tokens (one id per
+///    byte, so a 2-byte UTF-8 char produces two ids, a 3-byte char
+///    produces three, and so on). Byte-fallback is preferred over
+///    `unk` when both are configured — this matches upstream
+///    `SentencePiece`, where `unk` on a byte-fallback-enabled vocab
+///    is the "genuinely nothing left" path.
+/// 2. **`unk` fallback** — if [`Self::unk_id`] is `Some` and byte-
+///    fallback did not fire, the runtime takes a single-character
+///    `unk` transition from `i - 1` to `i`, scored by the `unk`
+///    token's own log probability minus a fixed penalty. The penalty
+///    is chosen large enough that the fallback is only ever preferred
+///    when no vocab-only path exists.
+/// 3. **Hard error** — if neither is configured,
+///    [`Self::encode`] returns
+///    [`UnigramEncodeError::UntokenizableChar`] pointing at the
+///    offending character.
 ///
 /// # Complexity
 ///
@@ -1824,6 +1866,68 @@ pub struct UnigramTokenizer {
     /// [`PostProcessor::None`] is a pass-through so callers who never
     /// configure one see the raw Viterbi output.
     post_processor: PostProcessor,
+    /// Optional byte-fallback table: `byte_fallback[b]` is the vocab
+    /// id of the `<0xBB>` token reserved for byte value `b`. Populated
+    /// by [`Self::with_byte_fallback`] after scanning the vocab for
+    /// the 256 reserved surfaces; `None` disables the fallback and
+    /// leaves the encode path on its previous `unk`-only behaviour.
+    /// Boxed so a clone of `UnigramTokenizer` avoids a 2 KiB memcpy
+    /// on the common (byte-fallback-off) path.
+    byte_fallback: Option<alloc::boxed::Box<[usize; 256]>>,
+}
+
+/// One backtracking record in the Viterbi trellis: either a single
+/// emitted id (the vocab-only and `unk` paths) or a run of
+/// byte-fallback ids (up to four — UTF-8's maximum encoded length).
+///
+/// Held inline in `best_prev` so a byte-fallback transition never
+/// allocates: the four-slot buffer is populated only up to `len` on
+/// each `Bytes` transition, and backtracking walks it in reverse.
+#[derive(Debug, Clone)]
+enum UnigramTransition {
+    /// One vocab entry (either a normal match or an `unk` fallback).
+    Single(usize),
+    /// A byte-fallback run: `buf[..len]` holds the byte-token ids to
+    /// emit in forward order.
+    Bytes {
+        /// Buffer of at most 4 byte-token ids (UTF-8 max encoded
+        /// length). Only `buf[..len]` is meaningful.
+        buf: [usize; 4],
+        /// Number of meaningful entries in `buf` (1..=4).
+        len: usize,
+    },
+}
+
+/// Parse a `<0xXX>` byte-fallback surface string and return the byte
+/// value it maps to. Returns `None` for anything else — normal vocab
+/// entries flow through untouched.
+///
+/// The surface has a fixed shape: exactly six ASCII bytes,
+/// `<`, `0`, `x`, two hex digits, `>`. Uppercase and lowercase hex
+/// digits are both accepted — `<0xff>` and `<0xFF>` both map to
+/// byte `0xFF`. HF's own on-disk convention is uppercase.
+fn parse_byte_fallback_surface(s: &str) -> Option<u8> {
+    let bytes = s.as_bytes();
+    if bytes.len() != 6 {
+        return None;
+    }
+    if bytes[0] != b'<' || bytes[1] != b'0' || bytes[2] != b'x' || bytes[5] != b'>' {
+        return None;
+    }
+    let hi = decode_hex_digit(bytes[3])?;
+    let lo = decode_hex_digit(bytes[4])?;
+    Some((hi << 4) | lo)
+}
+
+/// Decode one ASCII hex digit (`0-9`, `A-F`, `a-f`) to its 0..=15
+/// value; `None` for anything else.
+const fn decode_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
 }
 
 impl UnigramTokenizer {
@@ -1868,6 +1972,7 @@ impl UnigramTokenizer {
             normalizer: None,
             pre_tokenizer: None,
             post_processor: PostProcessor::None,
+            byte_fallback: None,
         })
     }
 
@@ -1913,6 +2018,64 @@ impl UnigramTokenizer {
         self
     }
 
+    /// Enable `SentencePiece`'s byte-fallback mechanism on this
+    /// tokenizer.
+    ///
+    /// Scans the vocabulary for the 256 reserved `<0x00>`..`<0xFF>`
+    /// surface strings and, if all 256 are present, stores a
+    /// `byte → id` map on the tokenizer so [`Self::encode`] can emit
+    /// a run of byte tokens whenever a character has no vocab-only
+    /// path. [`Self::decode`] is likewise updated to reassemble runs
+    /// of byte-fallback ids back into their UTF-8 characters.
+    ///
+    /// [`to_unigram_tokenizer`] calls this automatically when the
+    /// source config's `model.byte_fallback` field is `Some(true)`;
+    /// callers who assemble a tokenizer manually via
+    /// [`Self::from_parts`] can call it themselves.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HfConversionError::ByteFallbackTokensMissing`] if
+    /// the vocabulary does not contain the full 256-token
+    /// `<0x00>`..`<0xFF>` set.
+    pub fn with_byte_fallback(mut self) -> Result<Self, HfConversionError> {
+        let mut ids: [Option<usize>; 256] = [None; 256];
+        for (id, (surface, _)) in self.vocab.iter().enumerate() {
+            if let Some(b) = parse_byte_fallback_surface(surface) {
+                // First occurrence wins — same policy as `lookup`
+                // (a well-formed vocab has no duplicates anyway).
+                if ids[b as usize].is_none() {
+                    ids[b as usize] = Some(id);
+                }
+            }
+        }
+        let mut resolved = alloc::boxed::Box::new([0usize; 256]);
+        let mut missing_count = 0usize;
+        let mut first_missing: Option<u8> = None;
+        for (b, slot) in ids.iter().enumerate() {
+            if let Some(id) = slot {
+                resolved[b] = *id;
+            } else {
+                missing_count += 1;
+                if first_missing.is_none() {
+                    // `b` comes from an iterator over a [_; 256]
+                    // array, so it is always in 0..=255 — the cast is
+                    // exact. Use `try_from` anyway so clippy's
+                    // truncation lint does not fire.
+                    first_missing = u8::try_from(b).ok();
+                }
+            }
+        }
+        if missing_count != 0 {
+            return Err(HfConversionError::ByteFallbackTokensMissing {
+                missing_count,
+                first_missing_byte: first_missing.unwrap_or(0),
+            });
+        }
+        self.byte_fallback = Some(resolved);
+        Ok(self)
+    }
+
     /// The vocabulary this tokenizer was built from.
     #[must_use]
     pub fn vocab(&self) -> &[(String, f64)] {
@@ -1941,6 +2104,13 @@ impl UnigramTokenizer {
     #[must_use]
     pub fn post_processor(&self) -> &PostProcessor {
         &self.post_processor
+    }
+
+    /// `true` when [`Self::with_byte_fallback`] has been called on
+    /// this tokenizer and the byte-fallback path is active.
+    #[must_use]
+    pub const fn byte_fallback_enabled(&self) -> bool {
+        self.byte_fallback.is_some()
     }
 
     /// Run the full `SentencePiece` pipeline on `input`, returning
@@ -2014,12 +2184,32 @@ impl UnigramTokenizer {
     /// configured vocabulary.
     pub fn decode(&self, tokens: &[usize]) -> Result<String, UnigramDecodeError> {
         let mut buf = String::new();
+        // Accumulator for a run of byte-fallback tokens. Bytes are
+        // pushed here while consecutive byte-fallback ids arrive; the
+        // run is flushed as `String::from_utf8_lossy` when a non-
+        // byte-fallback token is seen or at the end of the stream.
+        // Lossy decoding maps invalid UTF-8 to U+FFFD, matching what
+        // upstream `SentencePiece` does when the emitted byte stream
+        // happens not to be well-formed UTF-8 (e.g. an id-list
+        // constructed by hand with a stray byte).
+        let mut byte_run: Vec<u8> = Vec::new();
         for &id in tokens {
-            let (surface, _) = self
-                .vocab
-                .get(id)
-                .ok_or(UnigramDecodeError::UnknownId(id))?;
+            if id >= self.vocab.len() {
+                return Err(UnigramDecodeError::UnknownId(id));
+            }
+            if let Some(b) = self.byte_fallback_byte_for(id) {
+                byte_run.push(b);
+                continue;
+            }
+            if !byte_run.is_empty() {
+                buf.push_str(&alloc::string::String::from_utf8_lossy(&byte_run));
+                byte_run.clear();
+            }
+            let (surface, _) = &self.vocab[id];
             buf.push_str(surface);
+        }
+        if !byte_run.is_empty() {
+            buf.push_str(&alloc::string::String::from_utf8_lossy(&byte_run));
         }
         // If a Metaspace is configured, reverse its substitution:
         // `replacement` -> ' ', and drop the single leading space
@@ -2068,9 +2258,10 @@ impl UnigramTokenizer {
         // best_score[i] = best log-probability sum reachable at
         // character position `i`; `f64::NEG_INFINITY` means unreachable.
         let mut best_score = alloc::vec![f64::NEG_INFINITY; n + 1];
-        // best_prev[i] = (previous char position, emitted token id) for
+        // best_prev[i] = (previous char position, transition kind) for
         // the winning transition into `i`. Sentinel for i=0 is unused.
-        let mut best_prev: Vec<(usize, usize)> = alloc::vec![(0, 0); n + 1];
+        let mut best_prev: Vec<(usize, UnigramTransition)> =
+            alloc::vec![(0, UnigramTransition::Single(0)); n + 1];
         best_score[0] = 0.0;
 
         for i in 1..=n {
@@ -2085,21 +2276,41 @@ impl UnigramTokenizer {
                     let candidate = best_score[j] + score;
                     if candidate > best_score[i] {
                         best_score[i] = candidate;
-                        best_prev[i] = (j, id);
+                        best_prev[i] = (j, UnigramTransition::Single(id));
                     }
                 }
             }
-            // Fallback: if `i` is unreachable and we have an `unk`
-            // token, take a single-character `unk` transition from
-            // `i - 1` (if that itself is reachable).
-            if !best_score[i].is_finite() {
-                if let Some(u) = self.unk_id {
-                    if best_score[i - 1].is_finite() {
-                        let (_, unk_score) = self.vocab[u];
-                        let candidate = best_score[i - 1] + unk_score - self.unk_penalty;
-                        best_score[i] = candidate;
-                        best_prev[i] = (i - 1, u);
+            // Fallback: if `i` is unreachable and we have either
+            // byte-fallback or an `unk` token, take a single-character
+            // transition from `i - 1` (if that itself is reachable).
+            // Byte-fallback is preferred over `unk` when both are
+            // configured — matches upstream `SentencePiece`, where
+            // `unk` on a byte-fallback-enabled vocab is the
+            // "genuinely nothing left" path.
+            if !best_score[i].is_finite() && best_score[i - 1].is_finite() {
+                if let Some(bf) = &self.byte_fallback {
+                    let char_bytes = &input.as_bytes()[boundaries[i - 1]..boundaries[i]];
+                    // UTF-8 encodes any scalar in at most 4 bytes; a
+                    // small stack buffer keeps every real transition
+                    // heap-free.
+                    let mut buf = [0usize; 4];
+                    let len = char_bytes.len();
+                    debug_assert!(len <= 4);
+                    for (k, &b) in char_bytes.iter().enumerate() {
+                        buf[k] = bf[b as usize];
                     }
+                    // Score with the same `unk_penalty` used for the
+                    // unk fallback so a vocab-only path always wins
+                    // when one is available. The absolute magnitude
+                    // does not matter — only the relative ordering
+                    // against vocab-only paths does.
+                    best_score[i] = best_score[i - 1] - self.unk_penalty;
+                    best_prev[i] = (i - 1, UnigramTransition::Bytes { buf, len });
+                } else if let Some(u) = self.unk_id {
+                    let (_, unk_score) = self.vocab[u];
+                    let candidate = best_score[i - 1] + unk_score - self.unk_penalty;
+                    best_score[i] = candidate;
+                    best_prev[i] = (i - 1, UnigramTransition::Single(u));
                 }
             }
         }
@@ -2118,16 +2329,46 @@ impl UnigramTokenizer {
             return Err(UnigramEncodeError::UntokenizableChar { char_offset });
         }
 
-        // Backtrack from n to 0, collecting emitted ids in reverse.
+        // Backtrack from n to 0, collecting emitted ids in reverse
+        // order. `Single` contributes one id; `Bytes` contributes its
+        // `len` ids in reverse. A final `reverse()` restores forward
+        // order.
         let mut ids = Vec::new();
         let mut pos = n;
         while pos > 0 {
-            let (prev, id) = best_prev[pos];
-            ids.push(id);
-            pos = prev;
+            let (prev, trans) = &best_prev[pos];
+            match trans {
+                UnigramTransition::Single(id) => ids.push(*id),
+                UnigramTransition::Bytes { buf, len } => {
+                    for k in (0..*len).rev() {
+                        ids.push(buf[k]);
+                    }
+                }
+            }
+            pos = *prev;
         }
         ids.reverse();
         Ok(ids)
+    }
+
+    /// Reverse-lookup: if `id` is one of the 256 byte-fallback tokens,
+    /// return its associated byte value. `None` when byte-fallback is
+    /// disabled or `id` is a regular vocab entry.
+    ///
+    /// A linear scan of a 256-entry array is cheap enough that
+    /// building a reverse `id → byte` map on construction would be
+    /// premature optimisation — decode is not a hot path here.
+    fn byte_fallback_byte_for(&self, id: usize) -> Option<u8> {
+        let bf = self.byte_fallback.as_ref()?;
+        for (b, &tok) in bf.iter().enumerate() {
+            if tok == id {
+                // `b` iterates over a [_; 256] array, so it is always
+                // in 0..=255 — the try_from is exact; the `.ok()`
+                // shape sidesteps clippy's truncation lint.
+                return u8::try_from(b).ok();
+            }
+        }
+        None
     }
 }
 
@@ -2291,6 +2532,10 @@ impl std::error::Error for UnigramEncodeError {}
 ///   `model.type` is not `"Unigram"`.
 /// * [`HfConversionError::UnigramUnkIdOutOfRange`] — the config's
 ///   `unk_id` points past the end of the vocabulary.
+/// * [`HfConversionError::ByteFallbackTokensMissing`] — the config
+///   sets `byte_fallback: true` but the vocabulary is missing one or
+///   more of the 256 reserved `<0x00>`..`<0xFF>` tokens the mechanism
+///   requires.
 /// * [`HfConversionError::UnsupportedNormalizer`] —
 ///   `to_runtime_normalizer`'s error.
 /// * [`HfConversionError::UnsupportedPreTokenizer`] — the
@@ -2338,6 +2583,16 @@ pub fn to_unigram_tokenizer(
         }
     };
     let mut tok = UnigramTokenizer::from_parts(uni.vocab.clone(), uni.unk_id)?;
+
+    // Byte-fallback — a `SentencePiece` mechanism that reroutes the
+    // OOV path from `unk` to the 256 reserved `<0xXX>` tokens. Enable
+    // it early so a missing-tokens error surfaces before any of the
+    // ancillary pipeline pieces (normalizer / pre-tokenizer /
+    // post-processor) are materialised. The scan runs on the raw
+    // vocab, so its result is independent of what comes after.
+    if uni.byte_fallback == Some(true) {
+        tok = tok.with_byte_fallback()?;
+    }
 
     // Normalizer — runs before the pre-tokenizer at encode time.
     if let Some(hn) = &config.normalizer {
