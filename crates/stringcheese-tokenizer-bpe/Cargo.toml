@@ -40,6 +40,19 @@ hf-tokenizer = ["std", "dep:serde", "dep:serde_json", "hf-normalizer"]
 # `hf-tokenizer` still implies this on by default, matching the
 # expected "I want a full tokenizer.json loader" story.
 hf-normalizer = ["std", "dep:unicode-normalization"]
+# Opt into the conformance suite that exercises the crate against the
+# *real* upstream vocabulary of each fixture checkpoint (`gpt2`,
+# `cl100k_base`, `bert-base-uncased`, `xlm-roberta-base`; see
+# `tests/conformance/` for the JSON fixtures with reference-computed
+# ids). Enabling the feature turns off the per-test `#[ignore]` gate;
+# the runner then requires a real `tokenizer.json` (HF-shape) for each
+# checkpoint to be materialised on disk under one of the two lookup
+# roots documented in `tests/conformance.rs`. Implies `hf-tokenizer`
+# because loading and dispatching those vocabs goes through
+# [`crate::hf`]. The feature name is deliberately shared with the
+# parallel tiktoken parity work so a single flag activates both
+# families of vocab-backed tests.
+parity-real-vocab = ["hf-tokenizer"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
@@ -91,6 +104,13 @@ unicode-normalization = { version = "0.1", default-features = false, features = 
 # skip the property-test modules (they're gated on the same predicate).
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
+# `serde_json` for the conformance fixture loader in
+# `tests/conformance.rs`. Only used when the `hf-tokenizer` /
+# `parity-real-vocab` features are on (the runner is `#[cfg]`-gated on
+# them), but declaring it here rather than under a target-features
+# section keeps `cargo test --all-features` unambiguous. Matches the
+# same target-gate as `proptest` — the conformance runner is host-only.
+serde_json = { version = "1", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

@@ -1,0 +1,310 @@
+{
+  "checkpoint": "xlm-roberta-base",
+  "source": "transformers.AutoTokenizer.from_pretrained('xlm-roberta-base') [transformers==5.14.1]",
+  "note": "SentencePiece Unigram with Precompiled charsmap normalizer, Metaspace pre-tokenizer, and the XLM-RoBERTa post-processor (BOS 0 / EOS 2 splice). `add_special_tokens=True`.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [
+        0,
+        2
+      ],
+      "note": "empty"
+    },
+    {
+      "input": "a",
+      "expected_ids": [
+        0,
+        10,
+        2
+      ],
+      "note": "single-char-ascii"
+    },
+    {
+      "input": " ",
+      "expected_ids": [
+        0,
+        2
+      ],
+      "note": "single-space"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        0,
+        35378,
+        4,
+        8999,
+        38,
+        2
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        0,
+        581,
+        63773,
+        119455,
+        6,
+        147797,
+        88203,
+        7,
+        645,
+        70,
+        21,
+        3285,
+        10269,
+        5,
+        2
+      ],
+      "note": "english-prose-pangram"
+    },
+    {
+      "input": "def foo(x):\n    return x + 1\n",
+      "expected_ids": [
+        0,
+        8,
+        420,
+        5775,
+        31,
+        132,
+        425,
+        2077,
+        30646,
+        1022,
+        997,
+        106,
+        2
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        0,
+        6,
+        14783,
+        5201,
+        132,
+        16,
+        10666,
+        28412,
+        141,
+        19,
+        90295,
+        58,
+        979,
+        58,
+        3142,
+        51912,
+        2
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "こんにちは、世界！",
+      "expected_ids": [
+        0,
+        6,
+        192661,
+        37,
+        3221,
+        38,
+        2
+      ],
+      "note": "japanese"
+    },
+    {
+      "input": "مرحبا بالعالم",
+      "expected_ids": [
+        0,
+        665,
+        193478,
+        258,
+        1705,
+        77796,
+        2
+      ],
+      "note": "arabic"
+    },
+    {
+      "input": "Hello 世界 مرحبا",
+      "expected_ids": [
+        0,
+        35378,
+        6,
+        3221,
+        665,
+        193478,
+        258,
+        2
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "Hello 👋 🌍",
+      "expected_ids": [
+        0,
+        35378,
+        6,
+        246511,
+        6,
+        247290,
+        2
+      ],
+      "note": "emoji"
+    },
+    {
+      "input": "a\n\n\nb",
+      "expected_ids": [
+        0,
+        10,
+        876,
+        2
+      ],
+      "note": "many-newlines"
+    },
+    {
+      "input": "   leading and    lots   between",
+      "expected_ids": [
+        0,
+        105207,
+        136,
+        71358,
+        17721,
+        2
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        0,
+        581,
+        63773,
+        119455,
+        6,
+        147797,
+        88203,
+        7,
+        645,
+        70,
+        21,
+        3285,
+        10269,
+        5,
+        581,
+        63773,
+        119455,
+        6,
+        147797,
+        88203,
+        7,
+        645,
+        70,
+        21,
+        3285,
+        10269,
+        5,
+        581,
+        63773,
+        119455,
+        6,
+        147797,
+        88203,
+        7,
+        645,
+        70,
+        21,
+        3285,
+        10269,
+        5,
+        2
+      ],
+      "note": "long-repeated-pangram"
+    },
+    {
+      "input": "<|endoftext|>",
+      "expected_ids": [
+        0,
+        4426,
+        58745,
+        4017,
+        420,
+        22829,
+        58745,
+        2740,
+        2
+      ],
+      "note": "special-surface-endoftext-raw"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        0,
+        26216,
+        2
+      ],
+      "note": "nfc-cafe-precomposed"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        0,
+        26216,
+        2
+      ],
+      "note": "nfd-cafe-decomposed"
+    },
+    {
+      "input": "a\tb\nc",
+      "expected_ids": [
+        0,
+        10,
+        876,
+        501,
+        2
+      ],
+      "note": "tab-and-newline"
+    },
+    {
+      "input": "3.14159 and -42",
+      "expected_ids": [
+        0,
+        1031,
+        2592,
+        146086,
+        136,
+        6,
+        124596,
+        2
+      ],
+      "note": "numbers-and-signs"
+    },
+    {
+      "input": "https://example.com/path?q=1&r=2",
+      "expected_ids": [
+        0,
+        3975,
+        696,
+        3355,
+        11,
+        33209,
+        5,
+        277,
+        64,
+        128405,
+        32,
+        864,
+        33000,
+        1230,
+        42,
+        55257,
+        2
+      ],
+      "note": "url-with-query"
+    }
+  ]
+}

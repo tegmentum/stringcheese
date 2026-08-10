@@ -1,0 +1,268 @@
+{
+  "checkpoint": "cl100k_base",
+  "source": "tiktoken==0.13.0 — `get_encoding('cl100k_base')`",
+  "note": "cl100k_base ids via `encode_ordinary` so the `<|endoftext|>` surface encodes as raw bytes rather than raising. This matches `BpeTokenizer::encode`'s default behaviour where special tokens are only recognised when registered on the tokenizer.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "a",
+      "expected_ids": [
+        64
+      ],
+      "note": "single-char-ascii"
+    },
+    {
+      "input": " ",
+      "expected_ids": [
+        220
+      ],
+      "note": "single-space"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        9906,
+        11,
+        1917,
+        0
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        791,
+        4062,
+        14198,
+        39935,
+        35308,
+        927,
+        279,
+        16053,
+        5679,
+        13
+      ],
+      "note": "english-prose-pangram"
+    },
+    {
+      "input": "def foo(x):\n    return x + 1\n",
+      "expected_ids": [
+        755,
+        15586,
+        2120,
+        997,
+        262,
+        471,
+        865,
+        489,
+        220,
+        16,
+        198
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        8998,
+        1925,
+        368,
+        314,
+        14069,
+        17667,
+        6151,
+        5146,
+        335
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "こんにちは、世界！",
+      "expected_ids": [
+        90115,
+        5486,
+        3574,
+        244,
+        98220,
+        6447
+      ],
+      "note": "japanese"
+    },
+    {
+      "input": "مرحبا بالعالم",
+      "expected_ids": [
+        10386,
+        11318,
+        30925,
+        22071,
+        5821,
+        28946,
+        32482,
+        24102,
+        32482,
+        10386
+      ],
+      "note": "arabic"
+    },
+    {
+      "input": "Hello 世界 مرحبا",
+      "expected_ids": [
+        9906,
+        220,
+        3574,
+        244,
+        98220,
+        24252,
+        11318,
+        30925,
+        22071,
+        5821
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "Hello 👋 🌍",
+      "expected_ids": [
+        9906,
+        62904,
+        233,
+        11410,
+        234,
+        235
+      ],
+      "note": "emoji"
+    },
+    {
+      "input": "a\n\n\nb",
+      "expected_ids": [
+        64,
+        1432,
+        65
+      ],
+      "note": "many-newlines"
+    },
+    {
+      "input": "   leading and    lots   between",
+      "expected_ids": [
+        256,
+        6522,
+        323,
+        262,
+        10283,
+        256,
+        1990
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        791,
+        4062,
+        14198,
+        39935,
+        35308,
+        927,
+        279,
+        16053,
+        5679,
+        13,
+        578,
+        4062,
+        14198,
+        39935,
+        35308,
+        927,
+        279,
+        16053,
+        5679,
+        13,
+        578,
+        4062,
+        14198,
+        39935,
+        35308,
+        927,
+        279,
+        16053,
+        5679,
+        13
+      ],
+      "note": "long-repeated-pangram"
+    },
+    {
+      "input": "<|endoftext|>",
+      "expected_ids": [
+        27,
+        91,
+        8862,
+        728,
+        428,
+        91,
+        29
+      ],
+      "note": "special-surface-endoftext-raw"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        936,
+        59958
+      ],
+      "note": "nfc-cafe-precomposed"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        936,
+        1897,
+        54939
+      ],
+      "note": "nfd-cafe-decomposed"
+    },
+    {
+      "input": "a\tb\nc",
+      "expected_ids": [
+        64,
+        2282,
+        198,
+        66
+      ],
+      "note": "tab-and-newline"
+    },
+    {
+      "input": "3.14159 and -42",
+      "expected_ids": [
+        18,
+        13,
+        9335,
+        2946,
+        323,
+        482,
+        2983
+      ],
+      "note": "numbers-and-signs"
+    },
+    {
+      "input": "https://example.com/path?q=1&r=2",
+      "expected_ids": [
+        2485,
+        1129,
+        8858,
+        916,
+        52076,
+        44882,
+        28,
+        16,
+        61717,
+        28,
+        17
+      ],
+      "note": "url-with-query"
+    }
+  ]
+}

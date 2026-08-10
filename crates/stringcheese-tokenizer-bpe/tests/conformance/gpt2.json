@@ -1,0 +1,290 @@
+{
+  "checkpoint": "gpt2",
+  "source": "transformers.AutoTokenizer.from_pretrained('gpt2') [transformers==5.14.1]",
+  "note": "GPT-2 byte-level BPE. `add_special_tokens=False` so the returned ids are the raw BPE output; the `<|endoftext|>` surface form is treated as a registered special token by the reference tokenizer and mapped to id 50256 rather than being emitted as raw bytes.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "a",
+      "expected_ids": [
+        64
+      ],
+      "note": "single-char-ascii"
+    },
+    {
+      "input": " ",
+      "expected_ids": [
+        220
+      ],
+      "note": "single-space"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        15496,
+        11,
+        995,
+        0
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        464,
+        2068,
+        7586,
+        21831,
+        18045,
+        625,
+        262,
+        16931,
+        3290,
+        13
+      ],
+      "note": "english-prose-pangram"
+    },
+    {
+      "input": "def foo(x):\n    return x + 1\n",
+      "expected_ids": [
+        4299,
+        22944,
+        7,
+        87,
+        2599,
+        198,
+        220,
+        220,
+        220,
+        1441,
+        2124,
+        1343,
+        352,
+        198
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        22184,
+        1388,
+        3419,
+        1391,
+        44872,
+        0,
+        7203,
+        5303,
+        15341,
+        1782
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "こんにちは、世界！",
+      "expected_ids": [
+        46036,
+        22174,
+        28618,
+        2515,
+        94,
+        31676,
+        23513,
+        10310,
+        244,
+        45911,
+        234,
+        171,
+        120,
+        223
+      ],
+      "note": "japanese"
+    },
+    {
+      "input": "مرحبا بالعالم",
+      "expected_ids": [
+        25405,
+        26897,
+        148,
+        255,
+        39848,
+        12919,
+        17550,
+        101,
+        23525,
+        44690,
+        23525,
+        25405
+      ],
+      "note": "arabic"
+    },
+    {
+      "input": "Hello 世界 مرحبا",
+      "expected_ids": [
+        15496,
+        220,
+        10310,
+        244,
+        45911,
+        234,
+        47048,
+        26897,
+        148,
+        255,
+        39848,
+        12919
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "Hello 👋 🌍",
+      "expected_ids": [
+        15496,
+        50169,
+        233,
+        12520,
+        234,
+        235
+      ],
+      "note": "emoji"
+    },
+    {
+      "input": "a\n\n\nb",
+      "expected_ids": [
+        64,
+        628,
+        198,
+        65
+      ],
+      "note": "many-newlines"
+    },
+    {
+      "input": "   leading and    lots   between",
+      "expected_ids": [
+        220,
+        220,
+        3756,
+        290,
+        220,
+        220,
+        220,
+        6041,
+        220,
+        220,
+        1022
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        464,
+        2068,
+        7586,
+        21831,
+        18045,
+        625,
+        262,
+        16931,
+        3290,
+        13,
+        383,
+        2068,
+        7586,
+        21831,
+        18045,
+        625,
+        262,
+        16931,
+        3290,
+        13,
+        383,
+        2068,
+        7586,
+        21831,
+        18045,
+        625,
+        262,
+        16931,
+        3290,
+        13
+      ],
+      "note": "long-repeated-pangram"
+    },
+    {
+      "input": "<|endoftext|>",
+      "expected_ids": [
+        50256
+      ],
+      "note": "special-surface-endoftext-raw"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        66,
+        1878,
+        2634
+      ],
+      "note": "nfc-cafe-precomposed"
+    },
+    {
+      "input": "café",
+      "expected_ids": [
+        66,
+        8635,
+        136,
+        223
+      ],
+      "note": "nfd-cafe-decomposed"
+    },
+    {
+      "input": "a\tb\nc",
+      "expected_ids": [
+        64,
+        197,
+        65,
+        198,
+        66
+      ],
+      "note": "tab-and-newline"
+    },
+    {
+      "input": "3.14159 and -42",
+      "expected_ids": [
+        18,
+        13,
+        1415,
+        19707,
+        290,
+        532,
+        3682
+      ],
+      "note": "numbers-and-signs"
+    },
+    {
+      "input": "https://example.com/path?q=1&r=2",
+      "expected_ids": [
+        5450,
+        1378,
+        20688,
+        13,
+        785,
+        14,
+        6978,
+        30,
+        80,
+        28,
+        16,
+        5,
+        81,
+        28,
+        17
+      ],
+      "note": "url-with-query"
+    }
+  ]
+}
