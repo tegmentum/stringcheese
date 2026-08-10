@@ -1,0 +1,176 @@
+{
+  "checkpoint": "bpe-byte-fallback-synth",
+  "source": "hand-crafted synthetic BPE vocab; expected ids computed by gen_bpe_byte_fallback_synth.py against the vocab in tests/conformance/vocabs/bpe-byte-fallback-synth/tokenizer.json",
+  "note": "Synthetic Llama-2-shape character-BPE vocabulary with byte_fallback enabled; exercises the <0xXX> byte-fallback path for a mix of ASCII / Latin / CJK / emoji OOV characters alongside vocab-covered merge chains. The vocab is hand-crafted (no upstream reference tool involved) - its whole purpose is to exercise the BPE-side byte-fallback code path in the conformance runner, mirroring the Unigram-side fixture. IDs 3..=258 are the reserved <0x00>..<0xFF> byte-fallback tokens; ids 259..=266 are single-character seeds (h, i, e, l, o, w, r, d); ids 267..=275 are merged compounds (hi, ll, he, hell, hello, wo, wor, worl, world).",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "h",
+      "expected_ids": [
+        259
+      ],
+      "note": "single-letter-h"
+    },
+    {
+      "input": "hi",
+      "expected_ids": [
+        267
+      ],
+      "note": "two-letters-merge-hi"
+    },
+    {
+      "input": "hello",
+      "expected_ids": [
+        271
+      ],
+      "note": "single-word-hello"
+    },
+    {
+      "input": "world",
+      "expected_ids": [
+        275
+      ],
+      "note": "single-word-world"
+    },
+    {
+      "input": "helloworld",
+      "expected_ids": [
+        271,
+        275
+      ],
+      "note": "concat-hello-world"
+    },
+    {
+      "input": "he",
+      "expected_ids": [
+        269
+      ],
+      "note": "prefix-he"
+    },
+    {
+      "input": "hell",
+      "expected_ids": [
+        270
+      ],
+      "note": "prefix-hell"
+    },
+    {
+      "input": "eh",
+      "expected_ids": [
+        261,
+        259
+      ],
+      "note": "no-merge-path-eh"
+    },
+    {
+      "input": "abc",
+      "expected_ids": [
+        100,
+        101,
+        102
+      ],
+      "note": "ascii-all-oov"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "emoji-4byte-fallback"
+    },
+    {
+      "input": "hi😀",
+      "expected_ids": [
+        267,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "mixed-word-plus-4byte-emoji"
+    },
+    {
+      "input": "😀hi",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131,
+        267
+      ],
+      "note": "mixed-4byte-emoji-plus-word"
+    },
+    {
+      "input": "😀😀",
+      "expected_ids": [
+        243,
+        162,
+        155,
+        131,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "repeated-emoji"
+    },
+    {
+      "input": "é",
+      "expected_ids": [
+        198,
+        172
+      ],
+      "note": "latin-2byte-utf8"
+    },
+    {
+      "input": "☃",
+      "expected_ids": [
+        229,
+        155,
+        134
+      ],
+      "note": "snowman-3byte-utf8"
+    },
+    {
+      "input": "你",
+      "expected_ids": [
+        231,
+        192,
+        163
+      ],
+      "note": "cjk-3byte-utf8"
+    },
+    {
+      "input": "hi?",
+      "expected_ids": [
+        267,
+        66
+      ],
+      "note": "word-plus-ascii-oov"
+    },
+    {
+      "input": "hihello",
+      "expected_ids": [
+        267,
+        271
+      ],
+      "note": "concat-hi-hello"
+    },
+    {
+      "input": "hihelloworld",
+      "expected_ids": [
+        267,
+        271,
+        275
+      ],
+      "note": "concat-hi-hello-world"
+    }
+  ]
+}

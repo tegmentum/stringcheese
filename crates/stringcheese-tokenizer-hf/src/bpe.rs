@@ -431,6 +431,16 @@ pub struct BpeTokenizer {
     /// [`Encoding`] before it leaves [`Self::encode`]. See
     /// [`crate::post_processor`] for the shape.
     post_processor: crate::post_processor::PostProcessor,
+    /// Optional byte-fallback table: `byte_fallback[b]` is the vocab
+    /// id of the `<0xBB>` token reserved for byte value `b`. Populated
+    /// by [`Self::with_byte_fallback`]; `None` disables the fallback
+    /// and leaves the encode path on its previous
+    /// `UnknownToken`-on-OOV behaviour.
+    ///
+    /// Boxed so a clone of `BpeTokenizer` avoids a 1 KiB memcpy on the
+    /// common (byte-fallback-off) path — mirrors the Unigram-side
+    /// storage shape in [`crate::hf::UnigramTokenizer`].
+    byte_fallback: Option<alloc::boxed::Box<[TokenId; 256]>>,
 }
 
 impl BpeTokenizer {
@@ -446,6 +456,7 @@ impl BpeTokenizer {
             #[cfg(feature = "hf-normalizer")]
             normalizer: None,
             post_processor: crate::post_processor::PostProcessor::None,
+            byte_fallback: None,
         }
     }
 
@@ -516,6 +527,32 @@ impl BpeTokenizer {
         self
     }
 
+    /// Enable `SentencePiece`'s byte-fallback mechanism on this
+    /// tokenizer.
+    ///
+    /// `byte_fallback[b]` must be the vocab id of the reserved
+    /// `<0xBB>` token for byte value `b`. Once configured,
+    /// [`Self::encode`] emits a run of these ids whenever a character
+    /// has no vocab-only path (its raw UTF-8 bytes are fanned out into
+    /// one fallback id per byte) instead of failing with
+    /// [`TokenizerError::UnknownToken`]. [`Self::decode`] is likewise
+    /// updated: consecutive byte-fallback ids are accumulated into a
+    /// UTF-8 buffer and flushed as `String::from_utf8_lossy` when a
+    /// non-byte-fallback token breaks the run.
+    ///
+    /// Real Llama-2 / Mistral / Qwen `tokenizer.json` blobs ship as
+    /// `model.type == "BPE"` with `byte_fallback: true` and 256
+    /// reserved `<0xXX>` tokens at ids 3..258. The HF loader
+    /// ([`crate::hf::to_bpe_tokenizer`]) calls this builder
+    /// automatically when it sees that flag; callers who assemble a
+    /// tokenizer manually via [`Self::from_parts`] can call it
+    /// themselves after resolving the 256 ids from their own vocab.
+    #[must_use]
+    pub fn with_byte_fallback(mut self, byte_fallback: [TokenId; 256]) -> Self {
+        self.byte_fallback = Some(alloc::boxed::Box::new(byte_fallback));
+        self
+    }
+
     /// Read-only access to the configured normalizer, if any.
     #[cfg(feature = "hf-normalizer")]
     #[must_use]
@@ -527,6 +564,13 @@ impl BpeTokenizer {
     #[must_use]
     pub fn post_processor(&self) -> &crate::post_processor::PostProcessor {
         &self.post_processor
+    }
+
+    /// `true` when [`Self::with_byte_fallback`] has been called on
+    /// this tokenizer and the byte-fallback path is active.
+    #[must_use]
+    pub const fn byte_fallback_enabled(&self) -> bool {
+        self.byte_fallback.is_some()
     }
 
     /// Encode `text` while explicitly controlling whether the
@@ -821,6 +865,14 @@ impl BpeTokenizer {
             self.pre_tokenizer_pattern,
             Some(PreTokenizerRegex::ByteLevel { .. })
         );
+        // Character-BPE (Llama-2 / Mistral / Qwen) also needs per-char
+        // seeding: the vocab keys single-character surfaces by their
+        // raw UTF-8 bytes (`"é"` → `[0xC3, 0xA9]`), so seeding per
+        // byte would split the char across two pieces that no merge
+        // rule would ever combine again. When byte-fallback is on the
+        // encode-side we always seed per-char and delegate unresolved
+        // pieces to the fallback fan-out below.
+        let seed_per_char = byte_level || self.byte_fallback.is_some();
 
         for word in words {
             let word_start_in_region = word.offset;
@@ -828,9 +880,10 @@ impl BpeTokenizer {
             let word_bytes = word_text.as_bytes();
 
             // Seed pieces: one per byte in the default path, one per
-            // *char* in the byte-level path (see comment above).
+            // *char* in both the byte-level and byte-fallback paths
+            // (see comment above).
             let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
-            if byte_level {
+            if seed_per_char {
                 let mut byte_cursor: usize = 0;
                 for c in word_text.chars() {
                     let len = c.len_utf8();
@@ -856,15 +909,51 @@ impl BpeTokenizer {
             merge_fn(self, &mut pieces);
 
             for p in pieces {
-                let Some(id) = self.vocab.id(&p.bytes) else {
+                if let Some(id) = self.vocab.id(&p.bytes) {
+                    let abs_start = region_offset + word_start_in_region + p.start;
+                    let abs_end = abs_start + p.len;
+                    out.push((id, abs_start..abs_end, false));
+                } else if let Some(bf) = self.byte_fallback.as_ref() {
+                    // Byte-fallback: the piece survived the merge loop
+                    // but its bytes are not in the vocab. Emit one
+                    // reserved `<0xXX>` id per byte of the piece. The
+                    // offset span of each emitted id is a single byte
+                    // in the input — matching how the caller can slice
+                    // `input.as_bytes()[range]` back to recover the
+                    // original byte.
+                    for (k, &b) in p.bytes.iter().enumerate() {
+                        let id = bf[b as usize];
+                        let abs_start = region_offset + word_start_in_region + p.start + k;
+                        let abs_end = abs_start + 1;
+                        out.push((id, abs_start..abs_end, false));
+                    }
+                } else {
                     return Err(TokenizerError::UnknownToken(format_bytes_literal(&p.bytes)));
-                };
-                let abs_start = region_offset + word_start_in_region + p.start;
-                let abs_end = abs_start + p.len;
-                out.push((id, abs_start..abs_end, false));
+                }
             }
         }
         Ok(())
+    }
+
+    /// Reverse-lookup: if `id` is one of the 256 byte-fallback tokens,
+    /// return its associated byte value. `None` when byte-fallback is
+    /// disabled or `id` is a regular vocab entry.
+    ///
+    /// A linear scan of a 256-entry array is cheap enough that
+    /// building a reverse `id → byte` map on construction would be
+    /// premature optimisation — decode is not a hot path. Mirrors
+    /// [`crate::hf::UnigramTokenizer::byte_fallback_byte_for`].
+    fn byte_fallback_byte_for(&self, id: TokenId) -> Option<u8> {
+        let bf = self.byte_fallback.as_ref()?;
+        for (b, &tok) in bf.iter().enumerate() {
+            if tok == id {
+                // `b` iterates over a [_; 256] array, so it is always
+                // in 0..=255 — the try_from is exact; the `.ok()`
+                // shape sidesteps clippy's truncation lint.
+                return u8::try_from(b).ok();
+            }
+        }
+        None
     }
 
     /// Naive O(n²) merge loop: repeatedly rescan the whole piece
@@ -1061,7 +1150,25 @@ impl Tokenizer for BpeTokenizer {
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
         let mut buf: Vec<u8> = Vec::new();
+        // Accumulator for a run of byte-fallback tokens. Bytes are
+        // pushed here while consecutive byte-fallback ids arrive; the
+        // run is flushed via `String::from_utf8_lossy` when a non-
+        // byte-fallback token is seen or at the end of the stream so
+        // an id-list that happens to encode invalid UTF-8 (e.g. hand-
+        // constructed with a stray byte-fallback id) maps to U+FFFD
+        // instead of failing the whole decode. Matches the Unigram
+        // side's shape in [`crate::hf::UnigramTokenizer::decode`].
+        let mut byte_run: Vec<u8> = Vec::new();
         for &id in tokens {
+            if let Some(b) = self.byte_fallback_byte_for(id) {
+                byte_run.push(b);
+                continue;
+            }
+            if !byte_run.is_empty() {
+                let flushed = alloc::string::String::from_utf8_lossy(&byte_run);
+                buf.extend_from_slice(flushed.as_bytes());
+                byte_run.clear();
+            }
             // Special tokens are decoded through the vocabulary too if
             // they were registered there; otherwise fall back to the
             // special-token surface strings.
@@ -1077,6 +1184,10 @@ impl Tokenizer for BpeTokenizer {
             } else {
                 return Err(TokenizerError::UnknownToken(format_id(id)));
             }
+        }
+        if !byte_run.is_empty() {
+            let flushed = alloc::string::String::from_utf8_lossy(&byte_run);
+            buf.extend_from_slice(flushed.as_bytes());
         }
         match self.decoder {
             Decoder::Passthrough => String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8),
@@ -2198,6 +2309,165 @@ mod tests {
         assert_eq!(enc.ids, expected);
         assert!(!enc.ids.contains(&foo_id));
         assert!(enc.special_mask.iter().all(|&b| !b));
+    }
+
+    // ------------------------------------------------------------------
+    // Byte-fallback (SentencePiece-style) — the mechanism that emits
+    // a run of reserved `<0xXX>` tokens for a character with no
+    // vocab-only path. Mirrors the Unigram-side coverage in
+    // `crate::hf::UnigramTokenizer`.
+    // ------------------------------------------------------------------
+
+    /// Build a synthetic character-BPE vocabulary that resembles the
+    /// Llama-2 / Mistral / Qwen shape:
+    ///
+    /// * ids 0..=2 — `<unk>`, `<s>`, `</s>` (three specials; not
+    ///   registered as `special_tokens` here — the test cares about
+    ///   the byte-fallback fan-out, not the special-token splice).
+    /// * ids 3..=258 — the 256 reserved `<0x00>`..`<0xFF>` byte
+    ///   tokens (id 3 = byte 0x00, id 3 + b = byte `b`).
+    /// * id 259..= — a handful of single-character surfaces plus one
+    ///   merged pair so the merge loop has something to do.
+    ///
+    /// Returns the tokenizer with byte-fallback enabled and the id of
+    /// the merged surface for the caller to assert against.
+    fn build_bpe_with_byte_fallback() -> (BpeTokenizer, [TokenId; 256], TokenId) {
+        let mut v = BpeVocabulary::new();
+        // Three fake specials at ids 0..=2 to match the real-world
+        // layout of the byte-fallback region.
+        v.insert(0, b"<unk>".to_vec()).unwrap();
+        v.insert(1, b"<s>".to_vec()).unwrap();
+        v.insert(2, b"</s>".to_vec()).unwrap();
+        // The 256 reserved byte-fallback tokens at ids 3..=258.
+        let mut byte_ids = [0u32; 256];
+        for b in 0u32..=255 {
+            let surface = alloc::format!("<0x{b:02X}>");
+            let id = 3 + b;
+            v.insert(id, surface.into_bytes()).unwrap();
+            byte_ids[b as usize] = id;
+        }
+        // Single-character vocab entries the merge loop can chew on.
+        let ch: &[u8] = b"hielowrd";
+        let mut next: TokenId = 259;
+        for &c in ch {
+            v.insert(next, alloc::vec![c]).unwrap();
+            next += 1;
+        }
+        // One merged pair so the encoder demonstrably reaches a
+        // non-byte-fallback path when the input is vocab-covered.
+        let hi_id = next;
+        v.insert(next, b"hi".to_vec()).unwrap();
+        let mut m = BpeMergeTable::new();
+        m.insert(b"h".to_vec(), b"i".to_vec(), 0);
+        let tok = BpeTokenizer::from_parts(m, v).with_byte_fallback(byte_ids);
+        (tok, byte_ids, hi_id)
+    }
+
+    #[test]
+    fn byte_fallback_enabled_reports_configuration() {
+        let (tok, _, _) = build_bpe_with_byte_fallback();
+        assert!(tok.byte_fallback_enabled());
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let bare = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab);
+        assert!(!bare.byte_fallback_enabled());
+    }
+
+    #[test]
+    fn byte_fallback_encodes_ascii_vocab_path_unchanged() {
+        let (tok, _, hi_id) = build_bpe_with_byte_fallback();
+        // "hi" merges to a single vocab id — the byte-fallback path
+        // must NOT fire when a vocab-only path exists.
+        let enc = tok.encode("hi").unwrap();
+        assert_eq!(enc.ids, vec![hi_id]);
+        assert!(enc.special_mask.iter().all(|&b| !b));
+    }
+
+    #[test]
+    fn byte_fallback_fans_out_multibyte_oov_char() {
+        let (tok, byte_ids, _) = build_bpe_with_byte_fallback();
+        // `😀` is a 4-byte UTF-8 char (F0 9F 98 80) not in the vocab.
+        // Every byte must be emitted as its reserved `<0xXX>` id.
+        let enc = tok.encode("😀").unwrap();
+        let expected: Vec<TokenId> = "😀".bytes().map(|b| byte_ids[b as usize]).collect();
+        assert_eq!(enc.ids, expected);
+        assert_eq!(enc.ids.len(), 4);
+        // Each fanned-out id spans one byte of the input.
+        assert_eq!(enc.offsets, vec![0..1, 1..2, 2..3, 3..4]);
+    }
+
+    #[test]
+    fn byte_fallback_mixed_word_and_oov_char() {
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        // "hi😀" → merge (h,i) → "hi" (vocab id) + byte-fallback for 😀.
+        let enc = tok.encode("hi😀").unwrap();
+        let mut expected = vec![hi_id];
+        expected.extend("😀".bytes().map(|b| byte_ids[b as usize]));
+        assert_eq!(enc.ids, expected);
+    }
+
+    #[test]
+    fn byte_fallback_ascii_oov_char() {
+        let (tok, byte_ids, _) = build_bpe_with_byte_fallback();
+        // `?` (0x3F) is not in the vocab. Byte-fallback must emit a
+        // single reserved id for byte 0x3F.
+        let enc = tok.encode("?").unwrap();
+        assert_eq!(enc.ids, vec![byte_ids[0x3F]]);
+    }
+
+    #[test]
+    fn byte_fallback_all_oov_only_fires_fallback() {
+        let (tok, byte_ids, _) = build_bpe_with_byte_fallback();
+        // "?!" — both ASCII, neither in the vocab; both fall through.
+        let enc = tok.encode("?!").unwrap();
+        assert_eq!(enc.ids, vec![byte_ids[0x3F], byte_ids[0x21]]);
+    }
+
+    #[test]
+    fn byte_fallback_round_trips_through_decode() {
+        let (tok, _, _) = build_bpe_with_byte_fallback();
+        // Round-trip a mix of vocab hits and byte-fallback fan-outs.
+        // Whitespace-less inputs keep the pre-tokenizer's whitespace
+        // fallback out of the equation (that fallback is documented
+        // to be lossy on whitespace).
+        for text in ["hi", "?", "😀", "hi😀", "😀hi", "?!", "hi?hi"] {
+            let enc = tok.encode(text).unwrap();
+            let round = tok.decode(&enc.ids).unwrap();
+            assert_eq!(round, text, "round-trip failed on {text:?}");
+        }
+    }
+
+    #[test]
+    fn byte_fallback_decode_flushes_run_before_non_fallback_id() {
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        // Manually construct an id sequence with a byte-fallback run
+        // that terminates before a vocab id — exercises the "flush the
+        // run when a non-fallback token arrives" branch in `decode`.
+        let ids: Vec<TokenId> = "😀"
+            .bytes()
+            .map(|b| byte_ids[b as usize])
+            .chain(core::iter::once(hi_id))
+            .collect();
+        let decoded = tok.decode(&ids).unwrap();
+        assert_eq!(decoded, "😀hi");
+    }
+
+    #[test]
+    fn byte_fallback_encoder_before_this_change_would_have_errored() {
+        // Sanity check: without byte-fallback the same vocab would
+        // surface `UnknownToken` on `?`. This locks the previous
+        // behaviour in place for callers who deliberately construct a
+        // tokenizer without byte-fallback.
+        let mut v = BpeVocabulary::new();
+        for &c in b"hi" {
+            v.insert(u32::from(c), alloc::vec![c]).unwrap();
+        }
+        // No merges: keep every piece atomic so the vocab-only lookup
+        // succeeds byte-for-byte on `"hi"` and fails cleanly on `"?"`.
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), v);
+        // "hi" encodes cleanly, "?" errors.
+        assert!(tok.encode("hi").is_ok());
+        let err = tok.encode("?").unwrap_err();
+        assert!(matches!(err, TokenizerError::UnknownToken(_)));
     }
 
     #[test]

@@ -364,6 +364,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "deberta_v3_base.json",
     "mdeberta_v3_base.json",
     "unigram_byte_fallback_synth.json",
+    "bpe_byte_fallback_synth.json",
+    "llama_2_7b.json",
 ];
 
 #[test]
@@ -522,4 +524,41 @@ fn conformance_unigram_byte_fallback_synth() {
         "unigram_byte_fallback_synth.json",
         "unigram-byte-fallback-synth",
     );
+}
+
+// The synthetic `bpe-byte-fallback-synth` fixture ships its own
+// tokenizer.json under `tests/conformance/vocabs/` (it is a hand-
+// crafted character-BPE vocab, not a real upstream one — see the
+// fixture's `source` field for the rationale). It exercises the
+// SentencePiece `<0xXX>` byte-fallback path added to the BPE runtime
+// for Llama-2 / Mistral / Qwen checkpoint support (real Llama-2 /
+// Mistral / Qwen tokenizer.json blobs ship as `model.type == "BPE"`
+// with the same 256 reserved tokens embedded). The `#[ignore]` gate
+// still applies for consistency with the rest of the conformance
+// runner — activating the suite requires `--features
+// parity-real-vocab`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_bpe_byte_fallback_synth() {
+    run_fixture("bpe_byte_fallback_synth.json", "bpe-byte-fallback-synth");
+}
+
+// Real Llama-2 tokenizer.json — the primary target for the BPE-side
+// byte-fallback landing. Unlike the two synthetic fixtures above this
+// one requires a real 1.8 MB `tokenizer.json` on disk (we never
+// commit real vocab bytes); the runner soft-skips when none is
+// present. Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained('NousResearch/Llama-2-7b-hf')`
+// so byte-for-byte parity here means our loader matches upstream on
+// the primary shipped Llama-2 BPE contract, byte-fallback included.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_llama_2_7b() {
+    run_fixture("llama_2_7b.json", "llama-2-7b-hf");
 }

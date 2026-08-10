@@ -1,0 +1,231 @@
+{
+  "checkpoint": "llama-2-7b-hf",
+  "source": "transformers.AutoTokenizer.from_pretrained('NousResearch/Llama-2-7b-hf', use_fast=True).encode(input) - the tokenizer.json comes from the same NousResearch mirror; the model weights themselves are not required.",
+  "note": "Real Llama-2 tokenizer.json exercises the BPE-side SentencePiece byte_fallback path end-to-end. The 20 cases span ASCII / Latin / Cyrillic / CJK / Hebrew / Arabic / Devanagari / rare Unicode / 4-byte-emoji inputs so the byte-fallback fan-out is hit under a real 32k-entry character-BPE vocabulary. Every case's expected_ids were produced by transformers.AutoTokenizer against the same tokenizer.json - pass criterion is byte-for-byte parity.",
+  "cases": [
+    {
+      "input": "Hello",
+      "expected_ids": [
+        1,
+        15043
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "hi",
+      "expected_ids": [
+        1,
+        7251
+      ],
+      "note": "ascii-hi"
+    },
+    {
+      "input": "world",
+      "expected_ids": [
+        1,
+        3186
+      ],
+      "note": "ascii-world"
+    },
+    {
+      "input": "Hello world",
+      "expected_ids": [
+        1,
+        15043,
+        3186
+      ],
+      "note": "greeting-hello-world"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "🎉",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        162,
+        145,
+        140
+      ],
+      "note": "emoji-party-4byte"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        1,
+        9433
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        1,
+        29871,
+        30919,
+        31076
+      ],
+      "note": "chinese-2char-3byte"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        1,
+        29871,
+        30294,
+        30249,
+        30205,
+        30404
+      ],
+      "note": "hebrew-2byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        1,
+        29871,
+        30159,
+        30156
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        1,
+        29871,
+        30424,
+        30485,
+        30489
+      ],
+      "note": "hindi-3byte"
+    },
+    {
+      "input": "hi😀",
+      "expected_ids": [
+        1,
+        7251,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "word-plus-emoji"
+    },
+    {
+      "input": "😀hi",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        162,
+        155,
+        131,
+        2918
+      ],
+      "note": "emoji-plus-word"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        162,
+        155,
+        131,
+        243,
+        162,
+        145,
+        140,
+        243,
+        162,
+        156,
+        133
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "✈",
+      "expected_ids": [
+        1,
+        29871,
+        229,
+        159,
+        139
+      ],
+      "note": "rare-symbol-airplane"
+    },
+    {
+      "input": "𝐀",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        160,
+        147,
+        131
+      ],
+      "note": "mathematical-alphanumeric"
+    },
+    {
+      "input": "ॐ",
+      "expected_ids": [
+        1,
+        29871,
+        227,
+        168,
+        147
+      ],
+      "note": "devanagari-om"
+    },
+    {
+      "input": "⠀",
+      "expected_ids": [
+        1,
+        29871,
+        30942
+      ],
+      "note": "braille-blank"
+    },
+    {
+      "input": "𝄢",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        160,
+        135,
+        165
+      ],
+      "note": "musical-note"
+    },
+    {
+      "input": "😀𓀀",
+      "expected_ids": [
+        1,
+        29871,
+        243,
+        162,
+        155,
+        131,
+        243,
+        150,
+        131,
+        131
+      ],
+      "note": "multi-obscure"
+    }
+  ]
+}

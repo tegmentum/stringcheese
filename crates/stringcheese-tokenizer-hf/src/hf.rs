@@ -424,15 +424,12 @@ const fn default_max_input_chars_per_word() -> usize {
 
 /// The BPE-specific fields of a `model` block.
 ///
-/// Every field except [`Self::vocab`] and [`Self::merges`] is optional
-/// and captured only so callers can inspect what the source config
-/// declared. [`to_bpe_tokenizer`] does not act on any of the optional
-/// fields today — matching the "MVP-with-ignore" contract documented
-/// at the module level. Setting `byte_fallback = true` in particular
-/// requires a matching input-remapping layer we do not ship yet;
-/// converting a config that turns it on produces a functional
-/// tokenizer whose outputs may differ from upstream for any input that
-/// would have triggered the fallback.
+/// Every field except [`Self::vocab`], [`Self::merges`], and
+/// [`Self::byte_fallback`] is optional and captured only so callers
+/// can inspect what the source config declared. [`to_bpe_tokenizer`]
+/// honours [`Self::byte_fallback`] (see [`BpeTokenizer::with_byte_fallback`])
+/// and otherwise matches the "MVP-with-ignore" contract documented
+/// at the module level.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct HfBpeModel {
@@ -460,8 +457,22 @@ pub struct HfBpeModel {
     /// applied.
     #[serde(default)]
     pub fuse_unk: Option<bool>,
-    /// Whether byte-fallback is enabled for out-of-vocab characters.
-    /// Preserved but not applied.
+    /// Whether byte-fallback is enabled — the `SentencePiece`
+    /// mechanism that emits the UTF-8 bytes of an out-of-vocab
+    /// character as a run of `<0xXX>` tokens (256 reserved ids) instead
+    /// of failing. When [`to_bpe_tokenizer`] materialises a config
+    /// with `Some(true)` here it scans the vocabulary for the 256
+    /// `<0x00>`..`<0xFF>` surface strings and enables the fallback on
+    /// the produced [`BpeTokenizer`] via
+    /// [`BpeTokenizer::with_byte_fallback`]. A config that turns byte-
+    /// fallback on but is missing any of the 256 byte tokens is
+    /// rejected at conversion with
+    /// [`HfConversionError::ByteFallbackTokensMissing`]. This is the
+    /// same mechanism the Unigram side honours via
+    /// [`HfUnigramModel::byte_fallback`]; real Llama-2 / Mistral / Qwen
+    /// checkpoints ship as `model.type == "BPE"` (not `"Unigram"`) with
+    /// the same 256 reserved tokens embedded, so both landings are
+    /// required in practice.
     #[serde(default)]
     pub byte_fallback: Option<bool>,
     /// Whether the model should skip its merge loop when an input
@@ -1258,13 +1269,17 @@ pub enum HfConversionError {
         /// The offending name.
         name: String,
     },
-    /// The `Unigram` config set `byte_fallback: true` but the
+    /// A `Unigram` or `BPE` config set `byte_fallback: true` but the
     /// vocabulary is missing one or more of the 256 `<0xXX>`
     /// byte-fallback tokens the mechanism requires. Every byte value
     /// from `0x00` to `0xFF` needs its own reserved id in the vocab
     /// (surface string exactly `<0x00>`, `<0x01>`, ..., `<0xFF>`);
     /// without them, encoding an out-of-vocab character has no
-    /// well-defined fallback path.
+    /// well-defined fallback path. Surfaced by both
+    /// [`to_unigram_tokenizer`] and [`to_bpe_tokenizer`] — real Llama-2
+    /// / Mistral / Qwen `tokenizer.json` blobs ship as BPE with this
+    /// flag set, XLM-RoBERTa-style `SentencePiece` checkpoints ship as
+    /// Unigram.
     ByteFallbackTokensMissing {
         /// How many of the 256 required tokens are missing.
         missing_count: usize,
@@ -1370,7 +1385,7 @@ impl fmt::Display for HfConversionError {
                 first_missing_byte,
             } => write!(
                 f,
-                "Unigram model sets byte_fallback: true but its vocabulary \
+                "model sets byte_fallback: true but its vocabulary \
                  is missing {missing_count} of the required 256 <0xXX> \
                  byte-fallback tokens (first missing byte: 0x{first_missing_byte:02X})"
             ),
@@ -1434,6 +1449,53 @@ pub fn parse_tokenizer_json(json: &str) -> Result<HfTokenizerConfig, HfParseErro
     Ok(config)
 }
 
+/// Scan a BPE vocabulary for the 256 reserved `<0x00>`..`<0xFF>`
+/// byte-fallback tokens and return the resolved `byte → id` array.
+///
+/// Mirrors the Unigram-side scan in
+/// [`UnigramTokenizer::with_byte_fallback`] byte for byte: the first
+/// occurrence of each surface wins, uppercase and lowercase hex both
+/// count, and any missing byte surfaces
+/// [`HfConversionError::ByteFallbackTokensMissing`] with the count of
+/// missing tokens plus the first missing byte value.
+fn resolve_bpe_byte_fallback_ids(
+    vocab: &BTreeMap<String, TokenId>,
+) -> Result<[TokenId; 256], HfConversionError> {
+    let mut ids: [Option<TokenId>; 256] = [None; 256];
+    for (surface, &id) in vocab {
+        if let Some(b) = parse_byte_fallback_surface(surface) {
+            // First occurrence wins — matches the tokenizer's own
+            // vocab-lookup direction and the Unigram-side scan.
+            if ids[b as usize].is_none() {
+                ids[b as usize] = Some(id);
+            }
+        }
+    }
+    let mut resolved: [TokenId; 256] = [0u32; 256];
+    let mut missing_count = 0usize;
+    let mut first_missing: Option<u8> = None;
+    for (b, slot) in ids.iter().enumerate() {
+        if let Some(id) = slot {
+            resolved[b] = *id;
+        } else {
+            missing_count += 1;
+            if first_missing.is_none() {
+                // `b` iterates a [_; 256] so the cast is exact;
+                // `try_from(...).ok()` sidesteps clippy's truncation
+                // lint the same way the Unigram-side scan does.
+                first_missing = u8::try_from(b).ok();
+            }
+        }
+    }
+    if missing_count != 0 {
+        return Err(HfConversionError::ByteFallbackTokensMissing {
+            missing_count,
+            first_missing_byte: first_missing.unwrap_or(0),
+        });
+    }
+    Ok(resolved)
+}
+
 /// Materialise an [`HfTokenizerConfig`] as a runnable [`BpeTokenizer`].
 ///
 /// See the module-level documentation for the full support matrix.
@@ -1449,7 +1511,10 @@ pub fn parse_tokenizer_json(json: &str) -> Result<HfTokenizerConfig, HfParseErro
 /// a non-BPE `model.type`, a `ByteLevel` pre-tokenizer, a `Sequence`
 /// pre-tokenizer with siblings that need dedicated support, or a
 /// merge entry that is neither a two-element array nor a
-/// single-space-joined string.
+/// single-space-joined string. Additionally, a `model.byte_fallback:
+/// true` config whose vocabulary is missing any of the 256 reserved
+/// `<0xXX>` byte tokens surfaces
+/// [`HfConversionError::ByteFallbackTokensMissing`].
 ///
 /// # Examples
 ///
@@ -1539,6 +1604,17 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
     if !specials.is_empty() {
         tok = tok.with_special_tokens(specials);
     }
+
+    // Byte-fallback — the `SentencePiece` mechanism that reroutes the
+    // OOV path from `unk` to the 256 reserved `<0xXX>` tokens. Enable
+    // it early (after the vocab is assembled but before the ancillary
+    // pipeline pieces) so a missing-tokens error surfaces before any
+    // pre-tokenizer / normalizer / post-processor conversion runs.
+    // Mirrors the Unigram-side landing in `to_unigram_tokenizer`.
+    if bpe.byte_fallback == Some(true) {
+        tok = tok.with_byte_fallback(resolve_bpe_byte_fallback_ids(&bpe.vocab)?);
+    }
+
     match pipeline {
         PreTokPipeline::None => {}
         PreTokPipeline::Regex(pattern) => {
@@ -2218,7 +2294,12 @@ enum UnigramTransition {
 /// `<`, `0`, `x`, two hex digits, `>`. Uppercase and lowercase hex
 /// digits are both accepted — `<0xff>` and `<0xFF>` both map to
 /// byte `0xFF`. HF's own on-disk convention is uppercase.
-fn parse_byte_fallback_surface(s: &str) -> Option<u8> {
+///
+/// Shared between the Unigram [`Self::with_byte_fallback`] scan and
+/// the BPE-side [`to_bpe_tokenizer`] scan — both walk their vocabs
+/// looking for the same 256 reserved surface strings and want the
+/// same tolerant parse.
+pub(crate) fn parse_byte_fallback_surface(s: &str) -> Option<u8> {
     let bytes = s.as_bytes();
     if bytes.len() != 6 {
         return None;
@@ -5935,5 +6016,202 @@ mod tests {
         let tok = to_wordlevel_tokenizer(&config).unwrap();
         // The added special is in the vocab: encoding it produces id 5.
         assert_eq!(tok.encode("[BOS] cat").unwrap(), vec![5, 1]);
+    }
+
+    // ---------------------------------------------------------------------
+    // BPE-side byte-fallback (SentencePiece `byte_fallback: true` on a
+    // `BPE` model — Llama-2 / Mistral / Qwen shape).
+    // ---------------------------------------------------------------------
+
+    /// Build a Llama-style BPE tokenizer.json blob: three fake
+    /// specials at ids 0..=2, the 256 reserved `<0x00>`..`<0xFF>`
+    /// byte-fallback tokens at ids 3..=258, plus the single-character
+    /// entries listed in `extra_chars` at successive ids from 259.
+    /// Every extra char also becomes a vocab entry keyed by its raw
+    /// UTF-8 bytes — matches how real Llama-2 vocabs ship (character-
+    /// oriented BPE, not byte-level). Returns `(json, byte_id_base)`
+    /// where `byte_id_base + XX` is the id of `<0xXX>`.
+    fn bpe_byte_fallback_vocab_json(
+        extra_chars: &[&str],
+        merges: &[(&str, &str)],
+    ) -> (String, u32) {
+        let mut entries: Vec<String> = Vec::new();
+        entries.push(r#""<unk>": 0"#.to_string());
+        entries.push(r#""<s>": 1"#.to_string());
+        entries.push(r#""</s>": 2"#.to_string());
+        let byte_id_base: u32 = 3;
+        for b in 0u32..=255 {
+            entries.push(format!(r#""<0x{b:02X}>": {}"#, byte_id_base + b));
+        }
+        for (next, w) in (byte_id_base + 256..).zip(extra_chars.iter()) {
+            entries.push(format!("\"{w}\": {next}"));
+        }
+        let merges_json: Vec<String> = merges
+            .iter()
+            .map(|(l, r)| format!("[\"{l}\", \"{r}\"]"))
+            .collect();
+        let json = format!(
+            r#"{{
+                "added_tokens": [],
+                "model": {{
+                    "type": "BPE",
+                    "vocab": {{{}}},
+                    "merges": [{}],
+                    "byte_fallback": true
+                }}
+            }}"#,
+            entries.join(","),
+            merges_json.join(","),
+        );
+        (json, byte_id_base)
+    }
+
+    #[test]
+    fn bpe_byte_fallback_construction_detects_all_256_tokens() {
+        let (json, _base) = bpe_byte_fallback_vocab_json(&[], &[]);
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(tok.byte_fallback_enabled());
+    }
+
+    #[test]
+    fn bpe_byte_fallback_missing_tokens_are_rejected() {
+        // A BPE vocab with byte_fallback: true but only two `<0xXX>`
+        // tokens present — construction must surface the specific
+        // missing-tokens error rather than silently degrading.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {
+                    "<unk>": 0,
+                    "<0x00>": 1,
+                    "<0x01>": 2
+                },
+                "merges": [],
+                "byte_fallback": true
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let err = to_bpe_tokenizer(&config).unwrap_err();
+        match err {
+            HfConversionError::ByteFallbackTokensMissing {
+                missing_count,
+                first_missing_byte,
+            } => {
+                assert_eq!(missing_count, 254);
+                assert_eq!(first_missing_byte, 0x02);
+            }
+            other => panic!("expected ByteFallbackTokensMissing, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bpe_byte_fallback_disabled_leaves_encoder_on_unknown_error_path() {
+        // A BPE config with byte_fallback: false (or absent) must not
+        // enable the byte-fallback path — an OOV char still surfaces
+        // `UnknownToken` under the crate's previous contract.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"h": 0, "i": 1},
+                "merges": [],
+                "byte_fallback": false
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(!tok.byte_fallback_enabled());
+        // "hi" encodes cleanly, "?" errors out.
+        assert!(Tokenizer::encode(&tok, "hi").is_ok());
+        assert!(matches!(
+            Tokenizer::encode(&tok, "?"),
+            Err(stringcheese_tokenizer::TokenizerError::UnknownToken(_))
+        ));
+    }
+
+    #[test]
+    fn bpe_byte_fallback_accepts_lowercase_hex_surface() {
+        // HF's on-disk convention is uppercase, but the scan should
+        // accept lowercase hex too — parity with the Unigram-side scan.
+        let mut entries: Vec<String> = Vec::new();
+        entries.push(r#""<unk>": 0"#.to_string());
+        for b in 0u32..=255 {
+            entries.push(format!(r#""<0x{b:02x}>": {}"#, 3 + b));
+        }
+        let json = format!(
+            r#"{{
+                "added_tokens": [],
+                "model": {{
+                    "type": "BPE",
+                    "vocab": {{{}}},
+                    "merges": [],
+                    "byte_fallback": true
+                }}
+            }}"#,
+            entries.join(","),
+        );
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(tok.byte_fallback_enabled());
+    }
+
+    #[test]
+    fn bpe_byte_fallback_hf_loader_end_to_end() {
+        // A minimal Llama-shape BPE config: byte_fallback + a couple
+        // of single-character entries + one merge. Loader routes
+        // through `to_tokenizer` and the returned BPE tokenizer
+        // encodes an OOV char via the byte-fallback path.
+        let (json, base) = bpe_byte_fallback_vocab_json(&["h", "i", "hi"], &[("h", "i")]);
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        match tok {
+            HfTokenizer::Bpe(bpe) => {
+                assert!(bpe.byte_fallback_enabled());
+                // ASCII "?" (0x3F) is not in the vocab — fires
+                // byte-fallback.
+                let ids = Tokenizer::encode(bpe.as_ref(), "?").unwrap().ids;
+                assert_eq!(ids, vec![base + 0x3F]);
+                // Two vocab-covered chars merge into a whole-word id;
+                // the merged surface "hi" sits at id base + 256 + 2
+                // (the third `extra_chars` entry after "h", "i").
+                let hi_id: TokenId = base + 256 + 2;
+                let ids = Tokenizer::encode(bpe.as_ref(), "hi").unwrap().ids;
+                assert_eq!(ids, vec![hi_id]);
+                // Mixed: whole-word + byte-fallback for OOV char.
+                let ids = Tokenizer::encode(bpe.as_ref(), "hi?").unwrap().ids;
+                assert_eq!(ids, vec![hi_id, base + 0x3F]);
+            }
+            other => panic!("expected HfTokenizer::Bpe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bpe_byte_fallback_multibyte_utf8_char_fans_out_in_byte_order() {
+        // A 4-byte emoji not in the vocab — every UTF-8 byte becomes
+        // its reserved `<0xXX>` id in forward byte order. This is the
+        // key correctness check that motivated the whole landing.
+        let (json, base) = bpe_byte_fallback_vocab_json(&[], &[]);
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        let ids = Tokenizer::encode(&tok, "😀").unwrap().ids;
+        let expected: Vec<TokenId> = "😀".bytes().map(|b| base + u32::from(b)).collect();
+        assert_eq!(ids, expected);
+        assert_eq!(ids.len(), 4);
+    }
+
+    #[test]
+    fn bpe_byte_fallback_round_trip_through_decode() {
+        // Round-trip a mix of vocab-covered and byte-fallback inputs:
+        // decode must reassemble the original UTF-8 for each.
+        let (json, _base) = bpe_byte_fallback_vocab_json(&["h", "i", "hi"], &[("h", "i")]);
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        for text in ["hi", "?", "😀", "hi😀", "😀hi", "?!hi"] {
+            let enc = Tokenizer::encode(&tok, text).unwrap();
+            let round = Tokenizer::decode(&tok, &enc.ids).unwrap();
+            assert_eq!(round, text, "round-trip failed on {text:?}");
+        }
     }
 }
