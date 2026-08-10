@@ -32,17 +32,34 @@
 //! [`TemplateProcessing::pair`] and never fires under the single-input
 //! [`PostProcessor::apply`] path.
 //!
+//! # `RobertaProcessing` semantics
+//!
+//! [`PostProcessor::RobertaProcessing`] carries a `(surface, id)` pair
+//! for the CLS token and another for the SEP token, plus the two
+//! HF-visible flags [`RobertaProcessing::trim_offsets`] and
+//! [`RobertaProcessing::add_prefix_space`]. On the single-input encode
+//! path this crate exercises, `apply` splices the CLS id on the left
+//! of the primary encoding and the SEP id on the right — the shape
+//! every `XLM-RoBERTa` / `RoBERTa` / `CamemBERT` / `XLM-V` checkpoint
+//! uses today. Both flags are preserved verbatim on the runtime value
+//! but not otherwise consumed here: `trim_offsets` targets
+//! `ByteLevel`-space offset accounting that the Unigram consumer (the
+//! only tokenizer that ships this variant in practice) does not
+//! track, and `add_prefix_space` is meaningful only for the
+//! `ByteLevel` pre-tokenizer that never composes with a
+//! `SentencePiece` model. Both remain accessible so callers who
+//! round-trip through the parsed config can inspect them.
+//!
 //! # Deferred variants
 //!
 //! Every other HF `PostProcessor` type is out of scope for this
 //! landing:
 //!
 //! * `BertProcessing` — belongs with the `WordPiece` / BERT landing.
-//! * `RobertaProcessing` — needs SEP + CLS + offset shifting; wire it
-//!   up when a `RoBERTa` checkpoint asks for it.
 //! * `Sequence` — composition of multiple post-processors. The
-//!   `TemplateProcessing`-only pipeline covers every shipped Llama /
-//!   Mistral / Qwen shape today; add composition when a real checkpoint
+//!   `TemplateProcessing` / `RobertaProcessing` / `ByteLevel` pipeline
+//!   covers every shipped GPT-2 / Llama / Mistral / Qwen /
+//!   `XLM-RoBERTa` shape today; add composition when a real checkpoint
 //!   ships one.
 //!
 //! Deferred variants surface at [`crate::hf::to_bpe_tokenizer`] time
@@ -132,14 +149,45 @@ pub struct TemplateProcessing {
     pub special_tokens: alloc::collections::BTreeMap<String, SpecialTokenInfo>,
 }
 
+/// The `RobertaProcessing` post-processor.
+///
+/// See the module-level documentation for the full semantics. The
+/// field names mirror Hugging Face's on-disk shape verbatim so the
+/// JSON loader can splice values straight in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RobertaProcessing {
+    /// The `(surface_string, id)` pair emitted at the SEP slot after
+    /// the primary encoding. HF's canonical value for `XLM-RoBERTa`
+    /// is `("</s>", 2)`.
+    pub sep: (String, TokenId),
+    /// The `(surface_string, id)` pair emitted at the CLS slot before
+    /// the primary encoding. HF's canonical value for `XLM-RoBERTa`
+    /// is `("<s>", 0)`.
+    pub cls: (String, TokenId),
+    /// Whether HF's own runtime would trim `Ġ`-prefixed offsets. The
+    /// crate does not track byte-level offsets on the Unigram output
+    /// (`SentencePiece` is character-space, not byte-encoded space) so
+    /// this flag is preserved verbatim but not consumed by
+    /// [`PostProcessor::apply`]. Callers who round-trip through the
+    /// parsed config can still inspect it.
+    pub trim_offsets: bool,
+    /// Whether HF's own runtime would insert a leading space before
+    /// the primary text. Only meaningful for the `ByteLevel`
+    /// pre-tokenizer this processor never composes with in practice;
+    /// preserved verbatim for the same round-trip reason as
+    /// [`Self::trim_offsets`].
+    pub add_prefix_space: bool,
+}
+
 /// The post-processor variant.
 ///
 /// [`Self::None`] is the "identity" pass-through used when the config
 /// has no `post_processor` slot or when the caller explicitly opts
 /// out. [`Self::TemplateProcessing`] carries the Llama-shape template.
-/// [`Self::ByteLevel`] carries the GPT-2-shape offset-trim config
-/// (see the variant's docs for why it is a no-op on the encoding
-/// this crate ships).
+/// [`Self::RobertaProcessing`] carries the `XLM-RoBERTa` / `RoBERTa`
+/// CLS-and-SEP splice. [`Self::ByteLevel`] carries the GPT-2-shape
+/// offset-trim config (see the variant's docs for why it is a no-op
+/// on the encoding this crate ships).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PostProcessor {
@@ -148,6 +196,8 @@ pub enum PostProcessor {
     None,
     /// The `TemplateProcessing` variant. See [`TemplateProcessing`].
     TemplateProcessing(TemplateProcessing),
+    /// The `RobertaProcessing` variant. See [`RobertaProcessing`].
+    RobertaProcessing(RobertaProcessing),
     /// The `ByteLevel` post-processor — the shape every GPT-2-family
     /// `tokenizer.json` ships.
     ///
@@ -244,8 +294,53 @@ impl PostProcessor {
             Self::TemplateProcessing(tp) => {
                 apply_template(&tp.single, &tp.special_tokens, encoding)
             }
+            Self::RobertaProcessing(rp) => apply_roberta(rp, encoding),
         }
     }
+}
+
+/// Splice the `cls` id on the left of `encoding` and the `sep` id on
+/// the right. Offsets and special-mask carry through unchanged for
+/// the primary body; the spliced ids get an empty offset range and
+/// `special_mask == true` (matching the `TemplateProcessing`
+/// [`apply_template`] convention above).
+fn apply_roberta(rp: &RobertaProcessing, encoding: &Encoding<TokenId>) -> Encoding<TokenId> {
+    let primary_len = encoding.ids.len();
+    let mut out = Encoding::<TokenId>::new();
+    out.ids.reserve(primary_len + 2);
+    out.offsets.reserve(primary_len + 2);
+    out.special_mask.reserve(primary_len + 2);
+
+    let has_offsets = !encoding.offsets.is_empty();
+    let has_mask = !encoding.special_mask.is_empty();
+
+    // Left splice: <cls>.
+    out.ids.push(rp.cls.1);
+    if has_offsets {
+        out.offsets.push(0..0);
+    }
+    if has_mask {
+        out.special_mask.push(true);
+    }
+    // Primary body.
+    for (i, &tid) in encoding.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if has_offsets {
+            out.offsets.push(encoding.offsets[i].clone());
+        }
+        if has_mask {
+            out.special_mask.push(encoding.special_mask[i]);
+        }
+    }
+    // Right splice: <sep>.
+    out.ids.push(rp.sep.1);
+    if has_offsets {
+        out.offsets.push(0..0);
+    }
+    if has_mask {
+        out.special_mask.push(true);
+    }
+    out
 }
 
 /// Splice `template`'s slots against `encoding`, resolving
@@ -431,6 +526,47 @@ mod tests {
         let enc = primary(&[7, 8]);
         let out = pp.apply(&enc, true);
         assert_eq!(out.ids, vec![7, 8]);
+    }
+
+    // -----------------------------------------------------------------
+    // RobertaProcessing
+    // -----------------------------------------------------------------
+
+    fn xlm_roberta_processor() -> PostProcessor {
+        PostProcessor::RobertaProcessing(RobertaProcessing {
+            sep: ("</s>".to_string(), 2),
+            cls: ("<s>".to_string(), 0),
+            trim_offsets: true,
+            add_prefix_space: true,
+        })
+    }
+
+    #[test]
+    fn roberta_processing_wraps_primary_with_cls_and_sep() {
+        let pp = xlm_roberta_processor();
+        let enc = primary(&[10, 11, 12]);
+        let out = pp.apply(&enc, true);
+        assert_eq!(out.ids, vec![0, 10, 11, 12, 2]);
+        assert_eq!(out.special_mask, vec![true, false, false, false, true]);
+        assert_eq!(out.offsets, vec![0..0, 0..1, 1..2, 2..3, 0..0]);
+    }
+
+    #[test]
+    fn roberta_processing_empty_primary_yields_cls_sep_only() {
+        let pp = xlm_roberta_processor();
+        let enc = Encoding::<TokenId>::new();
+        let out = pp.apply(&enc, true);
+        assert_eq!(out.ids, vec![0, 2]);
+        assert!(out.offsets.is_empty());
+        assert!(out.special_mask.is_empty());
+    }
+
+    #[test]
+    fn roberta_processing_add_special_tokens_false_is_identity() {
+        let pp = xlm_roberta_processor();
+        let enc = primary(&[10, 11]);
+        let out = pp.apply(&enc, false);
+        assert_eq!(out.ids, vec![10, 11]);
     }
 
     #[test]

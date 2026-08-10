@@ -605,6 +605,16 @@ impl Tokenizer for WordPieceTokenizer {
                 synth.ids.resize(base, 0);
                 self.post_processor.apply(&synth, true).ids.len()
             }
+            PostProcessor::RobertaProcessing(_) => {
+                // Same synthetic-encoding shape as TemplateProcessing.
+                // WordPiece tokenizers rarely ship RobertaProcessing —
+                // XLM-RoBERTa is Unigram-shaped, not WordPiece — but
+                // the arm keeps the internal exhaustive match
+                // compiling in the presence of the new variant.
+                let mut synth: Encoding<TokenId> = Encoding::new();
+                synth.ids.resize(base, 0);
+                self.post_processor.apply(&synth, true).ids.len()
+            }
         })
     }
 }

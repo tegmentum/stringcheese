@@ -276,18 +276,14 @@ fn encode_ids(tok: &HfTokenizer, input: &str) -> Vec<u32> {
             enc.ids
         }
         HfTokenizer::Unigram(uni) => {
-            // The `UnigramTokenizer` published surface encodes to
-            // `Vec<usize>` today (see `hf::UnigramTokenizer::encode`)
-            // and does not (yet) run a normalizer / pre-tokenizer /
-            // post-processor. Widen the returned ids into `u32` for
-            // the shared assertion path; when the current Unigram
-            // pipeline gets its Precompiled / Metaspace /
-            // TemplateProcessing wiring, the fixture output will
-            // start matching and this branch will need no change.
-            let ids = uni.encode(input).expect("Unigram encode");
-            ids.into_iter()
-                .map(|id| u32::try_from(id).expect("token id fits in u32"))
-                .collect()
+            // Route Unigram through the `Tokenizer` trait so the
+            // runner exercises the full normalize → pre-tokenize →
+            // Viterbi → post-process pipeline. The inherent
+            // `UnigramTokenizer::encode` returns raw `Vec<usize>` and
+            // *skips* the post-processor, which we want firing here
+            // (RobertaProcessing wraps the primary ids with CLS/SEP).
+            let enc = Tokenizer::encode(uni, input).expect("Unigram encode");
+            enc.ids
         }
         // `HfTokenizer` is `#[non_exhaustive]`; keep the runner
         // compiling if a new variant lands upstream by rejecting it
