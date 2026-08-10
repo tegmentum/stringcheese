@@ -7,10 +7,12 @@
 //! leading and trailing whitespace are dropped, and no empty segments
 //! are ever yielded.
 //!
-//! This is *not* a UAX #29 word segmenter: `"don't"` is one segment,
-//! not three, because there is no whitespace inside it. Callers who
-//! need UAX #29 semantics reach for a `WordSegmenter` (deferred pending
-//! upstream Unicode support).
+//! This is *not* a UAX #29 word segmenter: `"hello, world"` is two
+//! segments (`"hello,"` and `"world"`), because the comma is not a
+//! whitespace scalar. Callers who need UAX #29 semantics reach for
+//! [`crate::WordSegmenter`], which wraps `stringcheese_unicode::words`
+//! and drops the comma as a non-word boundary — so `"hello, world"`
+//! yields the two word-only segments `"hello"` and `"world"`.
 
 use crate::traits::{Segment, Segmenter};
 
