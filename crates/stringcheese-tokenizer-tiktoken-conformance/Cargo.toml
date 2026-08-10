@@ -1,0 +1,91 @@
+# Declare this crate as its own workspace root — the parent workspace
+# `exclude`s this directory, but Cargo still checks for an enclosing
+# workspace via directory walk and errors if one is found without the
+# package being a member. An empty `[workspace]` here severs that
+# lookup and lets `cargo` operate on this crate standalone.
+[workspace]
+
+[package]
+name = "stringcheese-tokenizer-tiktoken-conformance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/stringcheese"
+description = "Bit-identical tiktoken parity harness for stringcheese-tokenizer-bpe. Excluded from the main workspace so its opt-in real-vocab feature never leaks into `--all-features` CI runs."
+publish = false
+
+# NOTE: This package is deliberately EXCLUDED from the top-level
+# workspace (see the root `Cargo.toml`'s `exclude` list). Cargo's
+# `--all-features` flag turns on every feature of every workspace
+# member unconditionally, and this crate's `parity-real-vocab` feature
+# needs to stay opt-in — it pulls in a network fetch plus the multi-MB
+# `tiktoken-rs` oracle, neither of which belong on the default CI hot
+# path. Excluding the crate keeps the main workspace's `cargo test
+# --workspace --all-features` offline and lightweight; the parity job
+# runs this crate explicitly with `cargo test --manifest-path
+# crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.toml
+# --features parity-real-vocab`.
+
+[features]
+# Off by default. When enabled the crate:
+#   * Compiles the HTTP fetch + SHA-256 verification path (ureq +
+#     sha2).
+#   * Compiles the `tiktoken-rs` oracle used by the parity test.
+#   * Runs the parity test in `tests/parity.rs` (which reads a corpus
+#     of ~200 diverse inputs and compares stringcheese-tokenizer-bpe's
+#     output against tiktoken-rs's for both `cl100k_base` and
+#     `o200k_base`).
+# The default build is essentially empty — it exists so the crate
+# still `cargo check`s cleanly offline and callers can wire it into
+# other harnesses without pulling in the whole test dependency chain.
+default = []
+parity-real-vocab = ["dep:ureq", "dep:sha2", "dep:tiktoken-rs"]
+
+# Optional bench harness. Bench measures encode throughput of
+# `stringcheese-tokenizer-bpe` against `tiktoken-rs` on real
+# `cl100k_base` vocab so the ~1-3 M tok/s tiktoken bar can be tracked
+# per the design doc's §11 target. Gated on the same feature so a
+# default build still compiles without network access.
+
+[dependencies]
+# Path-based (not workspace = true) because this crate lives outside
+# the workspace so it can gate its feature independently.
+stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features = false, features = ["std"] }
+stringcheese-tokenizer-bpe = { path = "../stringcheese-tokenizer-bpe", default-features = false, features = ["std"] }
+stringcheese-tokenizer-tiktoken = { path = "../stringcheese-tokenizer-tiktoken", default-features = false }
+
+# HTTP + hash. Both are pure-Rust, both are dev-shape (only used when
+# the parity feature is on). Kept as optional runtime deps rather than
+# dev-deps so callers who want to hand-drive the harness from a
+# binary (e.g. a bench in stringcheese-bench) can enable the feature
+# and get them.
+ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+
+# Oracle. Ships the real cl100k / o200k blobs embedded in the crate
+# (MIT licensed; itself does not commit OpenAI's raw bytes into this
+# repo — the bytes travel through the tiktoken-rs cargo dependency).
+# Version bounds: 0.6 is the first release that exposes o200k_base.
+tiktoken-rs = { version = "0.6", optional = true }
+
+[[bench]]
+name = "tiktoken_parity"
+harness = false
+required-features = ["parity-real-vocab"]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+[lints]
+# Match the workspace's own settings even though the crate is
+# excluded — reviewers should not have to reason about a different
+# lint policy for one crate.
+rust.missing_docs = "warn"
+rust.unsafe_op_in_unsafe_fn = "deny"
+clippy.pedantic = { level = "warn", priority = -1 }
+clippy.module_name_repetitions = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.must_use_candidate = "allow"
+clippy.collapsible_if = "allow"
