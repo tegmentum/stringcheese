@@ -9,42 +9,24 @@
 //! expansion has no wasm branch, per `stringcheese-lang/src/lib.rs`).
 //! The pack itself still builds and links on wasm; only the registry
 //! lookup is absent.
+//!
+//! The three canonical `#[test] fn`s and the pack-anchoring `KEEP`
+//! const are emitted by the shared
+//! `stringcheese_lang::pack_registry_smoke_test!` macro — see its docs
+//! for the field-level contract. The macrolanguage-absence check below
+//! is preserved as a pack-specific tack-on.
 #![cfg(not(target_family = "wasm"))]
 
-use stringcheese_lang::registry;
-
-// Force the `stringcheese_nn` rlib into the test binary's link — a
-// test that only names `stringcheese_lang` items would leave the
-// pack's registration `static` outside the closure the linker walks,
-// hiding the fact that `register_language!` fired. Naming the pack's
-// singleton constant here keeps its object file (and thus its
-// `#[linkme::distributed_slice(...)]` section) alive.
-#[allow(dead_code)]
-const KEEP_NN: &stringcheese_nn::Nynorsk = &stringcheese_nn::NYNORSK;
-
-#[test]
-fn nynorsk_pack_is_registered() {
-    let lang = registry::language("nn").expect("Nynorsk pack must be registered");
-    assert_eq!(lang.code(), "nn");
-    assert_eq!(lang.name(), "Norwegian Nynorsk");
-}
-
-#[test]
-fn nynorsk_pack_registration_is_case_insensitive() {
-    for probe in ["NN", "Nn", "nN"] {
-        assert!(
-            registry::language(probe).is_some(),
-            "{probe:?} did not resolve to Nynorsk"
-        );
-    }
-}
-
-#[test]
-fn nynorsk_pack_functions_through_registry() {
-    let lang = registry::language("nn").expect("Nynorsk pack must be registered");
-    assert!(lang.is_stopword("og"));
-    assert!(lang.is_stopword("ikkje"));
-    assert_eq!(lang.stem("bilane"), "bil");
+stringcheese_lang::pack_registry_smoke_test! {
+    pack: stringcheese_nn::NYNORSK,
+    pack_ty: stringcheese_nn::Nynorsk,
+    code: "nn",
+    name: "Norwegian Nynorsk",
+    smoke: |lang| {
+        assert!(lang.is_stopword("og"));
+        assert!(lang.is_stopword("ikkje"));
+        assert_eq!(lang.stem("bilane"), "bil");
+    },
 }
 
 #[test]
@@ -60,7 +42,7 @@ fn macrolanguage_no_is_not_registered_by_this_pack() {
     // but this test does not assert that (the Bokmål pack isn't a
     // dependency here).
     assert!(
-        registry::language("no").is_none(),
+        stringcheese_lang::registry::language("no").is_none(),
         "the macrolanguage code \"no\" should not be registered by the Nynorsk pack"
     );
 }
