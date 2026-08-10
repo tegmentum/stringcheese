@@ -529,7 +529,7 @@ jobs:
   #
   # Fetches OpenAI's real `mergeable_ranks` blobs from the public CDN,
   # verifies them against the SHA-256 hashes hard-coded in the
-  # conformance crate, feeds them into `stringcheese-tokenizer-bpe`,
+  # conformance crate, feeds them into `stringcheese-tokenizer-hf`,
   # and diffs the output against `tiktoken-rs` over a ~200-input
   # corpus. Phase 3 of the tokenizer subsystem design
   # (`docs/design/tokenizers.md` § 11); the harness lives in
@@ -544,7 +544,7 @@ jobs:
   # blocking.
   #
   # `TIKTOKEN_PARITY_STRICT=1` — a divergence between
-  # stringcheese-tokenizer-bpe and tiktoken-rs becomes a hard test
+  # stringcheese-tokenizer-hf and tiktoken-rs becomes a hard test
   # failure on this job (the default posture is "report, don't
   # gate"). Combined with `continue-on-error: true` at the job level,
   # a real regression surfaces as a red mark on the job without
