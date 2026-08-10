@@ -27,7 +27,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use stringcheese_tokenizer::Tokenizer;
-use stringcheese_tokenizer_bpe::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
+use stringcheese_tokenizer_hf::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
 
 /// Deterministic LCG — the bench crate's `inputs::random_ascii` is
 /// shape-compatible but not re-exported for foreign callers, and we

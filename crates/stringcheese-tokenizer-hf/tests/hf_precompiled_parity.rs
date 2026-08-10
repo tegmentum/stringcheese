@@ -30,7 +30,7 @@
 
 #![cfg(feature = "hf-tokenizer")]
 
-use stringcheese_tokenizer_bpe::normalizer::{Normalizer, PrecompiledNormalizer, normalize};
+use stringcheese_tokenizer_hf::normalizer::{Normalizer, PrecompiledNormalizer, normalize};
 
 /// Build a charsmap blob (base64-encoded) from an in-memory Darts
 /// trie plus normalized-string table.

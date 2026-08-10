@@ -28,7 +28,7 @@
 use alloc::vec::Vec;
 
 use stringcheese_tokenizer::TokenizerError;
-use stringcheese_tokenizer_bpe::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
+use stringcheese_tokenizer_hf::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
 
 /// The SCUD-lite magic bytes: `S`, `C`, `U`, `B` (BPE variant of the
 /// SCUD envelope).

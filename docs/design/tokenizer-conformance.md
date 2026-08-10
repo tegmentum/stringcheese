@@ -1,7 +1,7 @@
 # BPE Conformance Corpus
 
 Small, hand-curated corpus of `(checkpoint, input, expected_ids)`
-triples for `stringcheese-tokenizer-bpe`. Sits alongside the crate's
+triples for `stringcheese-tokenizer-hf`. Sits alongside the crate's
 unit tests as a *cheap* regression backstop **before** the full
 1000-per-model parity harness lands — see
 [`tokenizers.md` §11](./tokenizers.md#11-phased-implementation-plan)
@@ -17,9 +17,9 @@ The audit motivating this corpus phrased the ask as:
 
 | Path                                                                                  | Role                                          |
 | ------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `crates/stringcheese-tokenizer-bpe/tests/conformance/*.json`                          | One fixture file per checkpoint (see below).  |
-| `crates/stringcheese-tokenizer-bpe/tests/conformance/vocabs/<checkpoint>/tokenizer.json` | Optional local-lookup root for real vocabs.   |
-| `crates/stringcheese-tokenizer-bpe/tests/conformance.rs`                              | Runner: loads fixtures, dispatches, asserts.  |
+| `crates/stringcheese-tokenizer-hf/tests/conformance/*.json`                          | One fixture file per checkpoint (see below).  |
+| `crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/<checkpoint>/tokenizer.json` | Optional local-lookup root for real vocabs.   |
+| `crates/stringcheese-tokenizer-hf/tests/conformance.rs`                              | Runner: loads fixtures, dispatches, asserts.  |
 
 ## Feature gate
 
@@ -29,7 +29,7 @@ runs) but every per-fixture `#[test]` fn is `#[ignore]`d unless the
 `parity-real-vocab` cargo feature is on:
 
 ```
-cargo test -p stringcheese-tokenizer-bpe --features parity-real-vocab
+cargo test -p stringcheese-tokenizer-hf --features parity-real-vocab
 ```
 
 The `#[ignore]` path keeps the corpus visible to `cargo test --list`
@@ -54,7 +54,7 @@ checkpoint's `tokenizer.json` from the first of these two roots:
    how the parallel fetch mechanism (which materialises the real
    `mergeable_ranks` blobs and downloads the HF `tokenizer.json`
    blobs) will hand vocabs to the runner.
-2. `crates/stringcheese-tokenizer-bpe/tests/conformance/vocabs/<checkpoint>/tokenizer.json`
+2. `crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/<checkpoint>/tokenizer.json`
    — drop the file here for local runs.
 
 When neither location resolves the runner *soft-skips* the case
@@ -150,14 +150,14 @@ Fields:
    emits the JSON in the format above. Name the file
    `<canonical-name>.json` — lowercase, `_` for `-`, no `.tokenizer`
    suffix (e.g. `qwen2_5_7b.json`, not `qwen2.5-7B.tokenizer.json`).
-   Save to `crates/stringcheese-tokenizer-bpe/tests/conformance/`.
+   Save to `crates/stringcheese-tokenizer-hf/tests/conformance/`.
 2. **Register the fixture.** In `tests/conformance.rs`:
    - Add the file to `REGISTERED_FIXTURES`.
    - Add a `#[test]` fn following the pattern of the existing four,
      carrying the same
      `#[cfg_attr(not(feature = "parity-real-vocab"), ignore = ...)]`
      line.
-3. **Verify locally.** `cargo test -p stringcheese-tokenizer-bpe
+3. **Verify locally.** `cargo test -p stringcheese-tokenizer-hf
    --test conformance` should show the new test as `ignored` on the
    default feature set. With `--features parity-real-vocab` and a
    `tokenizer.json` provisioned at either lookup root, the test runs

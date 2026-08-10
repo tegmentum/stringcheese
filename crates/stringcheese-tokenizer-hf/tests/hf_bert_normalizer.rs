@@ -23,8 +23,8 @@
 use core::fmt::Write as _;
 
 use stringcheese_tokenizer::Tokenizer;
-use stringcheese_tokenizer_bpe::hf::{HfNormalizer, parse_tokenizer_json, to_bpe_tokenizer};
-use stringcheese_tokenizer_bpe::normalizer::{Normalizer, normalize};
+use stringcheese_tokenizer_hf::hf::{HfNormalizer, parse_tokenizer_json, to_bpe_tokenizer};
+use stringcheese_tokenizer_hf::normalizer::{Normalizer, normalize};
 
 /// A BPE config whose vocabulary is the full 0..=255 byte alphabet
 /// (as one-char strings) — combined with a `BertNormalizer` that

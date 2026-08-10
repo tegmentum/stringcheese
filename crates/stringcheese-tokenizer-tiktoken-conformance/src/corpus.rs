@@ -10,7 +10,7 @@
 //! Phase 3's design-doc acceptance criterion is 10 000 diverse
 //! inputs. 200 is enough to prove the harness works and to
 //! surface any structural divergence between
-//! `stringcheese-tokenizer-bpe` and tiktoken; scaling the corpus is
+//! `stringcheese-tokenizer-hf` and tiktoken; scaling the corpus is
 //! a follow-on change that only touches this module.
 //!
 //! When a new category shows up in a real bug report, extend

@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use stringcheese_tokenizer::Tokenizer;
-use stringcheese_tokenizer_bpe::{
+use stringcheese_tokenizer_hf::{
     BpeMergeTable, BpeTokenizer, BpeVocabulary, PreTokenizerRegex, RegexPreTokenizer,
     TIKTOKEN_CANONICAL_PATTERN,
 };
@@ -23,9 +23,9 @@ use stringcheese_tokenizer_tiktoken::builder;
 /// naturally.
 ///
 /// Kept in this crate rather than upstream in
-/// `stringcheese-tokenizer-bpe` deliberately: the pattern is a
+/// `stringcheese-tokenizer-hf` deliberately: the pattern is a
 /// harness-scoped test input, not a production API. Promoting it
-/// upstream is a task for the `stringcheese-tokenizer-bpe` maintainer
+/// upstream is a task for the `stringcheese-tokenizer-hf` maintainer
 /// after this harness proves both patterns yield parity against
 /// their respective variants.
 pub const O200K_BASE_PATTERN: &str = concat!(
@@ -55,7 +55,7 @@ use crate::corpus;
 use crate::fetch;
 use crate::variant::Variant;
 
-/// A single input on which `stringcheese-tokenizer-bpe` and
+/// A single input on which `stringcheese-tokenizer-hf` and
 /// tiktoken-rs disagreed.
 ///
 /// The three fields are enough for a triage engineer to reproduce the
@@ -73,7 +73,7 @@ pub struct Divergence {
     pub category: &'static str,
     /// tiktoken-rs's output. The oracle.
     pub expected_ids: Vec<u32>,
-    /// `stringcheese-tokenizer-bpe`'s output.
+    /// `stringcheese-tokenizer-hf`'s output.
     pub actual_ids: Vec<u32>,
     /// First index at which the two vectors differ. `None` iff one
     /// vector is a strict prefix of the other (in which case
@@ -131,7 +131,7 @@ impl ParityReport {
 /// the log.
 pub const DIVERGENCE_CAP: usize = 20;
 
-/// Construct a `stringcheese-tokenizer-bpe` `BpeTokenizer` from the
+/// Construct a `stringcheese-tokenizer-hf` `BpeTokenizer` from the
 /// raw tiktoken plaintext bytes (`<base64(bytes)> <rank>` format).
 ///
 /// The returned tokenizer:

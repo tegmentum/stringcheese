@@ -137,7 +137,7 @@ const fn compute_maps() -> ([char; 256], [Option<u8>; CHARS_TO_BYTES_LEN]) {
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::byte_level::encode_bytes;
+/// use stringcheese_tokenizer_hf::byte_level::encode_bytes;
 ///
 /// // ASCII stays ASCII where the byte value is in the printable range.
 /// assert_eq!(encode_bytes("Hello"), "Hello");
@@ -173,7 +173,7 @@ pub fn encode_bytes(text: &str) -> String {
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::byte_level::{decode_chars, encode_bytes};
+/// use stringcheese_tokenizer_hf::byte_level::{decode_chars, encode_bytes};
 ///
 /// let raw = " Hello, world!";
 /// let encoded = encode_bytes(raw);

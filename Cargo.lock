@@ -457,9 +457,9 @@ checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
 name = "globset"
-version = "0.4.19"
+version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e47d37d2ae4464254884b60ab7071be2b876a9c35b696bd018ddcc76847309cd"
+checksum = "07c34a9410465b45bd9787443bc7370f37735bad04b0f0cd57ff1a3186c98988"
 dependencies = [
  "aho-corasick",
  "bstr",
@@ -1483,7 +1483,7 @@ dependencies = [
  "stringcheese-stats",
  "stringcheese-textsplit",
  "stringcheese-tokenizer",
- "stringcheese-tokenizer-bpe",
+ "stringcheese-tokenizer-hf",
  "stringcheese-winnowing",
 ]
 
@@ -2053,7 +2053,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stringcheese-tokenizer-bpe"
+name = "stringcheese-tokenizer-hf"
 version = "0.1.0"
 dependencies = [
  "fancy-regex",
@@ -2073,7 +2073,7 @@ dependencies = [
  "miniz_oxide",
  "proptest",
  "stringcheese-tokenizer",
- "stringcheese-tokenizer-bpe",
+ "stringcheese-tokenizer-hf",
 ]
 
 [[package]]
@@ -2392,9 +2392,9 @@ dependencies = [
 
 [[package]]
 name = "wasip2"
-version = "1.0.1+wasi-0.2.4"
+version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0562428422c63773dad2c345a1882263bbf4d65cf3f42e90921f787ef5ad58e7"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen",
 ]
@@ -2479,9 +2479,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen"
-version = "0.46.0"
+version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wit-bindgen-rt"

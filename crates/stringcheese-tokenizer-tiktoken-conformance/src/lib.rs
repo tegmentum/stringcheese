@@ -1,5 +1,5 @@
 //! Bit-identical tiktoken parity harness for
-//! [`stringcheese-tokenizer-bpe`](https://crates.io/crates/stringcheese-tokenizer-bpe).
+//! [`stringcheese-tokenizer-hf`](https://crates.io/crates/stringcheese-tokenizer-hf).
 //!
 //! This crate implements Phase 3 of the tokenizer subsystem design
 //! (`docs/design/tokenizers.md` § 11). Its job is to answer the

@@ -139,7 +139,7 @@ Ships the `Tokenizer` and `Segmenter` traits, the `Encoding` companion trait, th
 
 Each subword algorithm lives in its own crate so a caller who wants only BPE does not link the WordPiece or Unigram code, and so that a bug fix in the BPE encoder does not force a re-release of the WordPiece crate.
 
-- **`stringcheese-tokenizer-bpe`** — Byte-Pair Encoding. The caller supplies a merge table and a vocabulary; the crate implements the encoding loop. Also the substrate every tiktoken variant is built on.
+- **`stringcheese-tokenizer-hf`** — Byte-Pair Encoding. The caller supplies a merge table and a vocabulary; the crate implements the encoding loop. Also the substrate every tiktoken variant is built on.
 - **`stringcheese-tokenizer-wordpiece`** — WordPiece (BERT-family). Same shape: caller supplies vocabulary + suffix rules.
 - **`stringcheese-tokenizer-sentencepiece`** — SentencePiece, supporting the Unigram (T5/mBART) and BPE (Llama, Mistral, older Gemma checkpoints) variants. Whitespace-as-`▁` preprocessing is opt-in through configuration.
 
@@ -147,7 +147,7 @@ Each subword algorithm lives in its own crate so a caller who wants only BPE doe
 
 Convenience crates that ship the algorithm from Tier 2 *plus* an embedded SCUD data pack for one or more well-known vocabularies. Each variant is behind a Cargo feature so a caller only pays for the packs they use.
 
-- **`stringcheese-tokenizer-tiktoken`** — OpenAI tokenizers: `cl100k_base`, `r50k_base`, `p50k_base`, `p50k_edit`, `o200k_base`, and `gpt2`. Built on top of `stringcheese-tokenizer-bpe`. Features: `cl100k`, `r50k`, `p50k`, `p50k-edit`, `o200k`, `gpt2`.
+- **`stringcheese-tokenizer-tiktoken`** — OpenAI tokenizers: `cl100k_base`, `r50k_base`, `p50k_base`, `p50k_edit`, `o200k_base`, and `gpt2`. Built on top of `stringcheese-tokenizer-hf`. Features: `cl100k`, `r50k`, `p50k`, `p50k-edit`, `o200k`, `gpt2`.
 - **`stringcheese-tokenizer-huggingface`** — Hugging Face `tokenizers.json` spec parser. Loads any HF tokenizer artifact into whichever Tier-2 algorithm crate matches. Cargo features per algorithm family (`bpe`, `wordpiece`, `unigram`) select which implementations link.
 
 ### 3.4. Optional adapter
@@ -201,7 +201,7 @@ None of the above satisfies `Tokenizer` — all are segmenters. Any caller reach
 
 ## 5. BPE algorithm and data packs
 
-BPE — Byte-Pair Encoding — is the workhorse. tiktoken (and therefore every GPT-family tokenizer since GPT-2), Llama, Mistral, and roughly two-thirds of the open-weight ecosystem are BPE variants. `stringcheese-tokenizer-bpe` is a data-neutral crate: it implements the algorithm and knows nothing about any specific vocabulary.
+BPE — Byte-Pair Encoding — is the workhorse. tiktoken (and therefore every GPT-family tokenizer since GPT-2), Llama, Mistral, and roughly two-thirds of the open-weight ecosystem are BPE variants. `stringcheese-tokenizer-hf` is a data-neutral crate: it implements the algorithm and knows nothing about any specific vocabulary.
 
 ### 5.1. Algorithm description
 
@@ -209,7 +209,7 @@ BPE operates over three pieces of data: a **merge table** (an ordered list of pa
 
 The encoding loop: optional pre-tokenizer regex splits the input into chunks; for each chunk, seed a `pieces` sequence with byte-level IDs of the chunk's UTF-8 bytes; repeatedly find the adjacent pair whose merge rank is lowest (highest priority) and replace it with the merged ID; stop when no adjacent pair is in the merge table; concatenate all chunks' pieces. The naive form is O(n²) per chunk; the production implementation uses a doubly-linked-list-plus-min-heap variant that pushes amortised complexity to O(n log n) and matches tiktoken's throughput. Neither variant needs unsafe; both are `no_std` + `alloc`.
 
-Pre-tokenization is a critical detail. tiktoken's `cl100k_base` splits input on a specific regex (contractions, letters, numbers, and punctuation each get their own chunk) *before* the BPE loop runs. This is what keeps merges from crossing word boundaries and what makes the encoding stable across whitespace variations. `stringcheese-tokenizer-bpe` accepts a pre-tokenizer as configuration: `None` for raw byte-level BPE (GPT-2 style), `Some(regex)` for the tiktoken variants, `Some(WhitespaceTokenizer)` for SentencePiece-shape callers.
+Pre-tokenization is a critical detail. tiktoken's `cl100k_base` splits input on a specific regex (contractions, letters, numbers, and punctuation each get their own chunk) *before* the BPE loop runs. This is what keeps merges from crossing word boundaries and what makes the encoding stable across whitespace variations. `stringcheese-tokenizer-hf` accepts a pre-tokenizer as configuration: `None` for raw byte-level BPE (GPT-2 style), `Some(regex)` for the tiktoken variants, `Some(WhitespaceTokenizer)` for SentencePiece-shape callers.
 
 Special-token handling runs *before* pre-tokenization: if the input contains a special-token surface string, that substring is atomised into its reserved ID and the surrounding text is processed separately. Callers who need to disable special-token recognition (for embedding user-provided text that legitimately contains `<|endoftext|>`) pass an `allowed_special` set at encode time, matching tiktoken's ergonomics.
 
@@ -225,7 +225,7 @@ Size projection for `cl100k_base` — the biggest Wave-1 tiktoken variant: raw `
 
 ```rust
 // Proposed — not yet implemented.
-// crates/stringcheese-tokenizer-bpe/src/lib.rs
+// crates/stringcheese-tokenizer-hf/src/lib.rs
 
 pub struct BpeTokenizer {
     scud: stringcheese_scud::ScudFile,   // holds mmap / static slice
@@ -250,7 +250,7 @@ Header parsing is `O(1)`; the parsed views are references into the SCUD's zero-c
 
 ## 6. tiktoken pack — `stringcheese-tokenizer-tiktoken`
 
-The tiktoken pack is the flagship model-tokenizer crate: it ships the OpenAI BPE variants as SCUD data packs on top of `stringcheese-tokenizer-bpe`.
+The tiktoken pack is the flagship model-tokenizer crate: it ships the OpenAI BPE variants as SCUD data packs on top of `stringcheese-tokenizer-hf`.
 
 ### 6.1. Variants shipped
 
@@ -291,7 +291,7 @@ Hugging Face's tokenizer format (<https://huggingface.co/docs/tokenizers/api/tok
 
 `stringcheese-tokenizer-huggingface` parses the spec and constructs the corresponding Tier-2 algorithm instance:
 
-- **Model**: dispatches to `stringcheese-tokenizer-bpe`, `stringcheese-tokenizer-wordpiece`, or `stringcheese-tokenizer-sentencepiece` based on the `type` field.
+- **Model**: dispatches to `stringcheese-tokenizer-hf`, `stringcheese-tokenizer-wordpiece`, or `stringcheese-tokenizer-sentencepiece` based on the `type` field.
 - **Normalizer**: implemented as a `Segmenter`-style adapter over `stringcheese-unicode` (NFC / NFKC / lowercase / strip-accents), composed if multiple normalizers are stacked.
 - **Pre-tokenizer**: dispatches to a built-in from `stringcheese-tokenizer` (whitespace / metaspace / byte-level / regex / punctuation).
 - **Decoder**: paired with the pre-tokenizer; byte-level pre-tokenization needs a byte-level decoder so the round-trip contract holds.
@@ -443,13 +443,13 @@ Delivery is per phase, each phase self-contained enough that a caller who only n
 
 **Phase 1 — `stringcheese-tokenizer` trait crate + built-ins.** Done when the `Tokenizer` / `Segmenter` / `Encoding` traits are published in `crates/stringcheese-tokenizer/src/`; `WhitespaceTokenizer`, `DelimiterTokenizer`, `IdentifierTokenizer`, `GraphemeSegmenter`, `NgramSegmenter`, `ByteTokenizer`, and `CharTokenizer` implement the traits and pass ≥ 100 golden vectors each; `WordSegmenter` and `SentenceSegmenter` are wired to `stringcheese_unicode::words` / `sentences` (both UAX #29 iterators shipped alongside Phase 1); the crate's `wasm32-unknown-unknown` footprint is reported in CI.
 
-**Phase 2 — `stringcheese-tokenizer-bpe` algorithm crate.** Done when the BPE encoder + decoder pass a hand-constructed merge-table corpus (~20 tables spanning "trivial two-token merge", "byte-level GPT-2 shape", "pre-tokenizer regex-driven tiktoken shape"); the O(n log n) linked-list-plus-heap implementation agrees with the naive O(n²) oracle over exhaustive short inputs; the special-token policy machinery matches tiktoken's `allowed_special` behaviour on their published test cases.
+**Phase 2 — `stringcheese-tokenizer-hf` algorithm crate.** Done when the BPE encoder + decoder pass a hand-constructed merge-table corpus (~20 tables spanning "trivial two-token merge", "byte-level GPT-2 shape", "pre-tokenizer regex-driven tiktoken shape"); the O(n log n) linked-list-plus-heap implementation agrees with the naive O(n²) oracle over exhaustive short inputs; the special-token policy machinery matches tiktoken's `allowed_special` behaviour on their published test cases.
 
 **Phase 3 — `stringcheese-tokenizer-tiktoken` with `cl100k_base` first.** Done when `cl100k_base` is embedded as a SCUD pack; `CL100K_BASE.encode(text)?.ids()` produces bit-identical output to Python `tiktoken.get_encoding("cl100k_base").encode(text)` over ≥ 10 000 diverse inputs (English, code, JSON, non-Latin scripts). `o200k_base` follows as a straight repeat of the build pipeline.
 
-*Progress note (parity harness landed).* The bit-identical diff mechanism itself now lives in [`stringcheese-tokenizer-tiktoken-conformance`](../../crates/stringcheese-tokenizer-tiktoken-conformance/), a workspace-excluded crate that fetches OpenAI's `mergeable_ranks` blobs from the public CDN by SHA-256 at test time, caches them in `~/.cache/stringcheese-tokenizer-tiktoken/`, and diffs `stringcheese-tokenizer-bpe`'s output against `tiktoken-rs` over a 200-input corpus. Run with `cargo test --manifest-path crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.toml --features parity-real-vocab`; a non-blocking CI job wires the same invocation. First-run parity against the shipped harness: **`cl100k_base` 200/200**, **`o200k_base` 200/200** (both variants clean under their respective pre-tokenizer regexes; the harness carries an `o200k`-specific pattern local to itself, promoting it upstream into `stringcheese-tokenizer-bpe` is a follow-on task). Scaling the corpus toward the 10 000-input target is a subsequent change that only touches the corpus module.
+*Progress note (parity harness landed).* The bit-identical diff mechanism itself now lives in [`stringcheese-tokenizer-tiktoken-conformance`](../../crates/stringcheese-tokenizer-tiktoken-conformance/), a workspace-excluded crate that fetches OpenAI's `mergeable_ranks` blobs from the public CDN by SHA-256 at test time, caches them in `~/.cache/stringcheese-tokenizer-tiktoken/`, and diffs `stringcheese-tokenizer-hf`'s output against `tiktoken-rs` over a 200-input corpus. Run with `cargo test --manifest-path crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.toml --features parity-real-vocab`; a non-blocking CI job wires the same invocation. First-run parity against the shipped harness: **`cl100k_base` 200/200**, **`o200k_base` 200/200** (both variants clean under their respective pre-tokenizer regexes; the harness carries an `o200k`-specific pattern local to itself, promoting it upstream into `stringcheese-tokenizer-hf` is a follow-on task). Scaling the corpus toward the 10 000-input target is a subsequent change that only touches the corpus module.
 
-**Phase 4 — SCUD extension for BPE data packs.** Done when `cap-id = BPE_` is registered in the SCUD spec, the loader validates the BPE header, compression ratios are *measured* per variant and reported (§13), and `stringcheese-tokenizer-bpe-build` regenerates SCUD packs from tiktoken's upstream blobs deterministically.
+**Phase 4 — SCUD extension for BPE data packs.** Done when `cap-id = BPE_` is registered in the SCUD spec, the loader validates the BPE header, compression ratios are *measured* per variant and reported (§13), and `stringcheese-tokenizer-hf-build` regenerates SCUD packs from tiktoken's upstream blobs deterministically.
 
 **Phase 5 — HF `tokenizers.json` parser, BPE-only.** Done when the parser accepts every `tokenizer.json` in a corpus of the top ~30 HF models (Llama, Mistral, Qwen, Phi, DeepSeek, ...) whose `model.type` is `BPE`; matches upstream `tokenizers-rs` output on ≥ 1 000 sample inputs per model; the `hf-to-scud` build tool converts a `tokenizer.json` to a SCUD pack that loads under `BpeTokenizer::from_scud`.
 

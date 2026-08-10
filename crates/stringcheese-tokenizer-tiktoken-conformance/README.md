@@ -1,11 +1,11 @@
 # stringcheese-tokenizer-tiktoken-conformance
 
-Bit-identical tiktoken parity harness for `stringcheese-tokenizer-bpe`.
+Bit-identical tiktoken parity harness for `stringcheese-tokenizer-hf`.
 
 Implements Phase 3 of the tokenizer subsystem design (see
 `docs/design/tokenizers.md` § 11): fetches OpenAI's real
 `mergeable_ranks` blobs by SHA-256, feeds them into
-`stringcheese-tokenizer-bpe`, and diffs the output against the
+`stringcheese-tokenizer-hf`, and diffs the output against the
 [`tiktoken-rs`](https://crates.io/crates/tiktoken-rs) oracle over a
 corpus of ~200 diverse inputs.
 
@@ -57,7 +57,7 @@ cargo bench \
     --features parity-real-vocab
 ```
 
-Measures `stringcheese-tokenizer-bpe`'s encode throughput on 8 KiB
+Measures `stringcheese-tokenizer-hf`'s encode throughput on 8 KiB
 of prose using the real `cl100k_base` vocab, alongside
 `tiktoken-rs`'s `encode_ordinary` on the same input. The two rows
 under the criterion group are directly comparable.

@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "OpenAI tiktoken model tokenizer pack for the StringCheese toolkit — cl100k_base, p50k_base, r50k_base, o200k_base as SCUD-lite data on top of stringcheese-tokenizer-bpe."
+description = "OpenAI tiktoken model tokenizer pack for the StringCheese toolkit — cl100k_base, p50k_base, r50k_base, o200k_base as SCUD-lite data on top of stringcheese-tokenizer-hf."
 categories = ["text-processing"]
 keywords = ["tokenizer", "tiktoken", "openai", "bpe", "cl100k"]
 build = "build.rs"
@@ -37,7 +37,7 @@ o200k_base = []
 
 [dependencies]
 stringcheese-tokenizer = { workspace = true, features = ["std"] }
-stringcheese-tokenizer-bpe = { workspace = true, features = ["std"] }
+stringcheese-tokenizer-hf = { workspace = true, features = ["std"] }
 
 # Pure-Rust deflate decoder. `miniz_oxide` is the same decoder Rust's
 # `backtrace` uses and needs no C shim, which is what makes it work on

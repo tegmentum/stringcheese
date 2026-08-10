@@ -1,4 +1,4 @@
-//! Small conformance corpus for `stringcheese-tokenizer-bpe`.
+//! Small conformance corpus for `stringcheese-tokenizer-hf`.
 //!
 //! Each fixture under `tests/conformance/` names a real published
 //! checkpoint and pairs 20 diverse inputs with the reference token-id
@@ -6,7 +6,7 @@
 //! (`tiktoken` for the `OpenAI` variant; `transformers.AutoTokenizer`
 //! for every Hugging Face-shape checkpoint). The runner in this file
 //! loads each fixture, materialises the corresponding
-//! [`stringcheese_tokenizer_bpe`] tokenizer from a real
+//! [`stringcheese_tokenizer_hf`] tokenizer from a real
 //! `tokenizer.json` on disk, and asserts each case's ids match.
 //!
 //! # Feature gate
@@ -14,7 +14,7 @@
 //! The runner is only *active* when the `parity-real-vocab` cargo
 //! feature is enabled — every fixture test carries an
 //! `#[cfg_attr(not(feature = "parity-real-vocab"), ignore = ...)]` so
-//! `cargo test -p stringcheese-tokenizer-bpe` on the default feature
+//! `cargo test -p stringcheese-tokenizer-hf` on the default feature
 //! set lists the tests (guarding against fixture-format rot) but
 //! skips their bodies. Enabling the feature turns them on and the
 //! runner then requires the checkpoint's real `tokenizer.json` to be
@@ -88,7 +88,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use stringcheese_tokenizer::Tokenizer;
-use stringcheese_tokenizer_bpe::hf::{HfTokenizer, parse_tokenizer_json, to_tokenizer};
+use stringcheese_tokenizer_hf::hf::{HfTokenizer, parse_tokenizer_json, to_tokenizer};
 
 /// The env-var callers set to point at a checkpoint cache directory
 /// outside the workspace. See the module doc for the two-root lookup.

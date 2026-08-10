@@ -5,7 +5,7 @@ OpenAI tiktoken model tokenizer pack for the
 
 Ships four canonical OpenAI BPE vocabularies as [SCUD-lite] BPE data
 packs layered on top of the
-[`stringcheese-tokenizer-bpe`](https://crates.io/crates/stringcheese-tokenizer-bpe)
+[`stringcheese-tokenizer-hf`](https://crates.io/crates/stringcheese-tokenizer-hf)
 algorithm crate:
 
 | Feature       | Variant       | Model families                |

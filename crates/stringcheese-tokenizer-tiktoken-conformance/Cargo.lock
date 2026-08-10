@@ -812,7 +812,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stringcheese-tokenizer-bpe"
+name = "stringcheese-tokenizer-hf"
 version = "0.1.0"
 dependencies = [
  "fancy-regex 0.14.0",
@@ -827,7 +827,7 @@ version = "0.1.0"
 dependencies = [
  "miniz_oxide",
  "stringcheese-tokenizer",
- "stringcheese-tokenizer-bpe",
+ "stringcheese-tokenizer-hf",
 ]
 
 [[package]]
@@ -837,7 +837,7 @@ dependencies = [
  "criterion",
  "sha2",
  "stringcheese-tokenizer",
- "stringcheese-tokenizer-bpe",
+ "stringcheese-tokenizer-hf",
  "stringcheese-tokenizer-tiktoken",
  "tiktoken-rs",
  "ureq",
