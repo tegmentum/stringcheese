@@ -5,5 +5,11 @@ target/
 
 # Per-crate Cargo.lock files can appear when a crate is developed as its
 # own standalone workspace (e.g. before being wired into the outer
-# workspace). Only the top-level Cargo.lock is authoritative.
+# workspace). Only the top-level Cargo.lock is authoritative — except
+# for `stringcheese-tokenizer-tiktoken-conformance`, which is
+# deliberately excluded from the workspace so its parity test with
+# `--all-features` does not force network access on every workspace
+# build. Its lockfile must be committed so its own CI job (which uses
+# `--locked`) has a reproducible dependency graph.
 crates/*/Cargo.lock
+!crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.lock
