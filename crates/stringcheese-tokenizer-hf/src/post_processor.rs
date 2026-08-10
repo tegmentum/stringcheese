@@ -379,6 +379,310 @@ impl PostProcessor {
             }
         }
     }
+
+    /// Apply this post-processor to a *pair* of encodings.
+    ///
+    /// Analogue of [`Self::apply`] for the two-input encode path
+    /// (the [`Tokenizer::encode_pair`](stringcheese_tokenizer::Tokenizer::encode_pair) impl
+    /// on [`crate::BpeTokenizer`] and its
+    /// `WordPiece`/`WordLevel`/`Unigram` siblings).
+    ///
+    /// * [`Self::TemplateProcessing`] — walks the
+    ///   [`TemplateProcessing::pair`] template if it is non-empty,
+    ///   substituting `"A"` slots with `primary_a`, `"B"` slots with
+    ///   `primary_b`, and each [`TemplatePiece::SpecialToken`] slot
+    ///   with the referenced special-token ids. Every emitted token
+    ///   carries the `type_id` recorded on its template piece
+    ///   (surfacing on [`Encoding::type_ids`]) — that's the
+    ///   `[0, 0, ..., 1, ..., 1]` pattern QA-style callers depend on.
+    ///   If the pair template is empty, falls back to the default
+    ///   concat shape: `apply(a) + apply-nothing-to-b`, tagging `a`
+    ///   with `type_id == 0` and `b` with `type_id == 1`.
+    /// * [`Self::BertProcessing`] — `[CLS] A [SEP] B [SEP]` with
+    ///   `type_ids = [0, ..., 0, 1, ..., 1]`. This is the shape stock
+    ///   BERT / `DistilBERT` / `MobileBERT` / `ALBERT` QA pipelines
+    ///   expect.
+    /// * [`Self::RobertaProcessing`] — `<s> A </s></s> B </s>` with
+    ///   `type_ids = [0, ..., 0, 0, ..., 0]` (the `RoBERTa` family's
+    ///   documented convention of always emitting `type_id == 0`).
+    /// * [`Self::Sequence`] — thread `primary_a` and `primary_b`
+    ///   through the first child's `apply_pair`; every subsequent
+    ///   child sees the previous child's single encoding output
+    ///   through [`Self::apply`] (matches HF's own composition where
+    ///   only the first child receives the pair signal).
+    /// * [`Self::None`] / [`Self::ByteLevel`] — concat with `type_ids`
+    ///   set to `0`/`1` per side; no special tokens spliced.
+    /// * `add_special_tokens == false` — returns the plain concat
+    ///   (matches HF's `apply` behaviour).
+    #[must_use]
+    pub fn apply_pair(
+        &self,
+        primary_a: &Encoding<TokenId>,
+        primary_b: &Encoding<TokenId>,
+        add_special_tokens: bool,
+    ) -> Encoding<TokenId> {
+        if !add_special_tokens {
+            return concat_pair(primary_a, primary_b);
+        }
+        match self {
+            Self::None | Self::ByteLevel { .. } => concat_pair(primary_a, primary_b),
+            Self::TemplateProcessing(tp) => {
+                if tp.pair.is_empty() {
+                    // Callers who wired a `TemplateProcessing` with no
+                    // pair template still get a usable concat. HF does
+                    // the same on its own runtime — falls back to
+                    // per-side single templates rather than erroring.
+                    let a_processed = apply_template(&tp.single, &tp.special_tokens, primary_a);
+                    let b_processed = apply_template(&tp.single, &tp.special_tokens, primary_b);
+                    return concat_pair(&a_processed, &b_processed);
+                }
+                apply_template_pair(&tp.pair, &tp.special_tokens, primary_a, primary_b)
+            }
+            Self::BertProcessing(bp) => apply_bert_pair(bp, primary_a, primary_b),
+            Self::RobertaProcessing(rp) => apply_roberta_pair(rp, primary_a, primary_b),
+            Self::Sequence(children) => {
+                if children.is_empty() {
+                    return concat_pair(primary_a, primary_b);
+                }
+                let mut current = children[0].apply_pair(primary_a, primary_b, add_special_tokens);
+                for child in &children[1..] {
+                    current = child.apply(&current, add_special_tokens);
+                }
+                current
+            }
+        }
+    }
+}
+
+/// Concatenate two encodings and populate `type_ids` (`0` for A,
+/// `1` for B) plus `attention_mask` (all `true`). Shared shape used by
+/// the [`PostProcessor::None`] / [`PostProcessor::ByteLevel`] pair
+/// arms and by [`PostProcessor::apply_pair`] with
+/// `add_special_tokens == false`.
+fn concat_pair(a: &Encoding<TokenId>, b: &Encoding<TokenId>) -> Encoding<TokenId> {
+    let total = a.ids.len() + b.ids.len();
+    let mut out = Encoding::<TokenId>::new();
+    out.ids.reserve(total);
+    out.type_ids.reserve(total);
+    out.attention_mask.reserve(total);
+    let a_has_offsets = !a.offsets.is_empty();
+    let b_has_offsets = !b.offsets.is_empty();
+    let a_has_mask = !a.special_mask.is_empty();
+    let b_has_mask = !b.special_mask.is_empty();
+    for (i, &tid) in a.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if a_has_offsets {
+            out.offsets.push(a.offsets[i].clone());
+        } else if b_has_offsets {
+            out.offsets.push(0..0);
+        }
+        if a_has_mask {
+            out.special_mask.push(a.special_mask[i]);
+        } else if b_has_mask {
+            out.special_mask.push(false);
+        }
+        out.type_ids.push(0);
+        out.attention_mask.push(true);
+    }
+    for (i, &tid) in b.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if b_has_offsets {
+            out.offsets.push(b.offsets[i].clone());
+        } else if a_has_offsets {
+            out.offsets.push(0..0);
+        }
+        if b_has_mask {
+            out.special_mask.push(b.special_mask[i]);
+        } else if a_has_mask {
+            out.special_mask.push(false);
+        }
+        out.type_ids.push(1);
+        out.attention_mask.push(true);
+    }
+    out
+}
+
+/// Splice a `BertProcessing` pair encoding —
+/// `[CLS] A [SEP] B [SEP]` with `type_ids = [0, ..., 0, 1, ..., 1]`
+/// (the SEP between the two sides carries `type_id == 0`, matching HF).
+fn apply_bert_pair(
+    bp: &BertProcessing,
+    a: &Encoding<TokenId>,
+    b: &Encoding<TokenId>,
+) -> Encoding<TokenId> {
+    let total = a.ids.len() + b.ids.len() + 3;
+    let mut out = Encoding::<TokenId>::new();
+    out.ids.reserve(total);
+    out.type_ids.reserve(total);
+    out.attention_mask.reserve(total);
+    let has_offsets = !a.offsets.is_empty() || !b.offsets.is_empty();
+    let has_mask = !a.special_mask.is_empty() || !b.special_mask.is_empty();
+    if has_offsets {
+        out.offsets.reserve(total);
+    }
+    if has_mask {
+        out.special_mask.reserve(total);
+    }
+    // [CLS]
+    push_special(&mut out, bp.cls.1, 0, has_offsets, has_mask);
+    // A
+    for (i, &tid) in a.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if has_offsets {
+            out.offsets.push(a.offsets.get(i).cloned().unwrap_or(0..0));
+        }
+        if has_mask {
+            out.special_mask
+                .push(a.special_mask.get(i).copied().unwrap_or(false));
+        }
+        out.type_ids.push(0);
+        out.attention_mask.push(true);
+    }
+    // [SEP] between A and B — type_id 0 (HF convention).
+    push_special(&mut out, bp.sep.1, 0, has_offsets, has_mask);
+    // B
+    for (i, &tid) in b.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if has_offsets {
+            out.offsets.push(b.offsets.get(i).cloned().unwrap_or(0..0));
+        }
+        if has_mask {
+            out.special_mask
+                .push(b.special_mask.get(i).copied().unwrap_or(false));
+        }
+        out.type_ids.push(1);
+        out.attention_mask.push(true);
+    }
+    // [SEP] after B — type_id 1.
+    push_special(&mut out, bp.sep.1, 1, has_offsets, has_mask);
+    out
+}
+
+/// Splice a `RobertaProcessing` pair encoding —
+/// `<s> A </s></s> B </s>`. HF documents `type_ids = [0, ..., 0]`
+/// throughout (`RoBERTa` never trained with real segment ids); this
+/// mirrors that convention.
+fn apply_roberta_pair(
+    rp: &RobertaProcessing,
+    a: &Encoding<TokenId>,
+    b: &Encoding<TokenId>,
+) -> Encoding<TokenId> {
+    let total = a.ids.len() + b.ids.len() + 4;
+    let mut out = Encoding::<TokenId>::new();
+    out.ids.reserve(total);
+    out.type_ids.reserve(total);
+    out.attention_mask.reserve(total);
+    let has_offsets = !a.offsets.is_empty() || !b.offsets.is_empty();
+    let has_mask = !a.special_mask.is_empty() || !b.special_mask.is_empty();
+    // <s>
+    push_special(&mut out, rp.cls.1, 0, has_offsets, has_mask);
+    // A
+    for (i, &tid) in a.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if has_offsets {
+            out.offsets.push(a.offsets.get(i).cloned().unwrap_or(0..0));
+        }
+        if has_mask {
+            out.special_mask
+                .push(a.special_mask.get(i).copied().unwrap_or(false));
+        }
+        out.type_ids.push(0);
+        out.attention_mask.push(true);
+    }
+    // </s></s>
+    push_special(&mut out, rp.sep.1, 0, has_offsets, has_mask);
+    push_special(&mut out, rp.sep.1, 0, has_offsets, has_mask);
+    // B
+    for (i, &tid) in b.ids.iter().enumerate() {
+        out.ids.push(tid);
+        if has_offsets {
+            out.offsets.push(b.offsets.get(i).cloned().unwrap_or(0..0));
+        }
+        if has_mask {
+            out.special_mask
+                .push(b.special_mask.get(i).copied().unwrap_or(false));
+        }
+        out.type_ids.push(0);
+        out.attention_mask.push(true);
+    }
+    // </s>
+    push_special(&mut out, rp.sep.1, 0, has_offsets, has_mask);
+    out
+}
+
+fn push_special(
+    out: &mut Encoding<TokenId>,
+    id: TokenId,
+    type_id: u32,
+    has_offsets: bool,
+    has_mask: bool,
+) {
+    out.ids.push(id);
+    if has_offsets {
+        out.offsets.push(0..0);
+    }
+    if has_mask {
+        out.special_mask.push(true);
+    }
+    out.type_ids.push(type_id);
+    out.attention_mask.push(true);
+}
+
+/// Splice a `TemplateProcessing` pair encoding using the `pair`
+/// template. Each `Sequence { id: "A", type_id }` fills from
+/// `primary_a`, each `Sequence { id: "B", type_id }` fills from
+/// `primary_b`, and every `SpecialToken` slot resolves through
+/// `specials`. Every emitted token carries the slot's `type_id` on
+/// [`Encoding::type_ids`].
+fn apply_template_pair(
+    template: &[TemplatePiece],
+    specials: &alloc::collections::BTreeMap<String, SpecialTokenInfo>,
+    primary_a: &Encoding<TokenId>,
+    primary_b: &Encoding<TokenId>,
+) -> Encoding<TokenId> {
+    let mut out = Encoding::<TokenId>::new();
+    let has_offsets = !primary_a.offsets.is_empty() || !primary_b.offsets.is_empty();
+    let has_mask = !primary_a.special_mask.is_empty() || !primary_b.special_mask.is_empty();
+    for piece in template {
+        match piece {
+            TemplatePiece::Sequence { id, type_id } => {
+                let source = if id == "A" {
+                    primary_a
+                } else if id == "B" {
+                    primary_b
+                } else {
+                    // Ill-formed template — HF's own library rejects
+                    // slots other than "A"/"B" at construction; the
+                    // loader in this crate does the same, so this arm
+                    // is unreachable via the HF path. Silently drop the
+                    // slot for hand-built processors, matching HF's
+                    // lenient `apply` behaviour.
+                    continue;
+                };
+                for (i, &tid) in source.ids.iter().enumerate() {
+                    out.ids.push(tid);
+                    if has_offsets {
+                        out.offsets
+                            .push(source.offsets.get(i).cloned().unwrap_or(0..0));
+                    }
+                    if has_mask {
+                        out.special_mask
+                            .push(source.special_mask.get(i).copied().unwrap_or(false));
+                    }
+                    out.type_ids.push(*type_id);
+                    out.attention_mask.push(true);
+                }
+            }
+            TemplatePiece::SpecialToken { id, type_id } => {
+                if let Some(info) = specials.get(id) {
+                    for &tid in &info.ids {
+                        push_special(&mut out, tid, *type_id, has_offsets, has_mask);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Splice the `cls` id on the left of `encoding` and the `sep` id on
@@ -885,6 +1189,155 @@ mod tests {
         let out_bare = bert_processor().apply(&enc, true);
         assert_eq!(out_seq.ids, out_bare.ids);
         assert_eq!(out_seq.special_mask, out_bare.special_mask);
+    }
+
+    // -----------------------------------------------------------------
+    // apply_pair
+    // -----------------------------------------------------------------
+
+    fn llama_pair_processor() -> PostProcessor {
+        // A minimal pair template mirroring the shape a BERT-family
+        // fine-tune would ship:
+        //   [<cls>] $A:0 [<sep>:0] $B:1 [<sep>:1]
+        // The `apply_pair` path is exercised regardless of whether the
+        // real Llama config carries a pair template — the point is that
+        // TemplateProcessing correctly walks whichever it is given.
+        let mut specials = BTreeMap::new();
+        specials.insert(
+            "<cls>".to_string(),
+            SpecialTokenInfo {
+                ids: vec![101],
+                tokens: vec!["<cls>".to_string()],
+            },
+        );
+        specials.insert(
+            "<sep>".to_string(),
+            SpecialTokenInfo {
+                ids: vec![102],
+                tokens: vec!["<sep>".to_string()],
+            },
+        );
+        PostProcessor::TemplateProcessing(TemplateProcessing {
+            single: vec![
+                TemplatePiece::SpecialToken {
+                    id: "<cls>".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::Sequence {
+                    id: "A".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::SpecialToken {
+                    id: "<sep>".to_string(),
+                    type_id: 0,
+                },
+            ],
+            pair: vec![
+                TemplatePiece::SpecialToken {
+                    id: "<cls>".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::Sequence {
+                    id: "A".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::SpecialToken {
+                    id: "<sep>".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::Sequence {
+                    id: "B".to_string(),
+                    type_id: 1,
+                },
+                TemplatePiece::SpecialToken {
+                    id: "<sep>".to_string(),
+                    type_id: 1,
+                },
+            ],
+            special_tokens: specials,
+        })
+    }
+
+    #[test]
+    fn template_processing_apply_pair_walks_pair_template_with_type_ids() {
+        let pp = llama_pair_processor();
+        let a = primary(&[10, 11]);
+        let b = primary(&[20, 21, 22]);
+        let out = pp.apply_pair(&a, &b, true);
+        assert_eq!(out.ids, vec![101, 10, 11, 102, 20, 21, 22, 102]);
+        assert_eq!(out.type_ids, vec![0, 0, 0, 0, 1, 1, 1, 1]);
+        assert_eq!(
+            out.special_mask,
+            vec![true, false, false, true, false, false, false, true]
+        );
+        assert!(out.attention_mask.iter().all(|&b| b));
+    }
+
+    #[test]
+    fn bert_processing_apply_pair_wraps_both_sides() {
+        let pp = bert_processor();
+        let a = primary(&[10, 11]);
+        let b = primary(&[20, 21, 22]);
+        let out = pp.apply_pair(&a, &b, true);
+        assert_eq!(out.ids, vec![101, 10, 11, 102, 20, 21, 22, 102]);
+        assert_eq!(out.type_ids, vec![0, 0, 0, 0, 1, 1, 1, 1]);
+        assert_eq!(
+            out.special_mask,
+            vec![true, false, false, true, false, false, false, true]
+        );
+    }
+
+    #[test]
+    fn roberta_processing_apply_pair_uses_double_sep_and_all_type_id_zero() {
+        let pp = xlm_roberta_processor();
+        let a = primary(&[10, 11]);
+        let b = primary(&[20, 21]);
+        let out = pp.apply_pair(&a, &b, true);
+        // <s> A </s> </s> B </s> — ids: 0 10 11 2 2 20 21 2
+        assert_eq!(out.ids, vec![0, 10, 11, 2, 2, 20, 21, 2]);
+        // All type ids stay 0 per RoBERTa convention.
+        assert_eq!(out.type_ids, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn apply_pair_add_special_tokens_false_returns_plain_concat() {
+        let pp = bert_processor();
+        let a = primary(&[10, 11]);
+        let b = primary(&[20, 21]);
+        let out = pp.apply_pair(&a, &b, false);
+        // Plain concat — no CLS/SEP; type_ids still tagged 0/1.
+        assert_eq!(out.ids, vec![10, 11, 20, 21]);
+        assert_eq!(out.type_ids, vec![0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn none_apply_pair_concats_with_type_ids() {
+        let pp = PostProcessor::None;
+        let a = primary(&[10, 11]);
+        let b = primary(&[20, 21, 22]);
+        let out = pp.apply_pair(&a, &b, true);
+        assert_eq!(out.ids, vec![10, 11, 20, 21, 22]);
+        assert_eq!(out.type_ids, vec![0, 0, 1, 1, 1]);
+    }
+
+    #[test]
+    fn template_processing_apply_pair_empty_pair_template_falls_back_to_per_side_single() {
+        // TemplateProcessing with no pair template — still returns a
+        // useful pair encoding: apply single to each side, then concat.
+        let tp = TemplateProcessing {
+            single: vec![TemplatePiece::Sequence {
+                id: "A".to_string(),
+                type_id: 0,
+            }],
+            pair: vec![],
+            special_tokens: BTreeMap::new(),
+        };
+        let pp = PostProcessor::TemplateProcessing(tp);
+        let a = primary(&[10, 11]);
+        let b = primary(&[20]);
+        let out = pp.apply_pair(&a, &b, true);
+        assert_eq!(out.ids, vec![10, 11, 20]);
+        assert_eq!(out.type_ids, vec![0, 0, 1]);
     }
 
     #[test]

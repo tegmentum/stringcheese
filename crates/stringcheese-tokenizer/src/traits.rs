@@ -88,7 +88,7 @@ pub trait Segmenter {
 
 /// The output of a [`Tokenizer::encode`] call.
 ///
-/// Bundles three parallel arrays:
+/// Bundles five parallel arrays:
 ///
 /// * `ids` — the token IDs in emission order.
 /// * `offsets` — the half-open byte range in the *input* that produced
@@ -98,12 +98,22 @@ pub trait Segmenter {
 /// * `special_mask` — one `bool` per token; `true` iff the token is one
 ///   of the tokenizer's registered special tokens. Empty when the
 ///   tokenizer has no special tokens.
+/// * `type_ids` — the segment/type id per token. `0` for a single
+///   encoding and for the `A` slot of a pair; `1` for the `B` slot of a
+///   pair. Populated by [`Tokenizer::encode_pair`] and by
+///   post-processors that carry `type_id` slots
+///   ([`Tokenizer::encode`] returns an empty vector on the single-input
+///   path when the caller never sets type ids). Empty when not tracked.
+/// * `attention_mask` — one `bool` per token; `true` for real tokens,
+///   `false` for pad tokens. Populated by [`crate::padding::pad_batch`]
+///   (and any caller that walks the encoding and marks entries).
+///   Empty when not tracked.
 ///
-/// The three arrays, when non-empty, are always the same length as
-/// `ids`. Callers who only need one axis can index the array they care
-/// about; a tokenizer that tracks all three exposes the same information
-/// downstream algorithms use for highlighting, diffing, and cost
-/// accounting.
+/// Every non-empty array is always the same length as `ids`. Callers
+/// who only need one axis can index the array they care about; a
+/// tokenizer that tracks every axis exposes the same information
+/// downstream algorithms use for highlighting, diffing, cost
+/// accounting, and batch-serving.
 #[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Encoding<Token> {
@@ -114,6 +124,12 @@ pub struct Encoding<Token> {
     /// One flag per token indicating a special-token identity, or empty
     /// if not tracked.
     pub special_mask: Vec<bool>,
+    /// One `type_id` per token (segment id, `0` or `1` under HF's
+    /// convention). Empty when not tracked.
+    pub type_ids: Vec<u32>,
+    /// One flag per token; `true` for real tokens and `false` for pad
+    /// tokens. Empty when not tracked.
+    pub attention_mask: Vec<bool>,
 }
 
 #[cfg(feature = "alloc")]
@@ -125,6 +141,8 @@ impl<Token> Encoding<Token> {
             ids: Vec::new(),
             offsets: Vec::new(),
             special_mask: Vec::new(),
+            type_ids: Vec::new(),
+            attention_mask: Vec::new(),
         }
     }
 
@@ -190,6 +208,136 @@ pub trait Tokenizer {
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
         Ok(self.encode(text)?.len())
     }
+
+    /// Encode a batch of inputs.
+    ///
+    /// The default implementation calls [`encode`](Tokenizer::encode)
+    /// on each input in sequence and collects the results. Runtimes
+    /// with a parallel or vectorised encode path (thread pool, SIMD
+    /// scan) may override this while keeping the same order-preserving
+    /// contract: `encode_batch(&[a, b, c])?[i] == encode(inputs[i])?`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first per-input error at the first index it fires;
+    /// later inputs are not encoded on the default sequential path.
+    fn encode_batch(&self, inputs: &[&str]) -> Result<Vec<Encoding<Self::Token>>, TokenizerError> {
+        let mut out = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(self.encode(input)?);
+        }
+        Ok(out)
+    }
+
+    /// Encode a `(question, context)` style pair into a single
+    /// encoding.
+    ///
+    /// The default implementation encodes each side independently and
+    /// concatenates the two encodings, tagging the first side with
+    /// `type_id == 0` and the second with `type_id == 1`. Runtimes with
+    /// a post-processor pair template (HF's `TemplateProcessing::pair`)
+    /// override this to apply the template — that's the shape stock
+    /// BERT / `DistilBERT` / `RoBERTa` / `XLM-RoBERTa` QA pipelines
+    /// expect (`[CLS] A [SEP] B [SEP]` with
+    /// `type_ids = [0, 0, ..., 0, 1, ..., 1]`).
+    ///
+    /// # Errors
+    ///
+    /// Returns any error either per-side [`encode`](Tokenizer::encode)
+    /// call would return.
+    fn encode_pair(&self, a: &str, b: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
+        let ea = self.encode(a)?;
+        let eb = self.encode(b)?;
+        Ok(concat_pair_default(ea, eb))
+    }
+
+    /// Batch-version of [`count`](Tokenizer::count).
+    ///
+    /// The default implementation calls [`count`](Tokenizer::count) on
+    /// each input in sequence and collects the results. Same order and
+    /// error semantics as [`encode_batch`](Tokenizer::encode_batch).
+    ///
+    /// # Errors
+    ///
+    /// Returns the first per-input error at the first index it fires.
+    fn count_batch(&self, inputs: &[&str]) -> Result<Vec<usize>, TokenizerError> {
+        let mut out = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(self.count(input)?);
+        }
+        Ok(out)
+    }
+}
+
+/// Concatenate two encodings for the default
+/// [`Tokenizer::encode_pair`] path.
+///
+/// * `ids` — appended in order.
+/// * `offsets` — appended verbatim from each side (the two ranges are
+///   in *different* input strings so the caller must know which side
+///   they belong to; this crate does not renumber them).
+/// * `special_mask` — appended verbatim.
+/// * `type_ids` — filled to `0` for every token of `a`, `1` for every
+///   token of `b`, regardless of whether either side already tracked
+///   type ids. This is the load-bearing contract of the default pair
+///   encode.
+/// * `attention_mask` — `true` for every real token (no padding at
+///   pair-concat time; [`crate::padding::pad_batch`] fills the false
+///   entries later).
+#[cfg(feature = "alloc")]
+fn concat_pair_default<Token>(a: Encoding<Token>, b: Encoding<Token>) -> Encoding<Token> {
+    let total = a.ids.len() + b.ids.len();
+    let mut out = Encoding::<Token>::new();
+    out.ids.reserve(total);
+    let a_has_offsets = !a.offsets.is_empty();
+    let b_has_offsets = !b.offsets.is_empty();
+    let a_has_mask = !a.special_mask.is_empty();
+    let b_has_mask = !b.special_mask.is_empty();
+    if a_has_offsets || b_has_offsets {
+        out.offsets.reserve(total);
+    }
+    if a_has_mask || b_has_mask {
+        out.special_mask.reserve(total);
+    }
+    out.type_ids.reserve(total);
+    out.attention_mask.reserve(total);
+    let a_len = a.ids.len();
+    let b_len = b.ids.len();
+    // Preserve the primary body verbatim, filling missing per-token
+    // arrays with the empty-array convention this crate uses everywhere
+    // else on the encoding.
+    for (i, id) in a.ids.into_iter().enumerate() {
+        out.ids.push(id);
+        if a_has_offsets {
+            out.offsets.push(a.offsets[i].clone());
+        } else if b_has_offsets {
+            out.offsets.push(0..0);
+        }
+        if a_has_mask {
+            out.special_mask.push(a.special_mask[i]);
+        } else if b_has_mask {
+            out.special_mask.push(false);
+        }
+        out.type_ids.push(0);
+        out.attention_mask.push(true);
+    }
+    for (i, id) in b.ids.into_iter().enumerate() {
+        out.ids.push(id);
+        if b_has_offsets {
+            out.offsets.push(b.offsets[i].clone());
+        } else if a_has_offsets {
+            out.offsets.push(0..0);
+        }
+        if b_has_mask {
+            out.special_mask.push(b.special_mask[i]);
+        } else if a_has_mask {
+            out.special_mask.push(false);
+        }
+        out.type_ids.push(1);
+        out.attention_mask.push(true);
+    }
+    let _ = (a_len, b_len);
+    out
 }
 
 #[cfg(test)]

@@ -147,12 +147,23 @@ pub struct HfTokenizerConfig {
     /// The `"version"` string from the top of the file, if present.
     #[serde(default)]
     pub version: Option<String>,
-    /// Optional `"truncation"` block, preserved verbatim.
+    /// Optional `"truncation"` block, deserialised into a typed
+    /// [`HfTruncationParams`] value. When present, the runtime
+    /// tokenizer's `.with_truncation()` is called with the equivalent
+    /// [`stringcheese_tokenizer::truncation::TruncationConfig`] at
+    /// conversion time, so [`stringcheese_tokenizer::Tokenizer::encode`]
+    /// applies it end to end.
     #[serde(default)]
-    pub truncation: Option<serde_json::Value>,
-    /// Optional `"padding"` block, preserved verbatim.
+    pub truncation: Option<HfTruncationParams>,
+    /// Optional `"padding"` block, deserialised into a typed
+    /// [`HfPaddingParams`] value. When present, the runtime
+    /// tokenizer's `.with_padding()` is called with the equivalent
+    /// [`stringcheese_tokenizer::padding::PaddingConfig`] at conversion
+    /// time, so
+    /// [`stringcheese_tokenizer::Tokenizer::encode_batch`] pads the
+    /// resulting batch by default.
     #[serde(default)]
-    pub padding: Option<serde_json::Value>,
+    pub padding: Option<HfPaddingParams>,
     /// The `"added_tokens"` array, deserialised. Each entry becomes a
     /// registered token: `special == true` entries become BPE
     /// special tokens; the rest are added to the base vocabulary.
@@ -1124,6 +1135,198 @@ impl From<serde_json::Error> for HfParseError {
     }
 }
 
+/// The `"truncation"` block of a `tokenizer.json` file.
+///
+/// Field names and defaults mirror HF's `TruncationParams` on-disk
+/// shape verbatim — `direction` defaults to `"Right"`, `strategy`
+/// defaults to `"LongestFirst"`, and `stride` defaults to `0`. Every
+/// field is preserved on [`HfTokenizerConfig::truncation`]; a
+/// non-`None` value is applied to the runtime tokenizer via
+/// [`crate::BpeTokenizer::with_truncation`] (and its
+/// `WordPiece`/`WordLevel`/`Unigram` siblings) at conversion time, so
+/// [`stringcheese_tokenizer::Tokenizer::encode`] applies truncation
+/// automatically.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfTruncationParams {
+    /// Maximum length in tokens.
+    pub max_length: usize,
+    /// Which side of the encoding to drop from. Defaults to
+    /// [`HfTruncationDirection::Right`].
+    #[serde(default)]
+    pub direction: HfTruncationDirection,
+    /// How to trim a pair of encodings. Defaults to
+    /// [`HfTruncationStrategy::LongestFirst`].
+    #[serde(default)]
+    pub strategy: HfTruncationStrategy,
+    /// Overlap window HF carries between adjacent chunks when a long
+    /// input is chunked into multiple encodings. Preserved on the
+    /// runtime config for round-trip fidelity but not consumed by this
+    /// crate's truncation module — chunking is a caller-side concern.
+    #[serde(default)]
+    pub stride: usize,
+}
+
+/// HF's on-disk truncation direction tag.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum HfTruncationDirection {
+    /// Drop from the tail (HF default).
+    #[default]
+    Right,
+    /// Drop from the head.
+    Left,
+}
+
+impl From<HfTruncationDirection> for stringcheese_tokenizer::truncation::TruncationDirection {
+    fn from(v: HfTruncationDirection) -> Self {
+        match v {
+            HfTruncationDirection::Right => Self::Right,
+            HfTruncationDirection::Left => Self::Left,
+        }
+    }
+}
+
+/// HF's on-disk truncation strategy tag.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum HfTruncationStrategy {
+    /// Alternately drop from whichever side is longer (HF default).
+    #[default]
+    LongestFirst,
+    /// Only trim the first side.
+    OnlyFirst,
+    /// Only trim the second side.
+    OnlySecond,
+    /// Do not truncate.
+    DoNotTruncate,
+}
+
+impl From<HfTruncationStrategy> for stringcheese_tokenizer::truncation::TruncationStrategy {
+    fn from(v: HfTruncationStrategy) -> Self {
+        match v {
+            HfTruncationStrategy::LongestFirst => Self::LongestFirst,
+            HfTruncationStrategy::OnlyFirst => Self::OnlyFirst,
+            HfTruncationStrategy::OnlySecond => Self::OnlySecond,
+            HfTruncationStrategy::DoNotTruncate => Self::DoNotTruncate,
+        }
+    }
+}
+
+impl From<HfTruncationParams> for stringcheese_tokenizer::truncation::TruncationConfig {
+    fn from(v: HfTruncationParams) -> Self {
+        Self {
+            max_length: v.max_length,
+            strategy: v.strategy.into(),
+            direction: v.direction.into(),
+            stride: v.stride,
+        }
+    }
+}
+
+/// The `"padding"` block of a `tokenizer.json` file.
+///
+/// Field names and defaults mirror HF's `PaddingParams` on-disk
+/// shape verbatim.
+///
+/// * `strategy` is HF's `"BatchLongest"` or
+///   `{"Fixed": <usize>}` — routed to the runtime
+///   [`stringcheese_tokenizer::padding::PaddingStrategy`].
+/// * `direction` defaults to `"Right"`.
+/// * `pad_id` / `pad_type_id` are numeric; `pad_token` is the
+///   surface string (preserved but not consumed by the runtime — the
+///   runtime pads by id only).
+/// * `pad_to_multiple_of` is preserved verbatim but not consumed today
+///   (a niche feature that no shipped tokenizer.json we've inspected
+///   sets to a non-null value).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfPaddingParams {
+    /// How to compute the target length.
+    pub strategy: HfPaddingStrategy,
+    /// Which side of the encoding to append pad tokens to. Defaults to
+    /// [`HfPaddingDirection::Right`].
+    #[serde(default)]
+    pub direction: HfPaddingDirection,
+    /// The pad token id.
+    pub pad_id: TokenId,
+    /// The pad token's `type_id`. Defaults to `0`.
+    #[serde(default)]
+    pub pad_type_id: u32,
+    /// The pad token's surface string. Preserved for round-trip
+    /// fidelity but not consumed by the runtime.
+    #[serde(default)]
+    pub pad_token: String,
+    /// HF's "pad every encoding up to a multiple of N" niche. Preserved
+    /// verbatim; not consumed.
+    #[serde(default)]
+    pub pad_to_multiple_of: Option<usize>,
+}
+
+/// HF's on-disk padding strategy tag.
+///
+/// The `BatchLongest` variant is a bare string (`"BatchLongest"`); the
+/// `Fixed` variant is a tagged object (`{"Fixed": 512}`).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum HfPaddingStrategy {
+    /// The `"BatchLongest"` bare-string form.
+    Named(HfPaddingStrategyNamed),
+    /// The `{"Fixed": N}` tagged-object form.
+    Tagged(HfPaddingStrategyTagged),
+}
+
+/// The bare-string form of [`HfPaddingStrategy`].
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+pub enum HfPaddingStrategyNamed {
+    /// Pad to the longest encoding in the batch.
+    BatchLongest,
+}
+
+/// The tagged-object form of [`HfPaddingStrategy`].
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+pub enum HfPaddingStrategyTagged {
+    /// Pad every encoding to the given fixed length.
+    Fixed(usize),
+}
+
+impl From<HfPaddingStrategy> for stringcheese_tokenizer::padding::PaddingStrategy {
+    fn from(v: HfPaddingStrategy) -> Self {
+        match v {
+            HfPaddingStrategy::Named(HfPaddingStrategyNamed::BatchLongest) => Self::BatchLongest,
+            HfPaddingStrategy::Tagged(HfPaddingStrategyTagged::Fixed(n)) => Self::Fixed(n),
+        }
+    }
+}
+
+/// HF's on-disk padding direction tag.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum HfPaddingDirection {
+    /// Append pad tokens on the right (HF default).
+    #[default]
+    Right,
+    /// Prepend pad tokens on the left.
+    Left,
+}
+
+impl From<HfPaddingDirection> for stringcheese_tokenizer::padding::PaddingDirection {
+    fn from(v: HfPaddingDirection) -> Self {
+        match v {
+            HfPaddingDirection::Right => Self::Right,
+            HfPaddingDirection::Left => Self::Left,
+        }
+    }
+}
+
+impl From<HfPaddingParams> for stringcheese_tokenizer::padding::PaddingConfig<TokenId> {
+    fn from(v: HfPaddingParams) -> Self {
+        Self {
+            strategy: v.strategy.into(),
+            pad_id: v.pad_id,
+            pad_type_id: v.pad_type_id,
+            direction: v.direction.into(),
+        }
+    }
+}
+
 /// Error returned by [`to_bpe_tokenizer`] / [`to_wordpiece_tokenizer`]
 /// / [`to_tokenizer`] when the parsed config references a feature this
 /// crate does not yet materialise, or when the config is internally
@@ -1663,6 +1866,12 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
         let pp = to_runtime_post_processor(hp)?;
         tok = tok.with_post_processor(pp);
     }
+    if let Some(t) = &config.truncation {
+        tok = tok.with_truncation(t.clone().into());
+    }
+    if let Some(p) = &config.padding {
+        tok = tok.with_padding(p.clone().into());
+    }
     Ok(tok)
 }
 
@@ -1935,6 +2144,12 @@ pub fn to_wordpiece_tokenizer(
         let pp = to_runtime_post_processor(hp)?;
         tok = tok.with_post_processor(pp);
     }
+    if let Some(t) = &config.truncation {
+        tok = tok.with_truncation(t.clone().into());
+    }
+    if let Some(p) = &config.padding {
+        tok = tok.with_padding(p.clone().into());
+    }
 
     Ok(tok)
 }
@@ -2087,6 +2302,12 @@ pub fn to_wordlevel_tokenizer(
     if let Some(hp) = &config.post_processor {
         let pp = to_runtime_post_processor(hp)?;
         tok = tok.with_post_processor(pp);
+    }
+    if let Some(t) = &config.truncation {
+        tok = tok.with_truncation(t.clone().into());
+    }
+    if let Some(p) = &config.padding {
+        tok = tok.with_padding(p.clone().into());
     }
 
     Ok(tok)
@@ -2308,6 +2529,12 @@ pub struct UnigramTokenizer {
     /// Boxed so a clone of `UnigramTokenizer` avoids a 2 KiB memcpy
     /// on the common (byte-fallback-off) path.
     byte_fallback: Option<alloc::boxed::Box<[usize; 256]>>,
+    /// Optional truncation configuration; see
+    /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
+    truncation: Option<stringcheese_tokenizer::truncation::TruncationConfig>,
+    /// Optional padding configuration; see
+    /// [`crate::BpeTokenizer::with_padding`] for the semantics.
+    padding: Option<stringcheese_tokenizer::padding::PaddingConfig<TokenId>>,
 }
 
 /// One backtracking record in the Viterbi trellis: either a single
@@ -2424,6 +2651,8 @@ impl UnigramTokenizer {
             post_processor: PostProcessor::None,
             byte_fallback: None,
             special_tokens: BTreeMap::new(),
+            truncation: None,
+            padding: None,
         })
     }
 
@@ -2486,6 +2715,40 @@ impl UnigramTokenizer {
     pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
         self.post_processor = post_processor;
         self
+    }
+
+    /// Attach (or replace) the truncation configuration; see
+    /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
+    #[must_use]
+    pub fn with_truncation(
+        mut self,
+        truncation: stringcheese_tokenizer::truncation::TruncationConfig,
+    ) -> Self {
+        self.truncation = Some(truncation);
+        self
+    }
+
+    /// Attach (or replace) the padding configuration; see
+    /// [`crate::BpeTokenizer::with_padding`] for the semantics.
+    #[must_use]
+    pub fn with_padding(
+        mut self,
+        padding: stringcheese_tokenizer::padding::PaddingConfig<TokenId>,
+    ) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    /// Read-only access to the configured truncation, if any.
+    #[must_use]
+    pub fn truncation(&self) -> Option<&stringcheese_tokenizer::truncation::TruncationConfig> {
+        self.truncation.as_ref()
+    }
+
+    /// Read-only access to the configured padding, if any.
+    #[must_use]
+    pub fn padding(&self) -> Option<&stringcheese_tokenizer::padding::PaddingConfig<TokenId>> {
+        self.padding.as_ref()
     }
 
     /// Attach (or replace) the special-token map.
@@ -2945,9 +3208,10 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
     {
         // Reuse the inherent `encode` pipeline for normalize +
         // pre-tokenize + Viterbi, then splice the post-processor on
-        // top. The inherent method returns `Vec<usize>`; the trait's
-        // `Encoding<TokenId>` uses `u32`. Cast at the boundary — every
-        // id from a real SentencePiece vocab fits.
+        // top and apply the truncation config. The inherent method
+        // returns `Vec<usize>`; the trait's `Encoding<TokenId>` uses
+        // `u32`. Cast at the boundary — every id from a real
+        // SentencePiece vocab fits.
         let raw = Self::encode(self, text).map_err(|e| {
             stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
         })?;
@@ -2964,11 +3228,78 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
         }
         // Fast-path the identity post-processor to avoid an extra
         // clone on the common no-post-processor path.
-        Ok(if matches!(self.post_processor, PostProcessor::None) {
+        let mut out = if matches!(self.post_processor, PostProcessor::None) {
             enc
         } else {
             self.post_processor.apply(&enc, true)
-        })
+        };
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate(&mut out, cfg);
+        }
+        Ok(out)
+    }
+
+    fn encode_batch(
+        &self,
+        inputs: &[&str],
+    ) -> Result<
+        alloc::vec::Vec<stringcheese_tokenizer::Encoding<Self::Token>>,
+        stringcheese_tokenizer::TokenizerError,
+    > {
+        let mut out: alloc::vec::Vec<stringcheese_tokenizer::Encoding<Self::Token>> =
+            alloc::vec::Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(<Self as stringcheese_tokenizer::Tokenizer>::encode(
+                self, input,
+            )?);
+        }
+        if let Some(cfg) = &self.padding {
+            stringcheese_tokenizer::padding::pad_batch(&mut out, cfg);
+        }
+        Ok(out)
+    }
+
+    fn encode_pair(
+        &self,
+        a: &str,
+        b: &str,
+    ) -> Result<stringcheese_tokenizer::Encoding<Self::Token>, stringcheese_tokenizer::TokenizerError>
+    {
+        // Encode both sides through the raw Viterbi pipeline (no
+        // post-processor), truncate the pair together, then splice the
+        // pair template.
+        let raw_a = Self::encode(self, a).map_err(|e| {
+            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+        })?;
+        let raw_b = Self::encode(self, b).map_err(|e| {
+            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+        })?;
+        let mut ea: stringcheese_tokenizer::Encoding<TokenId> =
+            stringcheese_tokenizer::Encoding::new();
+        ea.ids.reserve(raw_a.len());
+        for id in raw_a {
+            let tid = TokenId::try_from(id).map_err(|_| {
+                stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!(
+                    "Unigram id {id} does not fit in TokenId (u32)"
+                ))
+            })?;
+            ea.ids.push(tid);
+        }
+        let mut eb: stringcheese_tokenizer::Encoding<TokenId> =
+            stringcheese_tokenizer::Encoding::new();
+        eb.ids.reserve(raw_b.len());
+        for id in raw_b {
+            let tid = TokenId::try_from(id).map_err(|_| {
+                stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!(
+                    "Unigram id {id} does not fit in TokenId (u32)"
+                ))
+            })?;
+            eb.ids.push(tid);
+        }
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate_pair(&mut ea, &mut eb, cfg);
+        }
+        Ok(self.post_processor.apply_pair(&ea, &eb, true))
     }
 
     fn decode(
@@ -3193,6 +3524,13 @@ pub fn to_unigram_tokenizer(
     }
     if !uni_specials.is_empty() {
         tok = tok.with_special_tokens(uni_specials);
+    }
+
+    if let Some(t) = &config.truncation {
+        tok = tok.with_truncation(t.clone().into());
+    }
+    if let Some(p) = &config.padding {
+        tok = tok.with_padding(p.clone().into());
     }
 
     Ok(tok)
@@ -6713,5 +7051,113 @@ mod tests {
             let round = Tokenizer::decode(&tok, &enc.ids).unwrap();
             assert_eq!(round, text, "round-trip failed on {text:?}");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // truncation / padding — HF loader landing.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn hf_loader_parses_truncation_block_and_applies_it() {
+        // A BPE config with a `truncation` block. Every character is
+        // one token under a byte-alphabet-shape mini-vocab (no merges
+        // fire), so a 4-char input encoded under `max_length: 2` must
+        // trim to 2 tokens.
+        let json = r#"{
+            "version": "1.0",
+            "truncation": {"max_length": 2, "direction": "Right",
+                           "strategy": "LongestFirst", "stride": 0},
+            "padding": null,
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1, "c": 2, "d": 3},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        assert!(config.truncation.is_some());
+        assert_eq!(config.truncation.as_ref().unwrap().max_length, 2);
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(tok.truncation().is_some());
+        let enc = Tokenizer::encode(&tok, "abcd").unwrap();
+        assert_eq!(enc.ids.len(), 2);
+        assert_eq!(enc.ids, vec![0, 1]);
+    }
+
+    #[test]
+    fn hf_loader_parses_padding_block_and_applies_it_on_batch() {
+        // A BPE config with a `padding` block. `pad_id: 0` and
+        // `BatchLongest` direction=Right — a batch of "a" and "abc"
+        // must pad the first to length 3.
+        let json = r#"{
+            "version": "1.0",
+            "truncation": null,
+            "padding": {"strategy": "BatchLongest", "direction": "Right",
+                        "pad_id": 0, "pad_type_id": 0, "pad_token": "[PAD]"},
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1, "c": 2},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        assert!(config.padding.is_some());
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(tok.padding().is_some());
+        let batch = <BpeTokenizer as Tokenizer>::encode_batch(&tok, &["a", "abc"]).unwrap();
+        assert_eq!(batch[0].ids, vec![0, 0, 0]);
+        assert_eq!(batch[0].attention_mask, vec![true, false, false]);
+        assert_eq!(batch[1].ids, vec![0, 1, 2]);
+        assert_eq!(batch[1].attention_mask, vec![true, true, true]);
+    }
+
+    #[test]
+    fn hf_loader_parses_fixed_padding_strategy() {
+        // Tagged-object form of the padding strategy: `{"Fixed": 5}`.
+        // Verify the parse dispatch and that the runtime pads to the
+        // fixed length even for a single-encoding batch.
+        let json = r#"{
+            "version": "1.0",
+            "truncation": null,
+            "padding": {"strategy": {"Fixed": 5}, "direction": "Right",
+                        "pad_id": 0, "pad_type_id": 0, "pad_token": "[PAD]"},
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        let batch = <BpeTokenizer as Tokenizer>::encode_batch(&tok, &["ab"]).unwrap();
+        assert_eq!(batch[0].ids.len(), 5);
+        assert_eq!(batch[0].ids, vec![0, 1, 0, 0, 0]);
+    }
+
+    #[test]
+    fn hf_loader_null_truncation_and_padding_are_no_op() {
+        // Explicit nulls (as every real Hub-shipped config carries when
+        // the model does not preconfigure them) don't attach any
+        // truncation/padding to the runtime.
+        let json = r#"{
+            "version": "1.0",
+            "truncation": null,
+            "padding": null,
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        assert!(config.truncation.is_none());
+        assert!(config.padding.is_none());
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(tok.truncation().is_none());
+        assert!(tok.padding().is_none());
     }
 }

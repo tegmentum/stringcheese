@@ -441,6 +441,17 @@ pub struct BpeTokenizer {
     /// common (byte-fallback-off) path — mirrors the Unigram-side
     /// storage shape in [`crate::hf::UnigramTokenizer`].
     byte_fallback: Option<alloc::boxed::Box<[TokenId; 256]>>,
+    /// Optional truncation configuration applied to the finished
+    /// [`Encoding`] before it leaves [`Self::encode`] /
+    /// [`Self::encode_pair`]. See
+    /// [`stringcheese_tokenizer::truncation::TruncationConfig`] for the
+    /// field shape. When `None` the truncation step is skipped.
+    truncation: Option<stringcheese_tokenizer::truncation::TruncationConfig>,
+    /// Optional padding configuration applied to a batch of finished
+    /// [`Encoding`]s by [`Self::encode_batch`]. When `None` the
+    /// padding step is skipped and encodings retain their per-input
+    /// lengths.
+    padding: Option<stringcheese_tokenizer::padding::PaddingConfig<TokenId>>,
 }
 
 impl BpeTokenizer {
@@ -457,6 +468,8 @@ impl BpeTokenizer {
             normalizer: None,
             post_processor: crate::post_processor::PostProcessor::None,
             byte_fallback: None,
+            truncation: None,
+            padding: None,
         }
     }
 
@@ -551,6 +564,52 @@ impl BpeTokenizer {
     pub fn with_byte_fallback(mut self, byte_fallback: [TokenId; 256]) -> Self {
         self.byte_fallback = Some(alloc::boxed::Box::new(byte_fallback));
         self
+    }
+
+    /// Attach (or replace) the truncation configuration.
+    ///
+    /// The config is applied to every [`Encoding`] produced by
+    /// [`Self::encode`] and to every pair encoding produced by
+    /// [`stringcheese_tokenizer::Tokenizer::encode_pair`], immediately
+    /// after the post-processor runs. Pair encoding uses
+    /// [`stringcheese_tokenizer::truncation::truncate_pair`] on the
+    /// two primary encodings before the pair template splices in the
+    /// specials — matching HF's own ordering.
+    #[must_use]
+    pub fn with_truncation(
+        mut self,
+        truncation: stringcheese_tokenizer::truncation::TruncationConfig,
+    ) -> Self {
+        self.truncation = Some(truncation);
+        self
+    }
+
+    /// Attach (or replace) the padding configuration.
+    ///
+    /// The config is applied to every batch produced by
+    /// [`stringcheese_tokenizer::Tokenizer::encode_batch`], via
+    /// [`stringcheese_tokenizer::padding::pad_batch`]. Single-encoding
+    /// [`Self::encode`] never pads (there is no "batch max" to align
+    /// against).
+    #[must_use]
+    pub fn with_padding(
+        mut self,
+        padding: stringcheese_tokenizer::padding::PaddingConfig<TokenId>,
+    ) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    /// Read-only access to the configured truncation, if any.
+    #[must_use]
+    pub fn truncation(&self) -> Option<&stringcheese_tokenizer::truncation::TruncationConfig> {
+        self.truncation.as_ref()
+    }
+
+    /// Read-only access to the configured padding, if any.
+    #[must_use]
+    pub fn padding(&self) -> Option<&stringcheese_tokenizer::padding::PaddingConfig<TokenId>> {
+        self.padding.as_ref()
     }
 
     /// Read-only access to the configured normalizer, if any.
@@ -1145,7 +1204,39 @@ impl Tokenizer for BpeTokenizer {
     type Token = TokenId;
 
     fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
-        self.encode_with_special(text, true)
+        let mut enc = self.encode_with_special(text, true)?;
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate(&mut enc, cfg);
+        }
+        Ok(enc)
+    }
+
+    fn encode_batch(
+        &self,
+        inputs: &[&str],
+    ) -> Result<alloc::vec::Vec<Encoding<Self::Token>>, TokenizerError> {
+        let mut out: alloc::vec::Vec<Encoding<Self::Token>> =
+            alloc::vec::Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(<Self as Tokenizer>::encode(self, input)?);
+        }
+        if let Some(cfg) = &self.padding {
+            stringcheese_tokenizer::padding::pad_batch(&mut out, cfg);
+        }
+        Ok(out)
+    }
+
+    fn encode_pair(&self, a: &str, b: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
+        // Encode each side without the post-processor's splice (the
+        // pair template does the splicing itself), then apply
+        // truncation on the two primary encodings, then run
+        // `apply_pair` to produce the final pair encoding.
+        let mut ea = self.encode_with_special(a, false)?;
+        let mut eb = self.encode_with_special(b, false)?;
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate_pair(&mut ea, &mut eb, cfg);
+        }
+        Ok(self.post_processor.apply_pair(&ea, &eb, true))
     }
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
@@ -2480,6 +2571,148 @@ mod tests {
             let round = tok.decode(&enc.ids).unwrap();
             assert_eq!(round, text, "roundtrip fail on {text:?}");
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Batch / pair / truncation / padding.
+    // ---------------------------------------------------------------
+
+    fn build_reference_tokenizer_for_batch() -> BpeTokenizer {
+        let (mut vocab, _) = byte_vocab_with_extras(&[b"ca", b"at"]);
+        vocab.insert(258, b"cat".to_vec()).unwrap();
+        let mut merges = BpeMergeTable::new();
+        merges.insert(b"c".to_vec(), b"a".to_vec(), 0);
+        merges.insert(b"ca".to_vec(), b"t".to_vec(), 1);
+        BpeTokenizer::from_parts(merges, vocab)
+    }
+
+    #[test]
+    fn encode_batch_returns_per_input_encoding_matching_encode() {
+        use stringcheese_tokenizer::Tokenizer;
+        let tok = build_reference_tokenizer_for_batch();
+        let inputs = ["cat", "at", "c"];
+        let refs: Vec<_> = inputs.iter().map(|i| tok.encode(i).unwrap()).collect();
+        let batch = <BpeTokenizer as Tokenizer>::encode_batch(&tok, &inputs).unwrap();
+        assert_eq!(batch.len(), inputs.len());
+        for (batch_enc, ref_enc) in batch.iter().zip(&refs) {
+            assert_eq!(batch_enc.ids, ref_enc.ids);
+        }
+    }
+
+    #[test]
+    fn count_batch_matches_encode_batch_lengths() {
+        use stringcheese_tokenizer::Tokenizer;
+        let tok = build_reference_tokenizer_for_batch();
+        let inputs = ["cat", "at", "c"];
+        let counts = <BpeTokenizer as Tokenizer>::count_batch(&tok, &inputs).unwrap();
+        let batch = <BpeTokenizer as Tokenizer>::encode_batch(&tok, &inputs).unwrap();
+        for (c, e) in counts.iter().zip(&batch) {
+            assert_eq!(*c, e.ids.len());
+        }
+    }
+
+    #[test]
+    fn encode_pair_with_bert_template_produces_cls_a_sep_b_sep_shape() {
+        use stringcheese_tokenizer::Tokenizer;
+        // Build a small BERT-style pair template around the tokenizer.
+        // CLS=300, SEP=301 (arbitrary ids; the template uses these
+        // verbatim without going through the vocabulary).
+        let mut specials = alloc::collections::BTreeMap::new();
+        specials.insert(
+            alloc::string::String::from("<cls>"),
+            crate::post_processor::SpecialTokenInfo {
+                ids: vec![300],
+                tokens: vec![alloc::string::String::from("<cls>")],
+            },
+        );
+        specials.insert(
+            alloc::string::String::from("<sep>"),
+            crate::post_processor::SpecialTokenInfo {
+                ids: vec![301],
+                tokens: vec![alloc::string::String::from("<sep>")],
+            },
+        );
+        let tp = crate::post_processor::TemplateProcessing {
+            single: vec![
+                crate::post_processor::TemplatePiece::SpecialToken {
+                    id: alloc::string::String::from("<cls>"),
+                    type_id: 0,
+                },
+                crate::post_processor::TemplatePiece::Sequence {
+                    id: alloc::string::String::from("A"),
+                    type_id: 0,
+                },
+                crate::post_processor::TemplatePiece::SpecialToken {
+                    id: alloc::string::String::from("<sep>"),
+                    type_id: 0,
+                },
+            ],
+            pair: vec![
+                crate::post_processor::TemplatePiece::SpecialToken {
+                    id: alloc::string::String::from("<cls>"),
+                    type_id: 0,
+                },
+                crate::post_processor::TemplatePiece::Sequence {
+                    id: alloc::string::String::from("A"),
+                    type_id: 0,
+                },
+                crate::post_processor::TemplatePiece::SpecialToken {
+                    id: alloc::string::String::from("<sep>"),
+                    type_id: 0,
+                },
+                crate::post_processor::TemplatePiece::Sequence {
+                    id: alloc::string::String::from("B"),
+                    type_id: 1,
+                },
+                crate::post_processor::TemplatePiece::SpecialToken {
+                    id: alloc::string::String::from("<sep>"),
+                    type_id: 1,
+                },
+            ],
+            special_tokens: specials,
+        };
+        let tok = build_reference_tokenizer_for_batch()
+            .with_post_processor(crate::post_processor::PostProcessor::TemplateProcessing(tp));
+        let out = <BpeTokenizer as Tokenizer>::encode_pair(&tok, "cat", "at").unwrap();
+        // "cat" -> [258]; "at" -> [b'a', b't'] = [97, 116]
+        assert_eq!(out.ids, vec![300, 258, 301, 97, 116, 301]);
+        assert_eq!(out.type_ids, vec![0, 0, 0, 1, 1, 1]);
+    }
+
+    #[test]
+    fn encode_with_truncation_config_trims_at_max_length() {
+        use stringcheese_tokenizer::Tokenizer;
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab)
+            .with_truncation(stringcheese_tokenizer::truncation::TruncationConfig::new(4));
+        // 6-char input -> 6 tokens (no merges). Truncation caps at 4.
+        let enc = <BpeTokenizer as Tokenizer>::encode(&tok, "abcdef").unwrap();
+        assert_eq!(enc.ids.len(), 4);
+        assert_eq!(enc.offsets.len(), 4);
+    }
+
+    #[test]
+    fn encode_batch_with_padding_config_pads_to_batch_longest() {
+        use stringcheese_tokenizer::Tokenizer;
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_padding(
+            stringcheese_tokenizer::padding::PaddingConfig::<TokenId> {
+                strategy: stringcheese_tokenizer::padding::PaddingStrategy::BatchLongest,
+                pad_id: 0,
+                pad_type_id: 0,
+                direction: stringcheese_tokenizer::padding::PaddingDirection::Right,
+            },
+        );
+        let batch = <BpeTokenizer as Tokenizer>::encode_batch(&tok, &["ab", "abcd", "a"]).unwrap();
+        // Longest is 4; every encoding is padded to len 4.
+        for enc in &batch {
+            assert_eq!(enc.ids.len(), 4);
+            assert_eq!(enc.attention_mask.len(), 4);
+        }
+        // Attention mask reflects real vs pad tokens.
+        assert_eq!(batch[0].attention_mask, vec![true, true, false, false]);
+        assert_eq!(batch[1].attention_mask, vec![true, true, true, true]);
+        assert_eq!(batch[2].attention_mask, vec![true, false, false, false]);
     }
 }
 

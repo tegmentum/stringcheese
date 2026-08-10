@@ -216,6 +216,12 @@ pub struct WordLevelTokenizer {
     /// [`PostProcessor::None`] is a pass-through, so callers who never
     /// configure one see the raw `WordLevel` output.
     post_processor: PostProcessor,
+    /// Optional truncation configuration; see
+    /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
+    truncation: Option<stringcheese_tokenizer::truncation::TruncationConfig>,
+    /// Optional padding configuration; see
+    /// [`crate::BpeTokenizer::with_padding`] for the semantics.
+    padding: Option<stringcheese_tokenizer::padding::PaddingConfig<TokenId>>,
 }
 
 impl WordLevelTokenizer {
@@ -264,6 +270,8 @@ impl WordLevelTokenizer {
             pre_tokenizer: WordLevelPreTokenizer::default(),
             normalizer: None,
             post_processor: PostProcessor::None,
+            truncation: None,
+            padding: None,
         })
     }
 
@@ -297,6 +305,40 @@ impl WordLevelTokenizer {
     pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
         self.post_processor = post_processor;
         self
+    }
+
+    /// Attach (or replace) the truncation configuration; see
+    /// [`crate::BpeTokenizer::with_truncation`] for the shape.
+    #[must_use]
+    pub fn with_truncation(
+        mut self,
+        truncation: stringcheese_tokenizer::truncation::TruncationConfig,
+    ) -> Self {
+        self.truncation = Some(truncation);
+        self
+    }
+
+    /// Attach (or replace) the padding configuration; see
+    /// [`crate::BpeTokenizer::with_padding`] for the shape.
+    #[must_use]
+    pub fn with_padding(
+        mut self,
+        padding: stringcheese_tokenizer::padding::PaddingConfig<TokenId>,
+    ) -> Self {
+        self.padding = Some(padding);
+        self
+    }
+
+    /// Read-only access to the configured truncation, if any.
+    #[must_use]
+    pub fn truncation(&self) -> Option<&stringcheese_tokenizer::truncation::TruncationConfig> {
+        self.truncation.as_ref()
+    }
+
+    /// Read-only access to the configured padding, if any.
+    #[must_use]
+    pub fn padding(&self) -> Option<&stringcheese_tokenizer::padding::PaddingConfig<TokenId>> {
+        self.padding.as_ref()
     }
 
     /// Read-only access to the vocabulary.
@@ -429,24 +471,60 @@ impl Tokenizer for WordLevelTokenizer {
 
     fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
         // Full pipeline: normalize -> pre-tokenize + WordLevel lookup
-        // -> post-process. Mirrors the inherent `encode` above; kept
-        // as a separate assembly because the `Tokenizer` trait must
-        // return an `Encoding<TokenId>` and the post-processor
-        // operates on one. Offsets and `special_mask` remain empty on
-        // the primary encoding (WordLevel does not track offsets);
-        // the post-processor's `apply` gracefully preserves empty
-        // per-token arrays.
+        // -> post-process -> truncate. Mirrors the inherent `encode`
+        // above; kept as a separate assembly because the `Tokenizer`
+        // trait must return an `Encoding<TokenId>` and the
+        // post-processor operates on one. Offsets and `special_mask`
+        // remain empty on the primary encoding (WordLevel does not
+        // track offsets); the post-processor's `apply` gracefully
+        // preserves empty per-token arrays.
         let normalized = self.normalize_text(text);
         let ids = self
             .encode_ids_raw(normalized.as_ref())
             .map_err(|e| TokenizerError::UnknownToken(alloc::format!("{e}")))?;
         let mut enc: Encoding<TokenId> = Encoding::new();
         enc.ids = ids;
-        Ok(if matches!(self.post_processor, PostProcessor::None) {
+        let mut out = if matches!(self.post_processor, PostProcessor::None) {
             enc
         } else {
             self.post_processor.apply(&enc, true)
-        })
+        };
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate(&mut out, cfg);
+        }
+        Ok(out)
+    }
+
+    fn encode_batch(
+        &self,
+        inputs: &[&str],
+    ) -> Result<alloc::vec::Vec<Encoding<Self::Token>>, TokenizerError> {
+        let mut out: alloc::vec::Vec<Encoding<Self::Token>> =
+            alloc::vec::Vec::with_capacity(inputs.len());
+        for input in inputs {
+            out.push(<Self as Tokenizer>::encode(self, input)?);
+        }
+        if let Some(cfg) = &self.padding {
+            stringcheese_tokenizer::padding::pad_batch(&mut out, cfg);
+        }
+        Ok(out)
+    }
+
+    fn encode_pair(&self, a: &str, b: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
+        let normalized_a = self.normalize_text(a);
+        let normalized_b = self.normalize_text(b);
+        let mut ea: Encoding<TokenId> = Encoding::new();
+        ea.ids = self
+            .encode_ids_raw(normalized_a.as_ref())
+            .map_err(|e| TokenizerError::UnknownToken(alloc::format!("{e}")))?;
+        let mut eb: Encoding<TokenId> = Encoding::new();
+        eb.ids = self
+            .encode_ids_raw(normalized_b.as_ref())
+            .map_err(|e| TokenizerError::UnknownToken(alloc::format!("{e}")))?;
+        if let Some(cfg) = &self.truncation {
+            stringcheese_tokenizer::truncation::truncate_pair(&mut ea, &mut eb, cfg);
+        }
+        Ok(self.post_processor.apply_pair(&ea, &eb, true))
     }
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
