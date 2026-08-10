@@ -593,7 +593,10 @@ impl Tokenizer for WordPieceTokenizer {
         let normalized = self.normalize_text(text);
         let base = self.encode_ids_raw(normalized.as_ref()).len();
         Ok(match &self.post_processor {
-            PostProcessor::None => base,
+            // ByteLevel is a documented no-op on the encoding
+            // (see [`crate::post_processor::PostProcessor::ByteLevel`]);
+            // token count is unchanged.
+            PostProcessor::None | PostProcessor::ByteLevel { .. } => base,
             PostProcessor::TemplateProcessing(_) => {
                 // Cheapest correct answer: run the splice against a
                 // synthetic encoding of the right length and count the

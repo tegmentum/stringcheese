@@ -70,13 +70,19 @@
 //! * All other `decoder` types (`WordPiece`, `Metaspace`, `BPEDecoder`,
 //!   `Sequence`, ...). The raw config is preserved on
 //!   [`HfTokenizerConfig::decoder`] for caller inspection.
-//! * `normalizer`, `post_processor` — the raw configs are preserved
-//!   on [`HfTokenizerConfig`] so callers can inspect them, but they
-//!   are **not applied** by [`to_bpe_tokenizer`]. Encodings from the
-//!   produced tokenizer will therefore differ from upstream
-//!   `tokenizers-rs` for any input whose normaliser/post-processor
-//!   would have altered it (adding a BOS token, applying NFC, etc.).
-//!   This is the documented lossy conversion.
+//! * `normalizer` — the honoured shapes (NFC / NFD / NFKC / NFKD /
+//!   `Sequence` / `Lowercase` / `Replace(String)` / `Strip` /
+//!   `Prepend` / `BertNormalizer` / `Precompiled`) are materialised
+//!   at [`to_bpe_tokenizer`] time and applied on every `encode` call;
+//!   every other tag string surfaces
+//!   [`HfConversionError::UnsupportedNormalizer`]. See
+//!   [`HfNormalizer`] for the exhaustive list.
+//! * `post_processor` — [`HfPostProcessor::TemplateProcessing`]
+//!   (Llama / BERT shape) and [`HfPostProcessor::ByteLevel`] (GPT-2
+//!   shape; no-op on the encoding this crate ships — see
+//!   [`PostProcessor::ByteLevel`] for the rationale) are materialised
+//!   at conversion; every other tag string surfaces
+//!   [`HfConversionError::UnsupportedPostProcessor`].
 //!
 //! # Errors
 //!
@@ -161,10 +167,12 @@ pub struct HfTokenizerConfig {
     #[serde(default)]
     pub pre_tokenizer: Option<HfPreTokenizer>,
     /// The `"post_processor"` config, deserialised into a typed
-    /// [`HfPostProcessor`] value. Only
-    /// [`HfPostProcessor::TemplateProcessing`] is honoured at
-    /// conversion; every other tag string falls through to
-    /// [`HfPostProcessor::Other`] and produces
+    /// [`HfPostProcessor`] value. Honoured at conversion:
+    /// [`HfPostProcessor::TemplateProcessing`] (Llama / BERT shape)
+    /// and [`HfPostProcessor::ByteLevel`] (GPT-2 shape — see
+    /// [`PostProcessor::ByteLevel`] for the no-op-on-offsets
+    /// policy this crate applies). Every other tag string falls
+    /// through to [`HfPostProcessor::Other`] and produces
     /// [`HfConversionError::UnsupportedPostProcessor`].
     #[serde(default)]
     pub post_processor: Option<HfPostProcessor>,
@@ -729,9 +737,10 @@ pub enum HfNormalizer {
 
 /// The `post_processor` block of a `tokenizer.json` file.
 ///
-/// Only [`Self::TemplateProcessing`] is honoured at [`to_bpe_tokenizer`]
-/// time. Every other tag string falls through to [`Self::Other`] via
-/// serde's `#[serde(other)]` and surfaces
+/// Honoured at [`to_bpe_tokenizer`] time: [`Self::TemplateProcessing`]
+/// (Llama / BERT shape) and [`Self::ByteLevel`] (GPT-2 shape). Every
+/// other tag string falls through to [`Self::Other`] via serde's
+/// `#[serde(other)]` and surfaces
 /// [`HfConversionError::UnsupportedPostProcessor`].
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -740,8 +749,29 @@ pub enum HfPostProcessor {
     /// The Llama-shape template that injects BOS/EOS around the
     /// primary encoding. See [`TemplateProcessing`] for the semantics.
     TemplateProcessing(HfTemplateProcessing),
+    /// The GPT-2-shape `ByteLevel` post-processor. Every field has
+    /// an HF-canonical serde default (`add_prefix_space: true`,
+    /// `trim_offsets: true`, `use_regex: true`), so a bare `{"type":
+    /// "ByteLevel"}` blob deserialises to the GPT-2 baseline. The
+    /// three fields are captured verbatim on the parsed value;
+    /// see [`PostProcessor::ByteLevel`] for the no-op-on-encoding
+    /// policy this crate applies at process time.
+    ByteLevel {
+        /// Preserved for caller inspection. Not applied at process
+        /// time — see [`PostProcessor::ByteLevel::add_prefix_space`].
+        #[serde(default = "default_true")]
+        add_prefix_space: bool,
+        /// Preserved for caller inspection. Not applied — see
+        /// [`PostProcessor::ByteLevel::trim_offsets`].
+        #[serde(default = "default_true")]
+        trim_offsets: bool,
+        /// Preserved for caller inspection. Not applied — see
+        /// [`PostProcessor::ByteLevel::use_regex`].
+        #[serde(default = "default_true")]
+        use_regex: bool,
+    },
     /// Any other post-processor (`BertProcessing`,
-    /// `RobertaProcessing`, `ByteLevel`, `Sequence`, ...). Rejected at
+    /// `RobertaProcessing`, `Sequence`, ...). Rejected at
     /// conversion time.
     #[serde(other)]
     Other,
@@ -975,7 +1005,7 @@ pub enum HfConversionError {
     },
     /// The `post_processor` block used a variant this crate does not
     /// materialise yet (`BertProcessing`, `RobertaProcessing`,
-    /// `ByteLevel`, `Sequence`).
+    /// `Sequence`).
     UnsupportedPostProcessor {
         /// The `post_processor.type` string.
         type_name: String,
@@ -1059,8 +1089,8 @@ impl fmt::Display for HfConversionError {
             Self::UnsupportedPostProcessor { type_name } => write!(
                 f,
                 "unsupported HF post_processor type {type_name:?}: \
-                 this crate materialises only \"TemplateProcessing\" today \
-                 (BertProcessing/RobertaProcessing/ByteLevel/Sequence \
+                 this crate materialises \"TemplateProcessing\" and \
+                 \"ByteLevel\" (BertProcessing/RobertaProcessing/Sequence \
                  are deferred to later landings)"
             ),
             Self::TemplateSpecialTokenNotDeclared { name } => write!(
@@ -2203,6 +2233,15 @@ pub fn to_runtime_metaspace(pt: &HfPreTokenizer) -> Result<Metaspace, HfConversi
 /// appropriate deferred-feature error.
 fn to_runtime_post_processor(hp: &HfPostProcessor) -> Result<PostProcessor, HfConversionError> {
     match hp {
+        HfPostProcessor::ByteLevel {
+            add_prefix_space,
+            trim_offsets,
+            use_regex,
+        } => Ok(PostProcessor::ByteLevel {
+            add_prefix_space: *add_prefix_space,
+            trim_offsets: *trim_offsets,
+            use_regex: *use_regex,
+        }),
         HfPostProcessor::TemplateProcessing(tp) => {
             // Validate that every referenced special-token name is
             // declared in the template's own `special_tokens` map.
@@ -3486,6 +3525,203 @@ mod tests {
         assert!(matches!(
             err,
             HfConversionError::UnsupportedPostProcessor { .. }
+        ));
+    }
+
+    // ---------------------------------------------------------------------
+    // ByteLevel post-processor (GPT-2 shape).
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn bytelevel_post_processor_parses_typed_with_hf_defaults() {
+        // Bare `{"type": "ByteLevel"}` — every field defaults to the
+        // HF-canonical `true`.
+        let json = r#"{"type": "ByteLevel"}"#;
+        let hp: HfPostProcessor = serde_json::from_str(json).unwrap();
+        match hp {
+            HfPostProcessor::ByteLevel {
+                add_prefix_space,
+                trim_offsets,
+                use_regex,
+            } => {
+                assert!(add_prefix_space);
+                assert!(trim_offsets);
+                assert!(use_regex);
+            }
+            other => panic!("expected ByteLevel post-processor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bytelevel_post_processor_parses_typed_with_explicit_fields() {
+        // Real GPT-2 config carries `add_prefix_space: true,
+        // trim_offsets: false` on the post-processor. Verify both
+        // explicit shapes round-trip.
+        let json = r#"{
+            "type": "ByteLevel",
+            "add_prefix_space": true,
+            "trim_offsets": false
+        }"#;
+        let hp: HfPostProcessor = serde_json::from_str(json).unwrap();
+        match hp {
+            HfPostProcessor::ByteLevel {
+                add_prefix_space,
+                trim_offsets,
+                use_regex,
+            } => {
+                assert!(add_prefix_space);
+                assert!(!trim_offsets);
+                // `use_regex` is absent — serde default `true`.
+                assert!(use_regex);
+            }
+            other => panic!("expected ByteLevel post-processor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bytelevel_post_processor_materialises_as_runtime_variant() {
+        // Convert an inline GPT-2-shape config; the runtime tokenizer
+        // must carry the ByteLevel post-processor with the parsed
+        // fields preserved verbatim.
+        let json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false},
+            "post_processor": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
+                "trim_offsets": false
+            },
+            "decoder": {"type": "ByteLevel"},
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1, "Ġ": 2},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        match tok.post_processor() {
+            crate::post_processor::PostProcessor::ByteLevel {
+                add_prefix_space,
+                trim_offsets,
+                use_regex,
+            } => {
+                assert!(*add_prefix_space);
+                assert!(!*trim_offsets);
+                assert!(*use_regex);
+            }
+            other => panic!("expected ByteLevel runtime post-processor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bytelevel_post_processor_is_noop_end_to_end_gpt2_shape() {
+        // Full GPT-2-shape blob: ByteLevel pre-tokenizer +
+        // ByteLevel post-processor + ByteLevel decoder. Encoding
+        // "Hello, world!" must produce ids identical to the same
+        // blob with the post-processor omitted — the post-processor
+        // is a no-op on the encoding this crate ships. The vocab
+        // covers every byte-encoded piece the two chunks decompose
+        // to under the toy merges below.
+        let with_pp_json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false},
+            "post_processor": {"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": false},
+            "decoder": {"type": "ByteLevel"},
+            "model": {
+                "type": "BPE",
+                "vocab": {
+                    "H": 0, "e": 1, "l": 2, "o": 3, ",": 4,
+                    "Ġ": 5, "w": 6, "r": 7, "d": 8, "!": 9,
+                    "He": 10, "ll": 11, "Hell": 12, "Hello": 13,
+                    "Ġw": 14, "Ġwo": 15, "Ġwor": 16, "Ġworl": 17, "Ġworld": 18
+                },
+                "merges": [
+                    ["H", "e"], ["l", "l"], ["He", "ll"], ["Hell", "o"],
+                    ["Ġ", "w"], ["Ġw", "o"], ["Ġwo", "r"], ["Ġwor", "l"], ["Ġworl", "d"]
+                ]
+            }
+        }"#;
+        let without_pp_json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "ByteLevel", "add_prefix_space": false},
+            "decoder": {"type": "ByteLevel"},
+            "model": {
+                "type": "BPE",
+                "vocab": {
+                    "H": 0, "e": 1, "l": 2, "o": 3, ",": 4,
+                    "Ġ": 5, "w": 6, "r": 7, "d": 8, "!": 9,
+                    "He": 10, "ll": 11, "Hell": 12, "Hello": 13,
+                    "Ġw": 14, "Ġwo": 15, "Ġwor": 16, "Ġworl": 17, "Ġworld": 18
+                },
+                "merges": [
+                    ["H", "e"], ["l", "l"], ["He", "ll"], ["Hell", "o"],
+                    ["Ġ", "w"], ["Ġw", "o"], ["Ġwo", "r"], ["Ġwor", "l"], ["Ġworl", "d"]
+                ]
+            }
+        }"#;
+        let with_pp = to_bpe_tokenizer(&parse_tokenizer_json(with_pp_json).unwrap()).unwrap();
+        let without_pp = to_bpe_tokenizer(&parse_tokenizer_json(without_pp_json).unwrap()).unwrap();
+
+        // Hand-computed expected ids for "Hello, world!" under
+        // add_prefix_space=false on the pre-tokenizer:
+        //   "Hello" chunk → merges land it on id 13 ("Hello").
+        //   ","    chunk → id 4.
+        //   " world" chunk → merges land on id 18 ("Ġworld").
+        //   "!"    chunk → id 9.
+        let expected = alloc::vec![13, 4, 18, 9];
+        let with_ids = with_pp.encode("Hello, world!").unwrap().ids;
+        let without_ids = without_pp.encode("Hello, world!").unwrap().ids;
+        assert_eq!(with_ids, expected);
+        assert_eq!(with_ids, without_ids);
+        // count() also short-circuits on the ByteLevel arm.
+        assert_eq!(with_pp.count("Hello, world!").unwrap(), expected.len());
+    }
+
+    #[test]
+    fn bytelevel_post_processor_gpt2_full_config_loads() {
+        // Minimal GPT-2-shape blob mirroring the field layout of the
+        // real `gpt2/tokenizer.json`: ByteLevel pre-tokenizer with
+        // `add_prefix_space: false` and ByteLevel post-processor
+        // with `add_prefix_space: true` (the asymmetry HF's own
+        // pipeline carries — the pre-tokenizer's flag governs
+        // encoding, the post-processor's flag is inert). Before the
+        // ByteLevel post-processor landed, this config panicked at
+        // `to_bpe_tokenizer` time with UnsupportedPostProcessor.
+        let json = r#"{
+            "version": "1.0",
+            "added_tokens": [
+                {"id": 50256, "content": "<|endoftext|>", "special": true}
+            ],
+            "normalizer": null,
+            "pre_tokenizer": {
+                "type": "ByteLevel",
+                "add_prefix_space": false,
+                "trim_offsets": true
+            },
+            "post_processor": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
+                "trim_offsets": false
+            },
+            "decoder": {
+                "type": "ByteLevel",
+                "add_prefix_space": true,
+                "trim_offsets": true
+            },
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "Ġ": 1},
+                "merges": []
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        // The loader must accept the config without falling through
+        // to UnsupportedPostProcessor.
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert!(matches!(
+            tok.post_processor(),
+            crate::post_processor::PostProcessor::ByteLevel { .. }
         ));
     }
 

@@ -1,10 +1,16 @@
 //! Post-processing layer for the BPE tokenizer.
 //!
 //! Runs after the BPE encode loop and before the caller sees the
-//! [`Encoding`]. Today the module ships the `TemplateProcessing`
-//! variant — the shape every Llama-family checkpoint uses to inject
-//! `<s>` / `</s>` (or `<|begin_of_text|>` / `<|eot_id|>`) around a
-//! primary encoding — plus a `None` sentinel.
+//! [`Encoding`]. Today the module ships:
+//!
+//! * `TemplateProcessing` — the shape every Llama-family checkpoint
+//!   uses to inject `<s>` / `</s>` (or `<|begin_of_text|>` /
+//!   `<|eot_id|>`) around a primary encoding.
+//! * `ByteLevel` — HF's `ByteLevel` post-processor. Ships in every
+//!   GPT-2-family `tokenizer.json`. See the variant's docs for the
+//!   no-op-on-offsets policy this crate applies.
+//! * `None` — the identity sentinel used when the config omits the
+//!   `post_processor` slot.
 //!
 //! # `TemplateProcessing` semantics
 //!
@@ -34,10 +40,6 @@
 //! * `BertProcessing` — belongs with the `WordPiece` / BERT landing.
 //! * `RobertaProcessing` — needs SEP + CLS + offset shifting; wire it
 //!   up when a `RoBERTa` checkpoint asks for it.
-//! * `ByteLevel` — a post-processor that only trims offsets. The
-//!   encoding produced by [`crate::BpeTokenizer`] already carries offsets
-//!   into the byte-encoded space; the trim-offsets shim is a caller
-//!   concern.
 //! * `Sequence` — composition of multiple post-processors. The
 //!   `TemplateProcessing`-only pipeline covers every shipped Llama /
 //!   Mistral / Qwen shape today; add composition when a real checkpoint
@@ -135,6 +137,9 @@ pub struct TemplateProcessing {
 /// [`Self::None`] is the "identity" pass-through used when the config
 /// has no `post_processor` slot or when the caller explicitly opts
 /// out. [`Self::TemplateProcessing`] carries the Llama-shape template.
+/// [`Self::ByteLevel`] carries the GPT-2-shape offset-trim config
+/// (see the variant's docs for why it is a no-op on the encoding
+/// this crate ships).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum PostProcessor {
@@ -143,6 +148,58 @@ pub enum PostProcessor {
     None,
     /// The `TemplateProcessing` variant. See [`TemplateProcessing`].
     TemplateProcessing(TemplateProcessing),
+    /// The `ByteLevel` post-processor — the shape every GPT-2-family
+    /// `tokenizer.json` ships.
+    ///
+    /// # Semantics — and why this is a no-op today
+    ///
+    /// Hugging Face's own [`ByteLevel::process`] does exactly two
+    /// things at post-process time: **(1)** trim leading `Ġ`
+    /// characters from every token's *character-space* offset span
+    /// when [`Self::ByteLevel::trim_offsets`] is `true`; **(2)** leave
+    /// the token ids themselves unchanged. The `add_prefix_space`
+    /// field on this variant is preserved on-disk but **is not
+    /// consulted at process time**: HF's own pipeline threads the
+    /// prefix-space decision through the *pre-tokenizer* (the
+    /// `ByteLevel` pre-tokenizer's own `add_prefix_space` field), and
+    /// GPT-2's stock config famously carries `false` on the
+    /// pre-tokenizer and `true` on the post-processor without any
+    /// user-visible effect. The `use_regex` field is likewise inert
+    /// on the process-time path.
+    ///
+    /// [`crate::BpeTokenizer`]'s [`Encoding<TokenId>`](Encoding)
+    /// reports `offsets` as **byte** ranges into the (normalised)
+    /// input string, not character positions in the byte-encoded
+    /// stream — there are no `Ġ` characters to trim in that space.
+    /// The `ByteLevel` post-processor is therefore a pure no-op on
+    /// both `ids` and `offsets` in this crate's shape, and callers
+    /// who load a config with a `ByteLevel` post-processor observe
+    /// identical output to callers whose config omits it. The three
+    /// fields are preserved verbatim on the parsed value so callers
+    /// who round-trip through the config still see the source values.
+    ///
+    /// This policy — accept the config, encode identically — is what
+    /// unblocks GPT-2 `tokenizer.json` loads without imposing HF's
+    /// `NormalizedString` bookkeeping on the crate. Future auditors:
+    /// if a downstream consumer *does* start tracking character-space
+    /// offsets, this arm is where the trim would land.
+    ///
+    /// [`ByteLevel::process`]: https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/processors/byte_level.rs
+    ByteLevel {
+        /// Preserved for caller inspection; **not applied at
+        /// process time** (HF ignores this field on the post-processor
+        /// path — the pre-tokenizer's own `add_prefix_space` is what
+        /// governs the prefix behaviour end-to-end).
+        add_prefix_space: bool,
+        /// Preserved for caller inspection; not applied because this
+        /// crate reports byte offsets rather than character offsets,
+        /// so there are no `Ġ` characters in the offset space to
+        /// trim. See the variant-level docs.
+        trim_offsets: bool,
+        /// Preserved for caller inspection; not applied — HF's own
+        /// `process()` never consults this field either.
+        use_regex: bool,
+    },
 }
 
 impl PostProcessor {
@@ -177,7 +234,13 @@ impl PostProcessor {
             return encoding.clone();
         }
         match self {
-            Self::None => encoding.clone(),
+            // ByteLevel is a no-op on the encoding this crate ships;
+            // see the [`Self::ByteLevel`] variant docs for the
+            // rationale (byte-vs-character offsets, HF's own inert
+            // `add_prefix_space` handling on the post-processor path).
+            // Merged with the identity arm because the observable
+            // behaviour is identical.
+            Self::None | Self::ByteLevel { .. } => encoding.clone(),
             Self::TemplateProcessing(tp) => {
                 apply_template(&tp.single, &tp.special_tokens, encoding)
             }
@@ -368,6 +431,38 @@ mod tests {
         let enc = primary(&[7, 8]);
         let out = pp.apply(&enc, true);
         assert_eq!(out.ids, vec![7, 8]);
+    }
+
+    #[test]
+    fn byte_level_post_processor_is_noop_on_ids() {
+        // ByteLevel post-processor is a documented no-op on the ids
+        // this crate ships (offsets are byte-space, not char-space).
+        // The three fields are preserved on the value but do not
+        // touch the encoding at process time.
+        let pp = PostProcessor::ByteLevel {
+            add_prefix_space: false,
+            trim_offsets: true,
+            use_regex: true,
+        };
+        let enc = primary(&[10, 11, 12]);
+        let out = pp.apply(&enc, true);
+        assert_eq!(out.ids, vec![10, 11, 12]);
+        assert_eq!(out.offsets, enc.offsets);
+        assert_eq!(out.special_mask, enc.special_mask);
+    }
+
+    #[test]
+    fn byte_level_post_processor_ignores_add_special_tokens_toggle() {
+        // Both true and false must round-trip the encoding identically
+        // — the no-op contract does not depend on the flag.
+        let pp = PostProcessor::ByteLevel {
+            add_prefix_space: true,
+            trim_offsets: false,
+            use_regex: true,
+        };
+        let enc = primary(&[7, 8, 9]);
+        assert_eq!(pp.apply(&enc, true).ids, vec![7, 8, 9]);
+        assert_eq!(pp.apply(&enc, false).ids, vec![7, 8, 9]);
     }
 
     #[test]
