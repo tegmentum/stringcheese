@@ -1374,21 +1374,29 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
 ///   `continuing_subword_prefix` / `max_input_chars_per_word` fields
 ///   are honoured verbatim.
 ///
-/// **Deferred** ancillary features (parse but reject at conversion):
+/// Ancillary features applied on top of the parsed model:
 ///
 /// * `normalizer` — most `WordPiece` checkpoints ship a
 ///   `BertNormalizer` (lower-case + accent strip + Chinese-char
 ///   handling). The runtime materialises it (see
-///   [`Normalizer::Bert`]), but the [`crate::wordpiece::WordPieceTokenizer`]
-///   surface does not yet carry a normalizer slot, so the parsed
-///   normalizer is validated and then discarded. NFC / NFD / NFKC /
-///   NFKD (and `BertNormalizer` itself) are treated the same way
-///   today — the value is honoured on the type side but not applied
-///   at encode time.
+///   [`Normalizer::Bert`]) and attaches it to the produced
+///   [`crate::wordpiece::WordPieceTokenizer`] via
+///   [`crate::wordpiece::WordPieceTokenizer::with_normalizer`], so
+///   `encode` runs `normalize -> pre-tokenize -> WordPiece` end to
+///   end. NFC / NFD / NFKC / NFKD / Lowercase / Strip / Prepend /
+///   `Replace(String)` / their `Sequence` composition are honoured
+///   the same way; deferred variants (`Replace(Regex)`, `Nmt`, ...)
+///   surface [`HfConversionError::UnsupportedNormalizer`].
 /// * `post_processor` — `WordPiece` checkpoints usually ship
 ///   `TemplateProcessing` (for `[CLS]` / `[SEP]`); that shape is
-///   honoured verbatim. Deferred variants (`BertProcessing`, etc.)
+///   honoured verbatim and attached via
+///   [`crate::wordpiece::WordPieceTokenizer::with_post_processor`],
+///   so the templated ids appear on the encoding this function's
+///   caller receives. Deferred variants (`BertProcessing`, etc.)
 ///   surface [`HfConversionError::UnsupportedPostProcessor`].
+///
+/// **Deferred** ancillary features (parse but reject at conversion):
+///
 /// * `decoder` — the raw config is preserved on
 ///   [`HfTokenizerConfig::decoder`] for caller inspection but not
 ///   applied; `WordPieceDecoder` semantics live inside
@@ -1489,30 +1497,28 @@ pub fn to_wordpiece_tokenizer(
     let pre = extract_wordpiece_pre_tokenizer(config.pre_tokenizer.as_ref())?;
     tok = tok.with_pre_tokenizer(pre);
 
-    // Normalizer routing — the shared to_runtime_normalizer honours
-    // NFC / NFD / NFKC / NFKD / Lowercase / Strip / Prepend /
-    // Replace(String) / BertNormalizer / their Sequence composition.
-    // Everything else surfaces as UnsupportedNormalizer.
-    //
-    // The runtime `WordPieceTokenizer` does not carry a normalizer
-    // slot today (its `encode` operates on the raw input), so a
-    // config that carries an honoured normalizer is currently
-    // accepted-but-not-applied. Reject anything more surprising than
-    // that to keep the trap door tight.
+    // Normalizer — runs before the pre-tokenizer at encode time. The
+    // shared `to_runtime_normalizer` honours NFC / NFD / NFKC / NFKD /
+    // Lowercase / Strip / Prepend / Replace(String) / BertNormalizer /
+    // their Sequence composition; everything else surfaces as
+    // `UnsupportedNormalizer`. Mirrors `to_bpe_tokenizer`'s wiring —
+    // the runtime `WordPieceTokenizer` now carries a normalizer slot,
+    // so the parsed value is attached and applied end-to-end.
     if let Some(hn) = &config.normalizer {
-        // Reject deferred variants explicitly; ignore the honoured
-        // ones since we cannot apply them on the WordPiece side yet.
-        let _ = to_runtime_normalizer(hn)?;
+        let n = to_runtime_normalizer(hn)?;
+        tok = tok.with_normalizer(n);
     }
 
-    // Post-processor: TemplateProcessing is honoured (the shape every
-    // BERT-family checkpoint uses for `[CLS]` / `[SEP]`). The
-    // WordPiece runtime does not carry a post-processor slot today —
-    // if a caller needs the templated encoding they can drive the
-    // splice themselves against the produced ids using
-    // `HfPostProcessor::TemplateProcessing`.
+    // Post-processor — runs on the finished encoding before it leaves
+    // `encode`. `TemplateProcessing` is honoured (the shape every
+    // BERT-family checkpoint uses for `[CLS]` / `[SEP]`); every other
+    // variant surfaces as `UnsupportedPostProcessor`. Mirrors
+    // `to_bpe_tokenizer` — the runtime `WordPieceTokenizer` now
+    // carries a post-processor slot, so the parsed value is attached
+    // and applied end-to-end.
     if let Some(hp) = &config.post_processor {
-        let _ = to_runtime_post_processor(hp)?;
+        let pp = to_runtime_post_processor(hp)?;
+        tok = tok.with_post_processor(pp);
     }
 
     Ok(tok)
@@ -3647,8 +3653,10 @@ mod tests {
         let config = parse_tokenizer_json(BERT_JSON).unwrap();
         let tok = to_wordpiece_tokenizer(&config).unwrap();
         // Canonical WordPiece reference: "unaffable" → ["un", "##aff",
-        // "##able"] → [200, 201, 202].
-        assert_eq!(tok.encode("unaffable"), vec![200, 201, 202]);
+        // "##able"] → [200, 201, 202]. BERT_JSON's TemplateProcessing
+        // splices `[CLS]` (101) before and `[SEP]` (102) after — the
+        // BERT-parity wire-up is applied end-to-end.
+        assert_eq!(tok.encode("unaffable"), vec![101, 200, 201, 202, 102]);
     }
 
     #[test]
@@ -3656,8 +3664,12 @@ mod tests {
         let config = parse_tokenizer_json(BERT_JSON).unwrap();
         let tok = to_wordpiece_tokenizer(&config).unwrap();
         // "Hello, world!" via BertPreTokenizer → ["Hello", ",",
-        // "world", "!"] → [207, 205, 208, 206].
-        assert_eq!(tok.encode("Hello, world!"), vec![207, 205, 208, 206]);
+        // "world", "!"] → [207, 205, 208, 206], wrapped by
+        // BERT_JSON's `[CLS]` / `[SEP]` template processor.
+        assert_eq!(
+            tok.encode("Hello, world!"),
+            vec![101, 207, 205, 208, 206, 102]
+        );
     }
 
     #[test]
@@ -3666,8 +3678,9 @@ mod tests {
         let tok = to_wordpiece_tokenizer(&config).unwrap();
         // "xyz" is not in the vocab and no ## prefix decomposition
         // works. WordPiece is all-or-nothing on a word → emit UNK id
-        // (100).
-        assert_eq!(tok.encode("xyz"), vec![100]);
+        // (100). BERT_JSON's TemplateProcessing wraps that in
+        // `[CLS]` / `[SEP]`.
+        assert_eq!(tok.encode("xyz"), vec![101, 100, 102]);
     }
 
     #[test]
@@ -3699,10 +3712,13 @@ mod tests {
         let tok = to_wordpiece_tokenizer(&config).unwrap();
         // Round-trip: encode then decode. Whitespace collapses to
         // single spaces (documented lossy behaviour); the words
-        // themselves survive verbatim.
+        // themselves survive verbatim. `[CLS]` and `[SEP]` come from
+        // the BERT_JSON template processor and are decoded back as
+        // their surface strings.
         let ids = tok.encode("unaffable cat dog");
+        assert_eq!(ids, vec![101, 200, 201, 202, 203, 204, 102]);
         let text = tok.decode(&ids).unwrap();
-        assert_eq!(text, "unaffable cat dog");
+        assert_eq!(text, "[CLS] unaffable cat dog [SEP]");
     }
 
     #[test]
@@ -3809,11 +3825,10 @@ mod tests {
 
     #[test]
     fn to_wordpiece_tokenizer_accepts_bert_normalizer() {
-        // Wave-12: BertNormalizer is a first-class variant on the
-        // typed side. The `WordPieceTokenizer` still does not carry a
-        // normalizer slot, so the parsed normalizer is validated and
-        // then discarded — the conversion succeeds and produces a
-        // usable tokenizer.
+        // BertNormalizer is a first-class variant on the typed side
+        // and is now attached to the runtime tokenizer — verify the
+        // conversion succeeds and that the normalizer is stored on
+        // the produced tokenizer.
         let json = r#"{
             "added_tokens": [],
             "normalizer": {
@@ -3832,10 +3847,13 @@ mod tests {
             &config.normalizer,
             Some(HfNormalizer::BertNormalizer { .. })
         ));
-        // Conversion succeeds — the normalizer is honoured on the
-        // type side even though the WordPiece runtime does not apply
-        // it yet.
-        to_wordpiece_tokenizer(&config).expect("BertNormalizer must materialise");
+        let tok = to_wordpiece_tokenizer(&config).expect("BertNormalizer must materialise");
+        // The normalizer is attached to the runtime tokenizer and
+        // consulted by `encode`.
+        assert!(matches!(
+            tok.normalizer(),
+            Some(crate::normalizer::Normalizer::Bert { .. })
+        ));
     }
 
     #[test]
@@ -3844,7 +3862,9 @@ mod tests {
         let tok = to_tokenizer(&config).unwrap();
         match tok {
             HfTokenizer::WordPiece(wp) => {
-                assert_eq!(wp.encode("unaffable"), vec![200, 201, 202]);
+                // BERT_JSON's TemplateProcessing splices `[CLS]` (101)
+                // before and `[SEP]` (102) after the primary encoding.
+                assert_eq!(wp.encode("unaffable"), vec![101, 200, 201, 202, 102]);
             }
             other => panic!("expected HfTokenizer::WordPiece, got {other:?}"),
         }
@@ -3907,11 +3927,9 @@ mod tests {
     #[test]
     fn bert_shape_end_to_end_with_special_tokens_and_bert_pre_tokenizer() {
         // Full BERT-shape blob (BERT_JSON): WordPiece + BertPreTokenizer
-        // + TemplateProcessing. The runtime WordPieceTokenizer doesn't
-        // apply the post-processor itself today (that lives on
-        // BpeTokenizer for now), but the config parses and the model
-        // materialises. Verify the parsed post_processor is honoured
-        // shape-wise and that raw encoding still works.
+        // + TemplateProcessing. Verify the parsed post_processor is
+        // honoured shape-wise and that the runtime tokenizer now
+        // applies the template-processing splice end-to-end.
         let config = parse_tokenizer_json(BERT_JSON).unwrap();
         assert!(matches!(
             config.post_processor,
@@ -3923,10 +3941,94 @@ mod tests {
         ));
         let tok = to_wordpiece_tokenizer(&config).unwrap();
         // BERT-style input, encoded via the WordPiece model + Bert
-        // pre-tokenizer. The template-processing splice ([CLS] / [SEP])
-        // is *not* applied on the WordPiece path today; a caller who
-        // wants it can splice manually against the parsed template.
+        // pre-tokenizer. The template-processing splice `[CLS]` (101)
+        // + primary + `[SEP]` (102) is applied end-to-end.
         let ids = tok.encode("Hello, world!");
-        assert_eq!(ids, vec![207, 205, 208, 206]);
+        assert_eq!(ids, vec![101, 207, 205, 208, 206, 102]);
+    }
+
+    /// A minimal BERT-like `tokenizer.json` that exercises both slots
+    /// this landing wires up: `BertNormalizer` (lowercase + accent
+    /// strip) and `TemplateProcessing` (`[CLS]` / `[SEP]`). The vocab
+    /// is deliberately lowercased and accent-stripped so the
+    /// normalizer is load-bearing — without it, mixed-case /
+    /// accented input would miss the vocab.
+    const BERT_NORMALIZED_JSON: &str = r###"{
+        "version": "1.0",
+        "added_tokens": [
+            {"id": 0, "content": "[UNK]", "special": true},
+            {"id": 1, "content": "[CLS]", "special": true},
+            {"id": 2, "content": "[SEP]", "special": true}
+        ],
+        "normalizer": {
+            "type": "BertNormalizer",
+            "clean_text": true,
+            "handle_chinese_chars": true,
+            "strip_accents": true,
+            "lowercase": true
+        },
+        "pre_tokenizer": {"type": "BertPreTokenizer"},
+        "post_processor": {
+            "type": "TemplateProcessing",
+            "single": [
+                {"SpecialToken": {"id": "[CLS]", "type_id": 0}},
+                {"Sequence": {"id": "A", "type_id": 0}},
+                {"SpecialToken": {"id": "[SEP]", "type_id": 0}}
+            ],
+            "pair": [],
+            "special_tokens": {
+                "[CLS]": {"id": "[CLS]", "ids": [1], "tokens": ["[CLS]"]},
+                "[SEP]": {"id": "[SEP]", "ids": [2], "tokens": ["[SEP]"]}
+            }
+        },
+        "model": {
+            "type": "WordPiece",
+            "unk_token": "[UNK]",
+            "continuing_subword_prefix": "##",
+            "max_input_chars_per_word": 100,
+            "vocab": {
+                "[UNK]": 0,
+                "[CLS]": 1,
+                "[SEP]": 2,
+                "hello": 3,
+                "world": 4,
+                "cafe": 5,
+                ",": 6,
+                "!": 7
+            }
+        }
+    }"###;
+
+    #[test]
+    fn hf_loader_wires_normalizer_and_post_processor_end_to_end() {
+        // Prove the loader now attaches BOTH slots and the encode
+        // pipeline runs them in HF's canonical order:
+        //   normalize -> pre-tokenize -> WordPiece -> post-process.
+        let config = parse_tokenizer_json(BERT_NORMALIZED_JSON).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        let wp = match tok {
+            HfTokenizer::WordPiece(wp) => wp,
+            other => panic!("expected HfTokenizer::WordPiece, got {other:?}"),
+        };
+        // Sanity: both slots are attached to the runtime tokenizer.
+        assert!(matches!(
+            wp.normalizer(),
+            Some(crate::normalizer::Normalizer::Bert { .. })
+        ));
+        assert!(matches!(
+            wp.post_processor(),
+            crate::post_processor::PostProcessor::TemplateProcessing(_)
+        ));
+
+        // Hand-computed expected sequence for "Hello, world!":
+        //   BertNormalizer -> "hello, world!"   (lowercase)
+        //   BertPreTokenizer -> ["hello", ",", "world", "!"]
+        //   WordPiece lookup -> [3, 6, 4, 7]
+        //   TemplateProcessing -> [1, 3, 6, 4, 7, 2]
+        assert_eq!(wp.encode("Hello, world!"), vec![1, 3, 6, 4, 7, 2]);
+
+        // Accented input traverses the strip_accents pass too:
+        // "CAFÉ" -> "cafe" -> [5] -> [1, 5, 2].
+        assert_eq!(wp.encode("CAFÉ"), vec![1, 5, 2]);
     }
 }
