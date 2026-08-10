@@ -27,9 +27,12 @@
 //! * [`Normalizer::Lowercase`] — Unicode-aware lower-casing via
 //!   [`str::to_lowercase`] (which walks each scalar's
 //!   `Lowercase_Mapping` and is what HF's Rust normalizer calls into).
-//! * [`Normalizer::Replace`] — literal-string substitution. HF's spec
-//!   also supports regex patterns; the regex form is deferred (see
-//!   the module-level "Deferred" list).
+//! * [`Normalizer::Replace`] — literal-string substitution.
+//! * [`Normalizer::ReplaceRegex`] — regex-driven substitution.
+//!   Pattern is a `fancy-regex` source string, compiled on each
+//!   [`normalize`] call. Materialises `Replace { pattern: Regex(...) }`
+//!   entries from `tokenizer.json` blobs (the SentencePiece-conversion
+//!   pipeline used by DeBERTa-v3 / mDeBERTa-v3 ships one).
 //! * [`Normalizer::Strip`] — trims leading and/or trailing whitespace,
 //!   independently controllable on each side.
 //! * [`Normalizer::Prepend`] — prepends a fixed literal to the input.
@@ -58,9 +61,6 @@
 //! # Deferred variants
 //!
 //! * `Nmt` — the Marian NMT normalizer.
-//! * `Replace` with a `Regex` pattern (rather than a literal). Callers
-//!   who need this can approximate with a `Sequence` of literal
-//!   `Replace` steps for now.
 //! * Custom callable normalizers.
 //!
 //! Deferred variants surface at [`crate::hf::to_bpe_tokenizer`] time as
@@ -70,6 +70,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use fancy_regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::canonical_combining_class;
 
@@ -103,6 +104,43 @@ pub enum Normalizer {
         /// right, non-overlapping.
         pattern: String,
         /// The string to substitute for every match.
+        content: String,
+    },
+    /// Regex-driven substitution: every non-overlapping match of
+    /// [`Self::ReplaceRegex::pattern`] (compiled as a `fancy-regex`
+    /// regular expression) is replaced with
+    /// [`Self::ReplaceRegex::content`].
+    ///
+    /// # Runtime behaviour
+    ///
+    /// The pattern is compiled on every call to [`normalize`]. That
+    /// is convenient for a variant whose value is typically constructed
+    /// from a `tokenizer.json` blob (compile-once amortises poorly when
+    /// the runtime `Normalizer` value is dropped after a single encode
+    /// or when the caller ships several distinct patterns); callers who
+    /// want the compile cost hoisted out of a hot encode loop should
+    /// build a `fancy_regex::Regex` themselves and drive it directly.
+    ///
+    /// A pattern that fails to compile causes [`normalize`] to fall
+    /// back to passthrough — the same "infallible runtime" contract
+    /// [`Self::Precompiled`] uses for a malformed base64 payload.
+    /// Callers that want to fail fast on a bad pattern should validate
+    /// via `fancy_regex::Regex::new` before materialising the variant.
+    ///
+    /// The `content` string is used verbatim; `fancy-regex` capture
+    /// group references (`$1`, `${name}`) are **not** interpreted —
+    /// this matches Hugging Face's own `Replace` normalizer, which
+    /// also does a literal substitution of the whole matched region.
+    /// An empty pattern (`""`) matches at every position and would
+    /// interleave `content` between every character; this is what
+    /// the underlying regex engine reports, and no special-cased
+    /// early return is taken for it.
+    ReplaceRegex {
+        /// The regex source, in `fancy-regex` dialect. Recompiled on
+        /// every call to [`normalize`].
+        pattern: String,
+        /// The literal string to substitute for every match. Capture
+        /// group back-references are not interpreted.
         content: String,
     },
     /// Trim runs of ASCII / Unicode whitespace from the input.
@@ -252,6 +290,7 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
             out.push_str(rest);
             out
         }
+        Normalizer::ReplaceRegex { pattern, content } => replace_regex(text, pattern, content),
         Normalizer::Strip { left, right } => match (*left, *right) {
             (true, true) => text.trim().into(),
             (true, false) => text.trim_start().into(),
@@ -325,6 +364,61 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
             cur
         }
     }
+}
+
+/// Apply a `fancy-regex` pattern to `text`, replacing every
+/// non-overlapping match with `content`.
+///
+/// The pattern is compiled on every call — see
+/// [`Normalizer::ReplaceRegex`] for the rationale. A pattern that
+/// fails to compile, or a runtime match error mid-iteration, produces
+/// a passthrough (the accumulated output up to the failure, plus the
+/// remainder of the input verbatim). This matches the "infallible
+/// runtime" contract [`Normalizer::Precompiled`] uses for a malformed
+/// charsmap payload.
+fn replace_regex(text: &str, pattern: &str, content: &str) -> String {
+    let Ok(re) = Regex::new(pattern) else {
+        return text.into();
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    for m in re.find_iter(text) {
+        let Ok(m) = m else {
+            // Mid-iteration engine error: fall back to appending the
+            // rest of the input verbatim, preserving whatever
+            // substitutions ran cleanly before the failure.
+            break;
+        };
+        // `fancy-regex` can report zero-length matches (e.g. from
+        // patterns like `""` or `\b`). Advance past them by one byte
+        // so the loop terminates; append the raw content once at the
+        // match position to mirror upstream's substitute-then-advance
+        // behaviour on a zero-width hit.
+        let start = m.start();
+        let end = m.end();
+        if start < cursor {
+            // Overlapping match — `fancy-regex` should never emit
+            // one, but if it does, skip rather than double-copy.
+            continue;
+        }
+        out.push_str(&text[cursor..start]);
+        out.push_str(content);
+        cursor = end;
+        if end == start {
+            // Zero-width match: step one Unicode scalar forward so
+            // the driver makes progress. Copy the character we
+            // stepped over into the output so the input's characters
+            // survive.
+            if let Some(ch) = text[cursor..].chars().next() {
+                out.push(ch);
+                cursor += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+    }
+    out.push_str(&text[cursor..]);
+    out
 }
 
 /// BERT's `clean_text` pass.
@@ -532,6 +626,91 @@ mod tests {
             content: "X".to_string(),
         };
         assert_eq!(normalize("abc", &n), "abc");
+    }
+
+    #[test]
+    fn replace_regex_collapses_whitespace_runs() {
+        // Canonical simple use — collapse any run of Unicode
+        // whitespace to a single ASCII space.
+        let n = Normalizer::ReplaceRegex {
+            pattern: r"\s+".to_string(),
+            content: " ".to_string(),
+        };
+        assert_eq!(normalize("a  b\t\tc\n\nd", &n), "a b c d");
+    }
+
+    #[test]
+    fn replace_regex_deberta_v3_double_space_pattern() {
+        // The exact SentencePiece-conversion pattern DeBERTa-v3 and
+        // mDeBERTa-v3 ship: replace any run of two or more ASCII
+        // spaces with a single ASCII space. Verified against the
+        // upstream `transformers.convert_slow_tokenizer` output.
+        let n = Normalizer::ReplaceRegex {
+            pattern: r" {2,}".to_string(),
+            content: " ".to_string(),
+        };
+        assert_eq!(normalize("hello    world", &n), "hello world");
+        // Runs of length one are left alone.
+        assert_eq!(normalize("hello world", &n), "hello world");
+        // Interior and terminal runs both collapse.
+        assert_eq!(normalize("a   b   ", &n), "a b ");
+    }
+
+    #[test]
+    fn replace_regex_with_no_matches_passes_through() {
+        let n = Normalizer::ReplaceRegex {
+            pattern: r"\d+".to_string(),
+            content: "N".to_string(),
+        };
+        assert_eq!(normalize("hello world", &n), "hello world");
+    }
+
+    #[test]
+    fn replace_regex_replaces_multiple_matches() {
+        let n = Normalizer::ReplaceRegex {
+            pattern: r"\d+".to_string(),
+            content: "N".to_string(),
+        };
+        assert_eq!(normalize("a12b34c5", &n), "aNbNcN");
+    }
+
+    #[test]
+    fn replace_regex_content_is_literal_not_a_template() {
+        // Capture-group back-references (`$1`) are not interpreted —
+        // they are emitted verbatim, matching HF's own `Replace`
+        // behaviour.
+        let n = Normalizer::ReplaceRegex {
+            pattern: r"(\d)".to_string(),
+            content: "<$1>".to_string(),
+        };
+        assert_eq!(normalize("a1b2", &n), "a<$1>b<$1>");
+    }
+
+    #[test]
+    fn replace_regex_invalid_pattern_falls_back_to_passthrough() {
+        // A syntactically invalid pattern should not panic — the
+        // runtime returns the input verbatim, matching the
+        // Precompiled variant's malformed-payload contract.
+        let n = Normalizer::ReplaceRegex {
+            pattern: r"[unterminated".to_string(),
+            content: "X".to_string(),
+        };
+        assert_eq!(normalize("hello", &n), "hello");
+    }
+
+    #[test]
+    fn replace_regex_composes_inside_sequence() {
+        // The DeBERTa-v3 normalizer stack starts with a `Replace`
+        // step; verify the ReplaceRegex variant composes correctly
+        // when wrapped in a Sequence with another step.
+        let n = Normalizer::Sequence(vec![
+            Normalizer::ReplaceRegex {
+                pattern: r" {2,}".to_string(),
+                content: " ".to_string(),
+            },
+            Normalizer::Lowercase,
+        ]);
+        assert_eq!(normalize("HELLO    WORLD", &n), "hello world");
     }
 
     #[test]
