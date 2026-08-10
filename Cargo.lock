@@ -1468,6 +1468,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "dhat",
+ "stringcheese-cdc",
  "stringcheese-collate",
  "stringcheese-compare",
  "stringcheese-core",

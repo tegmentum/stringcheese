@@ -43,6 +43,10 @@ stringcheese-escape = { workspace = true, features = ["std"] }
 stringcheese-textsplit = { workspace = true, features = ["std"] }
 stringcheese-normalize = { workspace = true, features = ["std"] }
 stringcheese-ident = { workspace = true, features = ["std"] }
+# CDC + rolling-hash fingerprints. `simd` opts into the arch-gated
+# `digest_of_slice` backends the CDC bench measures — the bench crate
+# is publish = false, so opting in here does not affect downstream.
+stringcheese-cdc = { workspace = true, features = ["std", "simd"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }
@@ -145,6 +149,15 @@ harness = false
 # costs vs in-house are directly comparable.
 [[bench]]
 name = "ident"
+harness = false
+
+# CDC + rolling-hash fingerprints — FastCDC boundary throughput at
+# two paper-derived configs, plus the four rolling-hash slice-batch
+# entry points and the per-byte trait-driven Gear-hash loop. The
+# fingerprint benches exercise whichever SIMD backend the dispatcher
+# picks (AVX2 / SSE2 on x86_64, NEON on aarch64, SIMD128 on wasm32).
+[[bench]]
+name = "cdc"
 harness = false
 
 # Allocation-report binaries. Each one is gated on the `alloc-tracking`
