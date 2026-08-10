@@ -431,6 +431,190 @@ impl Default for Metaspace {
 }
 
 // ---------------------------------------------------------------------
+// PreTokenizer runtime enum + composed Sequence.
+// ---------------------------------------------------------------------
+
+/// One runtime pre-tokenizer step.
+///
+/// This is the type the HF loader materialises when a `tokenizer.json`
+/// declares a `pre_tokenizer` sub-tree that the Unigram runtime knows
+/// how to drive. Each variant corresponds to a Hugging Face
+/// `pre_tokenizer` tag:
+///
+/// * [`Self::WhitespaceSplit`] — HF `WhitespaceSplit`. Splits the input
+///   on runs of Unicode whitespace, dropping the whitespace between
+///   pieces. Adjacent whitespace runs collapse: `"a   b"` yields
+///   `["a", "b"]`, not `["a", "", "", "b"]`.
+/// * [`Self::Metaspace`] — HF `Metaspace`. See [`Metaspace`] for the
+///   `SentencePiece`-style substitution and split policy.
+///
+/// New variants may be added over time; the enum is `#[non_exhaustive]`
+/// so external `match` sites must include a wildcard arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PreTokenizer {
+    /// HF `WhitespaceSplit`. Split on runs of Unicode whitespace.
+    /// Whitespace is dropped between the emitted pieces.
+    WhitespaceSplit,
+    /// HF `Metaspace`. See [`Metaspace`] for the details.
+    Metaspace(Metaspace),
+}
+
+impl PreTokenizer {
+    /// Apply this single stage to `text`.
+    ///
+    /// Returns the ordered pieces the stage produces. An empty input is
+    /// permitted; every stage documents its own empty-input behaviour
+    /// (both current variants return an empty `Vec`).
+    #[must_use]
+    pub fn apply(&self, text: &str) -> Vec<String> {
+        match self {
+            Self::WhitespaceSplit => {
+                if text.is_empty() {
+                    return Vec::new();
+                }
+                text.split_whitespace().map(String::from).collect()
+            }
+            Self::Metaspace(m) => m.apply(text),
+        }
+    }
+}
+
+impl From<Metaspace> for PreTokenizer {
+    fn from(m: Metaspace) -> Self {
+        Self::Metaspace(m)
+    }
+}
+
+/// An ordered sequence of [`PreTokenizer`] stages, applied left-to-right.
+///
+/// This is the runtime shape the Unigram tokenizer holds internally so
+/// that a Hugging Face `pre_tokenizer: Sequence[...]` block (in
+/// particular `Sequence[WhitespaceSplit, Metaspace]`, which
+/// xlm-roberta-base ships) can be honoured directly. Each stage
+/// receives the pieces produced by the previous stage and applies its
+/// own [`PreTokenizer::apply`] independently; the results are flattened
+/// in order.
+///
+/// A single-entry sequence is semantically identical to running the
+/// wrapped stage directly, so
+/// `PreTokenizerSequence::from(Metaspace::new())` behaves exactly like
+/// the pre-composition `Option<Metaspace>` field used to (a plain
+/// Metaspace on the whole input).
+///
+/// # Composition example
+///
+/// The composition of `WhitespaceSplit` followed by `Metaspace` is what
+/// makes runs of whitespace collapse in xlm-roberta-base's tokenizer:
+///
+/// ```
+/// use stringcheese_tokenizer_hf::{Metaspace, PreTokenizer, PreTokenizerSequence};
+///
+/// let seq = PreTokenizerSequence::new(vec![
+///     PreTokenizer::WhitespaceSplit,
+///     PreTokenizer::Metaspace(Metaspace::new()),
+/// ]);
+/// // Three interior spaces would produce `["▁hello", "▁", "▁", "▁world"]`
+/// // under Metaspace alone; the WhitespaceSplit stage first collapses
+/// // the run so the Metaspace stage only sees one word at a time.
+/// assert_eq!(
+///     seq.apply("hello   world"),
+///     vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()],
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PreTokenizerSequence {
+    stages: Vec<PreTokenizer>,
+}
+
+impl PreTokenizerSequence {
+    /// Wrap the given stages, in order.
+    ///
+    /// An empty sequence is permitted; [`Self::apply`] then returns the
+    /// input as a single-element `Vec` (or an empty `Vec` for an empty
+    /// input) — matching the "no pre-tokenizer" behaviour a caller who
+    /// never wired one up would already see.
+    #[must_use]
+    pub const fn new(stages: Vec<PreTokenizer>) -> Self {
+        Self { stages }
+    }
+
+    /// Borrow the ordered stages.
+    #[must_use]
+    pub fn stages(&self) -> &[PreTokenizer] {
+        &self.stages
+    }
+
+    /// `true` if the sequence has no stages configured — in which case
+    /// [`Self::apply`] is an identity on non-empty input.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.stages.is_empty()
+    }
+
+    /// Apply every stage in left-to-right order.
+    ///
+    /// Stage 0 receives `text` as a single piece; each subsequent stage
+    /// receives the flattened output of the previous stage's `apply`
+    /// call on each of the current pieces. This is the composition rule
+    /// Hugging Face's `Sequence` pre-tokenizer follows.
+    ///
+    /// An empty input flows through the identity path (an empty
+    /// starting piece list) and yields an empty `Vec`; every stage's
+    /// own empty-input semantics still applies to intermediate empties.
+    #[must_use]
+    pub fn apply(&self, text: &str) -> Vec<String> {
+        if self.stages.is_empty() {
+            if text.is_empty() {
+                return Vec::new();
+            }
+            return alloc::vec![text.to_string()];
+        }
+        let mut current: Vec<String> = alloc::vec![text.to_string()];
+        for stage in &self.stages {
+            let mut next: Vec<String> = Vec::with_capacity(current.len());
+            for piece in &current {
+                next.extend(stage.apply(piece));
+            }
+            current = next;
+        }
+        current
+    }
+
+    /// Return the first [`Metaspace`] stage in the sequence, if any.
+    ///
+    /// Used by the Unigram decoder to reverse the `▁ → ' '`
+    /// substitution introduced at encode time: whichever stage owns the
+    /// replacement character is the one that has to be inverted at
+    /// decode. Every real `SentencePiece`-descended checkpoint carries
+    /// at most one Metaspace stage per sequence, so returning the first
+    /// match matches every configuration we have seen in practice.
+    #[must_use]
+    pub fn metaspace(&self) -> Option<&Metaspace> {
+        self.stages.iter().find_map(|s| match s {
+            PreTokenizer::Metaspace(m) => Some(m),
+            _ => None,
+        })
+    }
+}
+
+impl From<Metaspace> for PreTokenizerSequence {
+    /// Build a single-stage sequence wrapping the given [`Metaspace`].
+    /// Preserves backward compatibility with the pre-composition
+    /// `with_pre_tokenizer(Metaspace)` builder shape.
+    fn from(m: Metaspace) -> Self {
+        Self::new(alloc::vec![PreTokenizer::Metaspace(m)])
+    }
+}
+
+impl From<PreTokenizer> for PreTokenizerSequence {
+    /// Build a single-stage sequence wrapping the given [`PreTokenizer`].
+    fn from(p: PreTokenizer) -> Self {
+        Self::new(alloc::vec![p])
+    }
+}
+
+// ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
 
@@ -743,5 +927,138 @@ mod tests {
             ms.apply("hello world"),
             vec!["_hello".to_string(), "_world".to_string()]
         );
+    }
+
+    // ---------------------------------------------------------------
+    // PreTokenizer / PreTokenizerSequence
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn whitespace_split_stage_splits_on_whitespace_runs() {
+        let stage = PreTokenizer::WhitespaceSplit;
+        assert_eq!(stage.apply("a b"), vec!["a".to_string(), "b".to_string()]);
+        // Multi-space runs collapse; leading / trailing runs are
+        // dropped.
+        assert_eq!(
+            stage.apply("  hello   world  "),
+            vec!["hello".to_string(), "world".to_string()]
+        );
+        // Empty input yields nothing (matches HF `WhitespaceSplit`).
+        assert!(stage.apply("").is_empty());
+        // Whitespace-only input yields nothing.
+        assert!(stage.apply("   ").is_empty());
+    }
+
+    #[test]
+    fn metaspace_stage_delegates_to_metaspace_apply() {
+        let stage = PreTokenizer::Metaspace(Metaspace::new());
+        assert_eq!(
+            stage.apply("hello world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_sequence_is_identity_on_non_empty_input() {
+        let seq = PreTokenizerSequence::default();
+        assert_eq!(seq.apply("abc"), vec!["abc".to_string()]);
+        assert!(seq.apply("").is_empty());
+    }
+
+    #[test]
+    fn single_metaspace_sequence_matches_bare_metaspace() {
+        // The From<Metaspace> impl is the backward-compat bridge: a
+        // sequence wrapping just Metaspace produces the same pieces as
+        // driving Metaspace::apply directly.
+        let seq: PreTokenizerSequence = Metaspace::new().into();
+        assert_eq!(
+            seq.apply("hello world"),
+            Metaspace::new().apply("hello world")
+        );
+    }
+
+    #[test]
+    fn whitespace_split_then_metaspace_collapses_run_of_spaces() {
+        // The xlm-roberta-base composition: three interior spaces
+        // become a single `▁` boundary, not three consecutive `▁`s.
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(Metaspace::new()),
+        ]);
+        assert_eq!(
+            seq.apply("hello   world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn whitespace_split_then_metaspace_single_space_matches_metaspace_alone() {
+        // With a single space between words the composition and a
+        // bare Metaspace produce the same output.
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(Metaspace::new()),
+        ]);
+        assert_eq!(
+            seq.apply("hello world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn whitespace_split_then_metaspace_no_spaces_still_prepends() {
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(Metaspace::new()),
+        ]);
+        assert_eq!(seq.apply("hello"), vec!["\u{2581}hello".to_string()]);
+    }
+
+    #[test]
+    fn whitespace_split_then_metaspace_leading_trailing_whitespace_stripped() {
+        // Leading and trailing whitespace runs are dropped by
+        // WhitespaceSplit before Metaspace sees each word.
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(Metaspace::new()),
+        ]);
+        assert_eq!(
+            seq.apply("   hello world   "),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn whitespace_split_then_metaspace_empty_input_yields_empty() {
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(Metaspace::new()),
+        ]);
+        assert!(seq.apply("").is_empty());
+    }
+
+    #[test]
+    fn metaspace_helper_returns_first_metaspace_stage() {
+        let ms = Metaspace::new();
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(ms.clone()),
+        ]);
+        assert_eq!(seq.metaspace(), Some(&ms));
+
+        let seq_no_ms = PreTokenizerSequence::new(vec![PreTokenizer::WhitespaceSplit]);
+        assert_eq!(seq_no_ms.metaspace(), None);
+    }
+
+    #[test]
+    fn stages_accessor_reflects_construction_order() {
+        let ms = Metaspace::new();
+        let seq = PreTokenizerSequence::new(vec![
+            PreTokenizer::WhitespaceSplit,
+            PreTokenizer::Metaspace(ms),
+        ]);
+        assert_eq!(seq.stages().len(), 2);
+        assert!(matches!(seq.stages()[0], PreTokenizer::WhitespaceSplit));
+        assert!(matches!(seq.stages()[1], PreTokenizer::Metaspace(_)));
     }
 }

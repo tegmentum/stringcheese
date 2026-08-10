@@ -13,7 +13,7 @@ use stringcheese_tokenizer_hf::hf::{
 };
 use stringcheese_tokenizer_hf::normalizer::Normalizer;
 use stringcheese_tokenizer_hf::post_processor::{PostProcessor, RobertaProcessing};
-use stringcheese_tokenizer_hf::{Metaspace, PrependScheme};
+use stringcheese_tokenizer_hf::{Metaspace, PreTokenizer, PreTokenizerSequence, PrependScheme};
 
 /// A tiny vocabulary that exercises the "prefer longer / higher-score
 /// segmentation" behaviour: the word `"hello"` can be produced either
@@ -787,6 +787,162 @@ fn byte_fallback_hf_loader_wires_it_end_to_end() {
         }
         other => panic!("expected HfTokenizer::Unigram, got {other:?}"),
     }
+}
+
+#[test]
+fn hf_loader_wires_whitespace_split_metaspace_sequence() {
+    // The xlm-roberta-base composition: WhitespaceSplit followed by
+    // Metaspace. The loader must materialise a two-stage sequence
+    // whose apply collapses runs of whitespace before Metaspace
+    // inserts its `▁` markers — three interior spaces must not become
+    // three consecutive `▁` pieces.
+    let json = r#"{
+        "added_tokens": [],
+        "pre_tokenizer": {
+            "type": "Sequence",
+            "pretokenizers": [
+                {"type": "WhitespaceSplit"},
+                {"type": "Metaspace"}
+            ]
+        },
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hello", -1.0],
+                ["▁world", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+
+    // Sanity: two stages in the expected order.
+    let seq = tok
+        .pre_tokenizer()
+        .expect("pre_tokenizer sequence was not attached");
+    assert_eq!(seq.stages().len(), 2);
+    assert!(matches!(seq.stages()[0], PreTokenizer::WhitespaceSplit));
+    assert!(matches!(seq.stages()[1], PreTokenizer::Metaspace(_)));
+
+    // Single-space input: identical to the bare-Metaspace baseline.
+    assert_eq!(tok.encode("hello world").unwrap(), vec![1, 2]);
+    // Three interior spaces: collapse under WhitespaceSplit, then a
+    // single `▁` per remaining word.
+    assert_eq!(tok.encode("hello   world").unwrap(), vec![1, 2]);
+    // Leading and trailing whitespace runs are dropped by
+    // WhitespaceSplit before Metaspace sees anything.
+    assert_eq!(tok.encode("   hello world   ").unwrap(), vec![1, 2]);
+}
+
+#[test]
+fn hf_loader_bare_whitespace_split_wires_single_stage_sequence() {
+    // A bare {"type":"WhitespaceSplit"} block (no Metaspace) is
+    // accepted as a single-stage sequence — this is not what any real
+    // Unigram checkpoint ships, but the sequence acceptance rule
+    // permits it and it exercises the trivial-composition path.
+    let json = r#"{
+        "added_tokens": [],
+        "pre_tokenizer": {"type": "WhitespaceSplit"},
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["hello", -1.0],
+                ["world", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    let seq = tok
+        .pre_tokenizer()
+        .expect("pre_tokenizer sequence was not attached");
+    assert_eq!(seq.stages().len(), 1);
+    assert!(matches!(seq.stages()[0], PreTokenizer::WhitespaceSplit));
+    assert_eq!(tok.encode("hello world").unwrap(), vec![1, 2]);
+    assert_eq!(tok.encode("hello   world").unwrap(), vec![1, 2]);
+}
+
+#[test]
+fn hf_loader_bare_metaspace_still_wires_single_stage_sequence() {
+    // A bare Metaspace (the pre-composition shape most Llama / Mistral
+    // / T5 configs use) must still work — the loader wraps it in a
+    // single-stage sequence via `From<Metaspace>`.
+    let json = r#"{
+        "added_tokens": [],
+        "pre_tokenizer": {"type": "Metaspace"},
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hi", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    let seq = tok
+        .pre_tokenizer()
+        .expect("pre_tokenizer sequence was not attached");
+    assert_eq!(seq.stages().len(), 1);
+    assert!(matches!(seq.stages()[0], PreTokenizer::Metaspace(_)));
+    // The Metaspace helper still surfaces the wrapped Metaspace for
+    // decode-side callers (backward compat with pre-composition code).
+    assert!(seq.metaspace().is_some());
+    assert_eq!(tok.encode("hi").unwrap(), vec![1]);
+}
+
+#[test]
+fn with_pre_tokenizer_accepts_bare_metaspace_via_into() {
+    // Backward compatibility of the `with_pre_tokenizer` builder: the
+    // pre-composition call site `tok.with_pre_tokenizer(Metaspace{...})`
+    // still compiles and behaves identically, because Metaspace now
+    // implements `Into<PreTokenizerSequence>` via a From impl.
+    let json = r#"{
+        "added_tokens": [],
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hello", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_pre_tokenizer(Metaspace::new());
+    assert_eq!(tok.encode("hello").unwrap(), vec![1]);
+}
+
+#[test]
+fn with_pre_tokenizer_accepts_composed_sequence() {
+    let json = r#"{
+        "added_tokens": [],
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hello", -1.0],
+                ["▁world", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let seq = PreTokenizerSequence::new(vec![
+        PreTokenizer::WhitespaceSplit,
+        PreTokenizer::Metaspace(Metaspace::new()),
+    ]);
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_pre_tokenizer(seq);
+    assert_eq!(tok.encode("hello   world").unwrap(), vec![1, 2]);
 }
 
 #[test]
