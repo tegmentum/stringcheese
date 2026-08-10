@@ -144,6 +144,6 @@ pub use bpe::{
 
 #[cfg(feature = "std")]
 pub use pre_tokenizer::{
-    GPT2_PATTERN, Metaspace, PreTokenizerCompileError, PrependScheme, RegexPreTokenizer,
-    TIKTOKEN_CANONICAL_PATTERN,
+    GPT2_PATTERN, Metaspace, PreTokenizer, PreTokenizerCompileError, PreTokenizerSequence,
+    PrependScheme, RegexPreTokenizer, TIKTOKEN_CANONICAL_PATTERN,
 };

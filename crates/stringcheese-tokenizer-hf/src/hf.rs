@@ -120,7 +120,8 @@ use crate::post_processor::{
     TemplateProcessing,
 };
 use crate::pre_tokenizer::{
-    GPT2_PATTERN, Metaspace, PreTokenizerCompileError, PrependScheme, RegexPreTokenizer,
+    GPT2_PATTERN, Metaspace, PreTokenizer, PreTokenizerCompileError, PreTokenizerSequence,
+    PrependScheme, RegexPreTokenizer,
 };
 
 // ---------------------------------------------------------------------
@@ -2164,14 +2165,23 @@ pub struct UnigramTokenizer {
     /// [`crate::wordpiece::WordPieceTokenizer::with_normalizer`]. A
     /// value of `None` leaves the input unchanged.
     normalizer: Option<Normalizer>,
-    /// Optional `SentencePiece` Metaspace pre-tokenizer applied to
-    /// the normalized text. When set, each piece produced by
-    /// [`Metaspace::apply`] is fed through the Viterbi loop
-    /// independently, and the resulting ids are concatenated in
-    /// order. When `None` the Viterbi loop runs on the whole
-    /// normalized string as one piece — matching the pre-composition
-    /// behaviour this type shipped with.
-    pre_tokenizer: Option<Metaspace>,
+    /// Optional pre-tokenizer sequence applied to the normalized text.
+    /// When set, each piece produced by [`PreTokenizerSequence::apply`]
+    /// is fed through the Viterbi loop independently, and the resulting
+    /// ids are concatenated in order. When `None` the Viterbi loop runs
+    /// on the whole normalized string as one piece — matching the
+    /// pre-composition behaviour this type shipped with.
+    ///
+    /// The sequence shape (as opposed to the pre-composition bare
+    /// [`Metaspace`]) is what makes composed configurations such as
+    /// xlm-roberta-base's `Sequence[WhitespaceSplit, Metaspace]`
+    /// materialise correctly: `WhitespaceSplit` collapses runs of
+    /// whitespace before Metaspace inserts its `▁` markers, so a
+    /// three-space run does not become three consecutive `▁` pieces.
+    /// Backward compat is preserved via `From<Metaspace>`, so callers
+    /// who pass a bare `Metaspace` to [`Self::with_pre_tokenizer`]
+    /// still get the pre-composition single-stage behaviour.
+    pre_tokenizer: Option<PreTokenizerSequence>,
     /// Optional post-processor applied to the finished [`Encoding`]
     /// before it leaves [`Self::encode`]. Mirrors
     /// [`BpeTokenizer::with_post_processor`]; the default
@@ -2302,18 +2312,37 @@ impl UnigramTokenizer {
         self
     }
 
-    /// Attach (or replace) the `SentencePiece` Metaspace pre-tokenizer.
+    /// Attach (or replace) the pre-tokenizer.
     ///
     /// When set, [`Self::encode`] splits the normalized input into
-    /// Metaspace pieces (each starting with the replacement `▁`
-    /// character, per HF's `MergedWithNext` split policy) and runs the
-    /// Viterbi loop on each piece independently. This is what makes
+    /// pieces via [`PreTokenizerSequence::apply`] and runs the Viterbi
+    /// loop on each piece independently. This is what makes
     /// XLM-RoBERTa / Llama / Mistral / T5 encode identically to
-    /// upstream `tokenizers-rs`: the Metaspace mark is what carries
-    /// word-initial position information into the vocab lookup.
+    /// upstream `tokenizers-rs`: the `▁` mark inserted by the
+    /// Metaspace stage carries word-initial position information into
+    /// the vocab lookup, and any preceding `WhitespaceSplit` stage
+    /// collapses runs of whitespace before that substitution happens.
+    ///
+    /// # Backward compatibility
+    ///
+    /// The parameter is `impl Into<PreTokenizerSequence>`, so callers
+    /// can keep passing a bare [`Metaspace`] and it will be wrapped in
+    /// a single-stage sequence with identical semantics to the
+    /// pre-composition shape:
+    ///
+    /// ```ignore
+    /// // Pre-composition: still compiles, still works.
+    /// let tok = tok.with_pre_tokenizer(Metaspace::new());
+    /// // Composed sequence: new xlm-roberta-shape support.
+    /// let seq = PreTokenizerSequence::new(vec![
+    ///     PreTokenizer::WhitespaceSplit,
+    ///     PreTokenizer::Metaspace(Metaspace::new()),
+    /// ]);
+    /// let tok = tok.with_pre_tokenizer(seq);
+    /// ```
     #[must_use]
-    pub fn with_pre_tokenizer(mut self, pre_tokenizer: Metaspace) -> Self {
-        self.pre_tokenizer = Some(pre_tokenizer);
+    pub fn with_pre_tokenizer(mut self, pre_tokenizer: impl Into<PreTokenizerSequence>) -> Self {
+        self.pre_tokenizer = Some(pre_tokenizer.into());
         self
     }
 
@@ -2406,9 +2435,16 @@ impl UnigramTokenizer {
         self.normalizer.as_ref()
     }
 
-    /// Read-only access to the configured pre-tokenizer, if any.
+    /// Read-only access to the configured pre-tokenizer sequence, if
+    /// any.
+    ///
+    /// Returns a [`PreTokenizerSequence`] rather than a bare
+    /// [`Metaspace`] so composed shapes such as xlm-roberta-base's
+    /// `Sequence[WhitespaceSplit, Metaspace]` are visible in full.
+    /// Callers that only need the Metaspace stage (the pre-composition
+    /// shape) can go through [`PreTokenizerSequence::metaspace`].
     #[must_use]
-    pub fn pre_tokenizer(&self) -> Option<&Metaspace> {
+    pub fn pre_tokenizer(&self) -> Option<&PreTokenizerSequence> {
         self.pre_tokenizer.as_ref()
     }
 
@@ -2461,12 +2497,12 @@ impl UnigramTokenizer {
         let text: &str = normalized.as_ref();
 
         // Step 2 + 3: pre-tokenize into pieces and run Viterbi on
-        // each. Without a Metaspace configured we run on the whole
+        // each. Without a pre-tokenizer configured we run on the whole
         // string (preserving the original pre-composition behaviour
         // for callers that never call `with_pre_tokenizer`).
         let mut ids = Vec::new();
-        if let Some(ms) = &self.pre_tokenizer {
-            for piece in ms.apply(text) {
+        if let Some(seq) = &self.pre_tokenizer {
+            for piece in seq.apply(text) {
                 let piece_ids = self.encode_piece_ids(&piece)?;
                 ids.extend(piece_ids);
             }
@@ -2523,11 +2559,16 @@ impl UnigramTokenizer {
         if !byte_run.is_empty() {
             buf.push_str(&alloc::string::String::from_utf8_lossy(&byte_run));
         }
-        // If a Metaspace is configured, reverse its substitution:
+        // If a Metaspace stage is configured (either standalone or
+        // inside a composed sequence), reverse its substitution:
         // `replacement` -> ' ', and drop the single leading space
         // that the prepend-scheme mark inserted (Always / First for
         // an unmarked input both prepend one).
-        if let Some(ms) = &self.pre_tokenizer {
+        if let Some(ms) = self
+            .pre_tokenizer
+            .as_ref()
+            .and_then(PreTokenizerSequence::metaspace)
+        {
             let replacement = ms.replacement;
             let mut restored = String::with_capacity(buf.len());
             for c in buf.chars() {
@@ -2912,11 +2953,12 @@ pub fn to_unigram_tokenizer(
         tok = tok.with_normalizer(n);
     }
 
-    // Pre-tokenizer — Metaspace (or a single-entry Sequence wrapping
-    // one) is the only shape SentencePiece Unigram checkpoints ship.
+    // Pre-tokenizer — Metaspace (bare or inside a Sequence, possibly
+    // preceded by WhitespaceSplit as xlm-roberta-base ships) is the
+    // shape SentencePiece Unigram checkpoints commonly wear.
     if let Some(pt) = &config.pre_tokenizer {
-        let ms = extract_unigram_pre_tokenizer(pt)?;
-        tok = tok.with_pre_tokenizer(ms);
+        let seq = extract_unigram_pre_tokenizer(pt)?;
+        tok = tok.with_pre_tokenizer(seq);
     }
 
     // Post-processor — runs on the finished Encoding before the trait
@@ -2929,32 +2971,82 @@ pub fn to_unigram_tokenizer(
     Ok(tok)
 }
 
-/// Reduce an [`HfPreTokenizer`] to a runtime [`Metaspace`], unwrapping
-/// a single-entry `Sequence` if that is what the config carries.
-/// Every other shape surfaces
-/// [`HfConversionError::UnsupportedPreTokenizer`].
-fn extract_unigram_pre_tokenizer(pt: &HfPreTokenizer) -> Result<Metaspace, HfConversionError> {
+/// Reduce an [`HfPreTokenizer`] to a runtime [`PreTokenizerSequence`].
+///
+/// The Unigram runtime accepts the following on-disk shapes:
+///
+/// * A bare `Metaspace` block — wraps into a single-stage sequence
+///   containing that Metaspace.
+/// * A bare `WhitespaceSplit` block — wraps into a single-stage
+///   sequence containing a `WhitespaceSplit`.
+/// * A `Sequence` whose children are any combination of the two above.
+///   In particular the composed shape xlm-roberta-base ships
+///   (`Sequence[WhitespaceSplit, Metaspace]`) materialises into a
+///   two-stage sequence with the same order.
+///
+/// Every other pre-tokenizer variant surfaces
+/// [`HfConversionError::UnsupportedPreTokenizer`]; ambiguous mixes
+/// (e.g. a Sequence containing a `Split(Regex)` sibling that the
+/// Unigram runtime cannot compose with) surface
+/// [`HfConversionError::AmbiguousSequencePreTokenizer`].
+fn extract_unigram_pre_tokenizer(
+    pt: &HfPreTokenizer,
+) -> Result<PreTokenizerSequence, HfConversionError> {
     match pt {
-        HfPreTokenizer::Metaspace { .. } => to_runtime_metaspace(pt),
-        HfPreTokenizer::Sequence { pretokenizers } => {
-            // The audit noted that real XLM-RoBERTa / Llama / T5
-            // configs sometimes wrap Metaspace inside a
-            // single-entry Sequence. Accept that; ambiguous multi-
-            // entry sequences that mix Metaspace with something else
-            // are rejected.
-            if pretokenizers.len() == 1 {
-                extract_unigram_pre_tokenizer(&pretokenizers[0])
-            } else {
-                Err(HfConversionError::AmbiguousSequencePreTokenizer {
-                    child_count: pretokenizers.len(),
-                })
-            }
+        HfPreTokenizer::Metaspace { .. } => {
+            let ms = to_runtime_metaspace(pt)?;
+            Ok(PreTokenizerSequence::from(ms))
         }
+        HfPreTokenizer::WhitespaceSplit(_) => {
+            Ok(PreTokenizerSequence::from(PreTokenizer::WhitespaceSplit))
+        }
+        HfPreTokenizer::Sequence { pretokenizers } => sequence_to_unigram_pipeline(pretokenizers),
         _ => Err(HfConversionError::UnsupportedPreTokenizer {
             type_name: "non-Metaspace".to_string(),
-            reason: "Unigram tokenizers only accept a SentencePiece Metaspace pre-tokenizer",
+            reason: "Unigram tokenizers only accept SentencePiece Metaspace and/or \
+                     WhitespaceSplit pre-tokenizer stages",
         }),
     }
+}
+
+/// Materialise a Unigram-side `Sequence[...]` block into a runtime
+/// [`PreTokenizerSequence`], applying the acceptance rules documented
+/// on [`extract_unigram_pre_tokenizer`].
+///
+/// Nested Sequences are permitted and flatten into the enclosing
+/// sequence's stage list; every non-Metaspace / non-WhitespaceSplit
+/// child surfaces the same error the sibling `extract_*` helpers do.
+fn sequence_to_unigram_pipeline(
+    children: &[HfPreTokenizer],
+) -> Result<PreTokenizerSequence, HfConversionError> {
+    let mut stages: Vec<PreTokenizer> = Vec::with_capacity(children.len());
+    for child in children {
+        match child {
+            HfPreTokenizer::Metaspace { .. } => {
+                let ms = to_runtime_metaspace(child)?;
+                stages.push(PreTokenizer::Metaspace(ms));
+            }
+            HfPreTokenizer::WhitespaceSplit(_) => {
+                stages.push(PreTokenizer::WhitespaceSplit);
+            }
+            HfPreTokenizer::Sequence { pretokenizers } => {
+                // Flatten nested Sequences so the runtime always sees a
+                // flat stage list. Order is preserved.
+                let nested = sequence_to_unigram_pipeline(pretokenizers)?;
+                stages.extend(nested.stages().iter().cloned());
+            }
+            _ => {
+                // Any other child (Split, ByteLevel, Punctuation, ...)
+                // is ambiguous inside a Unigram-oriented Sequence: the
+                // Viterbi runtime has no composition rule for it. Surface
+                // the ambiguity so callers see exactly what tripped.
+                return Err(HfConversionError::AmbiguousSequencePreTokenizer {
+                    child_count: children.len(),
+                });
+            }
+        }
+    }
+    Ok(PreTokenizerSequence::new(stages))
 }
 
 // ---------------------------------------------------------------------
