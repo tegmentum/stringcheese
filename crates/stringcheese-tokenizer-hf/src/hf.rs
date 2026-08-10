@@ -226,27 +226,128 @@ pub struct HfAddedToken {
 /// [`to_bpe_tokenizer`] / [`to_wordpiece_tokenizer`] entry points
 /// return a concrete tokenizer type when the caller already knows
 /// which family a config belongs to.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
+///
+/// # Deserialisation
+///
+/// The primary shape is Hugging Face's own `#[serde(tag = "type")]`
+/// layout — `{"type": "BPE", ...}`, `{"type": "WordPiece", ...}`,
+/// `{"type": "Unigram", ...}`, `{"type": "WordLevel", ...}`. Every
+/// modern `tokenizer.json` on the Hub carries a `"type"` field on the
+/// `model` node, and the tagged path is what routes them.
+///
+/// The `openai-community/gpt2/tokenizer.json` v1.0 blob (still the
+/// shipped GPT-2 config) is the notable outlier: it omits `"type"`
+/// entirely, mirroring HF's own `#[serde(untagged)]` inner enum which
+/// autodetects BPE from the `{vocab, merges}` shape. To load that blob
+/// without special-casing the caller, deserialisation falls back to
+/// [`HfModel::Bpe`] whenever the `model` object has no `"type"` field
+/// *and* carries both a `"vocab"` object and a `"merges"` array. A
+/// typeless object that does not match the BPE shape (e.g. a Unigram
+/// config with `vocab: [...]` + `unk_id`) is rejected rather than
+/// silently misclassified — see the module doc for the rationale.
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HfModel {
     /// A byte-pair-encoding model — Sennrich et al. 2016.
-    #[serde(rename = "BPE")]
     Bpe(HfBpeModel),
     /// A `WordPiece` model — Wu et al. 2016, adopted by BERT and its
     /// family. See [`HfWordPieceModel`] for the fields and
     /// [`crate::wordpiece::WordPieceTokenizer`] for the runtime.
-    #[serde(rename = "WordPiece")]
     WordPiece(HfWordPieceModel),
     /// A SentencePiece-style `Unigram` language model — Kudo (2018),
     /// used by Llama, Mistral, T5, and XLM-RoBERTa. See
     /// [`HfUnigramModel`] for the fields and [`UnigramTokenizer`] for
     /// the runtime.
-    #[serde(rename = "Unigram")]
     Unigram(HfUnigramModel),
     /// Simple word-level model (a plain vocabulary lookup). Deferred.
+    WordLevel(serde_json::Value),
+}
+
+/// Internal helper mirroring HF's canonical `#[serde(tag = "type")]`
+/// shape for the `model` block. The public [`HfModel`] wraps this via
+/// a hand-rolled [`Deserialize`] impl that first tries the tagged
+/// dispatch (which every modern checkpoint's `tokenizer.json` matches)
+/// and only falls back to the typeless-BPE shape when the input has
+/// no `"type"` field — see [`HfModel`]'s doc for the shipped example
+/// (`openai-community/gpt2/tokenizer.json` v1.0).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type")]
+enum HfModelTagged {
+    #[serde(rename = "BPE")]
+    Bpe(HfBpeModel),
+    #[serde(rename = "WordPiece")]
+    WordPiece(HfWordPieceModel),
+    #[serde(rename = "Unigram")]
+    Unigram(HfUnigramModel),
     #[serde(rename = "WordLevel")]
     WordLevel(serde_json::Value),
+}
+
+impl From<HfModelTagged> for HfModel {
+    fn from(tagged: HfModelTagged) -> Self {
+        match tagged {
+            HfModelTagged::Bpe(m) => Self::Bpe(m),
+            HfModelTagged::WordPiece(m) => Self::WordPiece(m),
+            HfModelTagged::Unigram(m) => Self::Unigram(m),
+            HfModelTagged::WordLevel(m) => Self::WordLevel(m),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for HfModel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        // Materialise the whole `model` node into a `serde_json::Value`
+        // so we can peek at the `"type"` field before choosing which
+        // typed shape to route through. This dual-path deserialisation
+        // is the whole point of the wrapper — a plain derive cannot
+        // combine `tag = "type"` dispatch with a typeless fallback.
+        //
+        // The `Value` round-trip does couple this impl to
+        // `serde_json`, which is acceptable because every caller of
+        // this crate's HF loader reaches it through [`parse_tokenizer_json`]
+        // (which itself is `serde_json::from_str`). No other
+        // deserialiser is in scope for this type in practice.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("type").is_some() {
+            // Modern shape — dispatch on the tag. Every misspelled or
+            // unrecognised tag surfaces the tagged-enum's native
+            // "unknown variant" error, preserving the diagnostic
+            // callers had before this fallback landed.
+            let tagged: HfModelTagged = serde_json::from_value(value).map_err(D::Error::custom)?;
+            return Ok(tagged.into());
+        }
+
+        // Typeless shape — the GPT-2 v1.0 blob is the canonical
+        // example. Accept it as BPE iff both `vocab` (as an object)
+        // and `merges` (as an array) are present. The stricter
+        // "vocab must be an object" check rules out a typeless
+        // Unigram config (whose `vocab` is a JSON array of
+        // `[surface, log_prob]` pairs); the `merges` check rules out
+        // a typeless WordPiece config (which has no merges).
+        //
+        // We do *not* deserialise a typeless Unigram or WordPiece
+        // silently — those would be genuinely ambiguous and their
+        // publishers ship the tag, so a missing tag on that shape is
+        // a signal of a malformed config, not a normal case to
+        // support.
+        let looks_like_bpe = value.get("vocab").is_some_and(serde_json::Value::is_object)
+            && value.get("merges").is_some_and(serde_json::Value::is_array);
+        if looks_like_bpe {
+            let bpe: HfBpeModel = serde_json::from_value(value).map_err(D::Error::custom)?;
+            return Ok(Self::Bpe(bpe));
+        }
+
+        Err(D::Error::custom(
+            "invalid `model` block: missing `type` field and does not \
+             match a known typeless shape (BPE requires both an object \
+             `vocab` and an array `merges`)",
+        ))
+    }
 }
 
 /// The `WordPiece`-specific fields of a `model` block.
@@ -4666,5 +4767,98 @@ mod tests {
         // Accented input traverses the strip_accents pass too:
         // "CAFÉ" -> "cafe" -> [5] -> [1, 5, 2].
         assert_eq!(wp.encode("CAFÉ"), vec![1, 5, 2]);
+    }
+
+    // -----------------------------------------------------------------
+    // Untagged `model` fallback (GPT-2 v1.0 shape).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn typeless_model_with_vocab_and_merges_deserialises_as_bpe() {
+        // Shape mirrors `openai-community/gpt2/tokenizer.json` (v1.0):
+        // the `model` node ships without a `"type"` field, relying on
+        // the consumer to autodetect BPE from the `{vocab, merges}`
+        // presence.
+        let json = r#"{
+            "version": "1.0",
+            "added_tokens": [],
+            "model": {
+                "dropout": null,
+                "unk_token": null,
+                "continuing_subword_prefix": null,
+                "end_of_word_suffix": null,
+                "fuse_unk": false,
+                "vocab": {"a": 0, "b": 1, "ab": 2},
+                "merges": [["a", "b"]]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        match &config.model {
+            HfModel::Bpe(bpe) => {
+                assert_eq!(bpe.vocab.len(), 3);
+                assert_eq!(bpe.merges.len(), 1);
+                // Optional fields captured verbatim from the source JSON.
+                assert_eq!(bpe.dropout, None);
+                assert_eq!(bpe.fuse_unk, Some(false));
+            }
+            other => panic!("expected typeless BPE fallback; got {other:?}"),
+        }
+        // And it converts end-to-end.
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        assert_eq!(tok.encode("ab").unwrap().ids, vec![2]);
+    }
+
+    #[test]
+    fn typeless_model_still_routes_tagged_form_unchanged() {
+        // Belt-and-braces: the fallback path must never intercept a
+        // well-formed tagged config. This is the same MINIMAL_JSON
+        // that `parse_minimal_config` uses; if the wrapper's tagged
+        // branch regresses, this test is the first alarm.
+        let config = parse_tokenizer_json(MINIMAL_JSON).unwrap();
+        assert!(matches!(&config.model, HfModel::Bpe(_)));
+    }
+
+    #[test]
+    fn typeless_unigram_shape_is_rejected() {
+        // A typeless Unigram config (vocab as an array of
+        // [surface, log_prob] pairs, plus `unk_id`) must NOT
+        // deserialise as BPE — the untagged fallback deliberately
+        // requires `vocab` to be a JSON object. Rejecting here is
+        // preferable to silent misclassification because a typeless
+        // Unigram config is not a shape any HF release publishes.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "unk_id": 0,
+                "vocab": [["<unk>", 0.0], ["a", -1.5]]
+            }
+        }"#;
+        let err = parse_tokenizer_json(json).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("missing `type` field")
+                || msg.contains("typeless")
+                || msg.contains("BPE requires"),
+            "expected an untagged-fallback rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn typeless_model_missing_merges_is_rejected() {
+        // Vocab present as an object but no `merges` — the config
+        // does not match any typeless shape we understand. Rejecting
+        // is the whole point of gating the fallback on both keys.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "vocab": {"a": 0, "b": 1}
+            }
+        }"#;
+        let err = parse_tokenizer_json(json).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("BPE requires") || msg.contains("missing `type`"),
+            "expected typeless-shape rejection, got: {msg}"
+        );
     }
 }
