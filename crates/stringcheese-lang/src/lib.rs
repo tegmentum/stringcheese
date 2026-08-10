@@ -247,6 +247,168 @@ macro_rules! register_language {
     };
 }
 
+/// Emit the canonical `tests/registry_integration.rs` skeleton for a
+/// `stringcheese-<bcp47>` language pack.
+///
+/// Every per-language pack ships a `tests/registry_integration.rs`
+/// that follows the same shape: it forces the pack's rlib into the
+/// test binary's link so the pack's [`register_language!`] `static`
+/// isn't stripped, then asserts that
+/// [`registry::language`](crate::registry::language) resolves the
+/// pack's BCP-47 code (case-insensitively) to a `&'static dyn
+/// Language` with the expected `code()` and `name()`, and finally
+/// runs a per-pack functional smoke test through the trait object.
+///
+/// This macro packages that shape as one `macro_rules!` invocation.
+/// A pack whose smoke test is a stopword membership check plus a
+/// stemmer call collapses its whole `registry_integration.rs` to
+/// something like:
+///
+/// ```ignore
+/// #![cfg(not(target_family = "wasm"))]
+///
+/// stringcheese_lang::pack_registry_smoke_test! {
+///     pack: stringcheese_am::AMHARIC,
+///     pack_ty: stringcheese_am::Amharic,
+///     code: "am",
+///     name: "Amharic",
+///     smoke: |lang| {
+///         assert!(lang.is_stopword("እና"));
+///         assert_eq!(lang.stem("ልጅኦች"), "ልጅ");
+///     },
+/// }
+/// ```
+///
+/// Packs that also want to assert BCP-47 fallback behaviour, the
+/// absence of a macrolanguage registration, or any other extra
+/// invariant tack those on as regular `#[test] fn`s alongside the
+/// macro invocation — the macro does not close the module.
+///
+/// # Fields
+///
+/// - `pack: <expr>` — the pack's singleton `const` (e.g.
+///   `stringcheese_am::AMHARIC`). Used as the initializer of the
+///   private `KEEP` const that anchors the pack's rlib in the test
+///   binary's link so linkme's registration `static` isn't stripped.
+/// - `pack_ty: <ty>` — the pack's concrete type (e.g.
+///   `stringcheese_am::Amharic`). Used as the type of the `KEEP`
+///   const. Must be a `Language` implementor.
+/// - `code: <str literal>` — the pack's BCP-47 primary language
+///   subtag (e.g. `"am"`). The macro looks it up via
+///   [`registry::language`](crate::registry::language), asserts
+///   `code()` matches, and probes an all-uppercase and an
+///   alternating-case variant to prove ASCII-case-insensitive
+///   matching.
+/// - `name: <str literal>` — the pack's human-readable name (e.g.
+///   `"Amharic"`), asserted against `Language::name()`.
+/// - `smoke: |<ident>| { <block> }` — a functional smoke closure
+///   handed the resolved `&'static dyn Language`. Runs one or more
+///   `assert!` / `assert_eq!` calls proving the registered object is
+///   a real language pack, not just a shell.
+///
+/// # Emitted `#[test] fn`s
+///
+/// Three fixed names (each `registry_integration.rs` is its own test
+/// binary, so no cross-file collision):
+///
+/// - `pack_is_registered` — code + name match the expected values.
+/// - `pack_registration_is_case_insensitive` — case-flipped probes
+///   still resolve.
+/// - `pack_functions_through_registry` — runs the `smoke` closure.
+///
+/// Plus one private `KEEP` `const` (dead-code-allowed) whose sole
+/// purpose is to name the pack's singleton so the linker doesn't
+/// strip the object file that carries the pack's `register_language!`
+/// static. Same trick the hand-written `registry_integration.rs`
+/// files use.
+///
+/// # Platform
+///
+/// Every expanded item is wasm-gated with
+/// `#[cfg(not(target_family = "wasm"))]` for the same reason
+/// [`register_language!`] and [`registry`](crate::registry) are —
+/// `linkme::distributed_slice` has no wasm branch. On wasm targets
+/// the macro invocation compiles to nothing; callers who want an
+/// unconditional wasm-safe posture can additionally scope the whole
+/// `registry_integration.rs` under a file-level `#![cfg(not(target_family = "wasm"))]`.
+#[cfg(feature = "alloc")]
+#[macro_export]
+macro_rules! pack_registry_smoke_test {
+    (
+        pack: $pack:path,
+        pack_ty: $pack_ty:ty,
+        code: $code:literal,
+        name: $name:literal,
+        smoke: | $lang_binding:ident | $smoke:block $(,)?
+    ) => {
+        // Force the pack's rlib into the test binary's link. A test
+        // that only names `stringcheese_lang` items would leave the
+        // pack's registration `static` outside the closure the linker
+        // walks, hiding the fact that `register_language!` fired.
+        // Naming the pack's singleton constant here keeps its object
+        // file (and thus its `#[linkme::distributed_slice(...)]`
+        // section) alive.
+        #[cfg(not(target_family = "wasm"))]
+        #[allow(dead_code)]
+        const __STRINGCHEESE_PACK_KEEP: &$pack_ty = &$pack;
+
+        #[cfg(not(target_family = "wasm"))]
+        #[test]
+        fn pack_is_registered() {
+            let lang = $crate::registry::language($code).expect(concat!(
+                "pack ",
+                $code,
+                " must be registered"
+            ));
+            assert_eq!(lang.code(), $code);
+            assert_eq!(lang.name(), $name);
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        #[test]
+        fn pack_registration_is_case_insensitive() {
+            // Compute case variants at runtime rather than baking a
+            // fixed `["AM", "Am", "aM"]` array — works for codes of
+            // any length (two-char primary subtags, three-char subtags
+            // like the `mkpt` test mocks in `registry` itself, and
+            // future scoped codes). `String` is in scope through the
+            // std prelude — `cargo test` binaries always compile with
+            // std even when the crate under test is `no_std`.
+            let upper: ::std::string::String = $code.to_ascii_uppercase();
+            let mixed: ::std::string::String = $code
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    if i % 2 == 0 {
+                        c.to_ascii_uppercase()
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect();
+            for probe in [upper.as_str(), mixed.as_str()] {
+                assert!(
+                    $crate::registry::language(probe).is_some(),
+                    "{:?} did not resolve to the {} pack",
+                    probe,
+                    $name,
+                );
+            }
+        }
+
+        #[cfg(not(target_family = "wasm"))]
+        #[test]
+        fn pack_functions_through_registry() {
+            let $lang_binding = $crate::registry::language($code).expect(concat!(
+                "pack ",
+                $code,
+                " must be registered"
+            ));
+            $smoke
+        }
+    };
+}
+
 /// Metadata about this release.
 pub mod meta {
     /// The `stringcheese-lang` crate's semantic version.
