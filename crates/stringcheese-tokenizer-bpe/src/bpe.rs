@@ -1,6 +1,6 @@
 //! The BPE core: merge table, vocabulary, and tokenizer types.
 
-use alloc::collections::{BTreeMap, BinaryHeap};
+use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cmp::Reverse;
@@ -25,40 +25,75 @@ pub enum VocabularyBuilderError {
 
 /// The merge table for a BPE tokenizer.
 ///
-/// Maps each merge pair `(left, right)` (both as owned byte strings) to
-/// a numeric rank. Lower rank means the merge is applied *earlier* — that
-/// is, when two adjacent pairs are both in the table, the one with the
-/// lower rank wins. This matches the tiktoken / Hugging Face
-/// convention.
+/// Maps each merge pair `(left, right)` — stored internally as the
+/// single *concatenation* `[left, right].concat()` — to a numeric rank.
+/// Lower rank means the merge is applied *earlier* — that is, when two
+/// adjacent pairs are both in the table, the one with the lower rank
+/// wins. This matches the tiktoken / Hugging Face convention.
+///
+/// # Representation
+///
+/// Before Wave-14 this table was a `BTreeMap<(Vec<u8>, Vec<u8>), u32>`.
+/// Every [`Self::rank`] call materialised the tuple key with two
+/// `Vec<u8>` clones, and the map itself did O(log n) byte-slice
+/// comparisons on the way to the leaf. The audit called this out as
+/// the dominant per-token cost — the merge loop invokes `rank` once
+/// per heap-pop validation *and* once per new-adjacency check.
+///
+/// The current representation matches tiktoken's storage: a
+/// [`hashbrown::HashMap`] keyed on the *concatenation* of the two
+/// pieces. Lookup allocates one `Vec<u8>` per call (down from two)
+/// and hits an O(1) hash lookup afterwards.
 #[derive(Debug, Default, Clone)]
 pub struct BpeMergeTable {
-    ranks: BTreeMap<(Vec<u8>, Vec<u8>), u32>,
+    ranks: hashbrown::HashMap<Vec<u8>, u32>,
 }
 
 impl BpeMergeTable {
     /// Constructs an empty merge table. A tokenizer with no merges is
     /// well-defined: it emits one token per input byte.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            ranks: BTreeMap::new(),
+            ranks: hashbrown::HashMap::new(),
         }
     }
 
     /// Inserts a merge with the given rank. Overwrites any prior entry
     /// for the same pair.
+    ///
+    /// Both arguments are consumed: `left` is reused as the underlying
+    /// key allocation and `right` is drained into it, so a caller who
+    /// already owns the two `Vec`s pays no extra copy to build the key.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "public API stability: this signature ships across the workspace and matches every existing caller; changing it to `&[u8]` would be a breaking change"
+    )]
     pub fn insert(&mut self, left: Vec<u8>, right: Vec<u8>, rank: u32) {
-        self.ranks.insert((left, right), rank);
+        // Concatenate into a single key: the internal storage is keyed
+        // on the merged bytes, not the pair-tuple. Reuse `left`'s
+        // allocation (extend in place) so callers who already own the
+        // left `Vec` pay nothing extra to build the key.
+        let mut key = left;
+        key.extend_from_slice(&right);
+        self.ranks.insert(key, rank);
     }
 
     /// Returns the rank of `(left, right)`, or `None` if the pair is
     /// not in the table.
     #[must_use]
     pub fn rank(&self, left: &[u8], right: &[u8]) -> Option<u32> {
-        // BTreeMap requires an owned key for lookup; use a small local
-        // helper to avoid allocation on every scan. Since `Vec<u8>: Borrow<[u8]>`
-        // does not extend to tuples, we materialise once.
-        let key = (left.to_vec(), right.to_vec());
+        // hashbrown requires an owned key (or a matching `Borrow` view)
+        // for `get`; since `Vec<u8>: Borrow<[u8]>` does not extend to a
+        // tuple-of-slices, we materialise one concatenated buffer per
+        // lookup. This is half the allocations of the prior BTreeMap
+        // shape (two `Vec<u8>` clones for the tuple) and reduces the
+        // lookup complexity from O(log n) byte-slice comparisons to a
+        // single hash + comparison — the audit called this out as the
+        // dominant per-token cost.
+        let mut key = Vec::with_capacity(left.len() + right.len());
+        key.extend_from_slice(left);
+        key.extend_from_slice(right);
         self.ranks.get(&key).copied()
     }
 
@@ -185,6 +220,46 @@ impl BpeVocabulary {
         }
         Ok(next_id)
     }
+}
+
+/// Encode-time policy for *disallowed* special tokens, mirroring the
+/// second argument of tiktoken's Python `encode(text, allowed_special,
+/// disallowed_special)` API.
+///
+/// Rules, in order, at every position in the input:
+///
+/// 1. If a registered special-token surface appears in the input and it
+///    is listed in `allowed_special` (the other argument to
+///    [`BpeTokenizer::encode_with_special_policy`]), it is always
+///    emitted as its reserved id. `allowed_special` always wins.
+/// 2. Otherwise, if this variant is [`Self::All`], the appearance of
+///    *any* registered special not in `allowed_special` triggers
+///    [`TokenizerError::DisallowedSpecialToken`].
+/// 3. Otherwise, if this variant is [`Self::These`], only surfaces in
+///    the wrapped set trigger the error.
+/// 4. Otherwise ([`Self::None`], or a surface not covered by 2 or 3),
+///    the surface is *not* treated as a special: its bytes flow through
+///    the BPE loop as regular text. This matches tiktoken's semantics.
+///
+/// Callers who want the crate's default "allow every registered
+/// special" behaviour should pass their full registered-specials set as
+/// `allowed_special` and [`Self::None`] as `disallowed_special` —
+/// [`BpeTokenizer::encode`] does exactly that.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum DisallowedSpecials<'a> {
+    /// Do not treat any surface as disallowed. Combined with an
+    /// `allowed_special` set that lists every registered special, this
+    /// is bit-for-bit the crate's pre-policy behaviour.
+    None,
+    /// Every registered special-token surface *not* in `allowed_special`
+    /// is disallowed. This is tiktoken's Python-side default (the
+    /// `disallowed_special="all"` sentinel).
+    All,
+    /// Only the surfaces in the wrapped set are disallowed. Any
+    /// registered special not in this set — and not in
+    /// `allowed_special` — passes through as regular text.
+    These(&'a BTreeSet<&'a str>),
 }
 
 /// A pre-tokenizer pattern.
@@ -484,6 +559,61 @@ impl BpeTokenizer {
         Ok(self.post_processor.apply(&enc, add_special_tokens))
     }
 
+    /// Encode `text` under an explicit tiktoken-style special-token
+    /// policy.
+    ///
+    /// * `allowed_special` — surfaces in this set that appear in the
+    ///   input are always emitted as their reserved special-token id.
+    ///   `allowed_special` wins over `disallowed_special` on any
+    ///   surface listed in both.
+    /// * `disallowed_special` — see [`DisallowedSpecials`] for the full
+    ///   semantics. In short: `None` never errors; `All` errors on any
+    ///   registered special not in `allowed_special`; `These(set)`
+    ///   errors on the listed surfaces only.
+    /// * The post-processor still runs and injects any configured
+    ///   template splice (BOS/EOS/CLS/SEP). Callers who want to bypass
+    ///   the splice while also controlling the special-token policy can
+    ///   compose this entry point with the [`Self::encode_with_special`]
+    ///   two-arg form separately.
+    ///
+    /// The crate's default [`Tokenizer::encode`](Self::encode) is
+    /// equivalent to calling this with `allowed_special` set to every
+    /// registered special surface and `disallowed_special =
+    /// DisallowedSpecials::None` — i.e. "allow every registered
+    /// special, never error." That equivalence is exercised in the
+    /// tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenizerError::DisallowedSpecialToken`] carrying the
+    /// offending surface string if the policy rejects a special-token
+    /// occurrence in the input. Returns [`TokenizerError::UnknownToken`]
+    /// under the same conditions as [`Self::encode`].
+    pub fn encode_with_special_policy(
+        &self,
+        text: &str,
+        allowed_special: &BTreeSet<&str>,
+        disallowed_special: &DisallowedSpecials<'_>,
+    ) -> Result<Encoding<TokenId>, TokenizerError> {
+        let normalized = self.normalize_text(text);
+        let text_ref: &str = normalized.as_ref();
+        let pieces = self.encode_pieces_with_policy(
+            text_ref,
+            Some((allowed_special, disallowed_special)),
+            Self::merge_loop_nlogn,
+        )?;
+        let mut enc = Encoding::new();
+        enc.ids.reserve(pieces.len());
+        enc.offsets.reserve(pieces.len());
+        enc.special_mask.reserve(pieces.len());
+        for (id, range, special) in pieces {
+            enc.ids.push(id);
+            enc.offsets.push(range);
+            enc.special_mask.push(special);
+        }
+        Ok(self.post_processor.apply(&enc, true))
+    }
+
     /// Apply the configured normalizer to `text`, or pass it through
     /// unchanged. Kept as a helper so the encode paths share one
     /// well-documented call site.
@@ -542,16 +672,79 @@ impl BpeTokenizer {
         text: &str,
         merge_fn: MergeLoopFn,
     ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
+        // Default policy: no allowed/disallowed filter — every registered
+        // special is treated as special. Matches the crate's historical
+        // behaviour bit-for-bit.
+        self.encode_pieces_with_policy(text, None, merge_fn)
+    }
+
+    /// Policy-aware variant of [`Self::encode_pieces_with`]. When `policy`
+    /// is `None`, every registered special is treated as special (the
+    /// historical behaviour); when `Some((allowed, disallowed))`, the
+    /// tiktoken-style rules described on [`DisallowedSpecials`] apply.
+    fn encode_pieces_with_policy(
+        &self,
+        text: &str,
+        policy: Option<(&BTreeSet<&str>, &DisallowedSpecials<'_>)>,
+        merge_fn: MergeLoopFn,
+    ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
+        let bytes = text.as_bytes();
+        let all_specials = self.sorted_specials();
+
+        // Pre-scan for any disallowed special-token surface in the input.
+        // Doing this up front (rather than inline in the main walk)
+        // guarantees we surface the same error regardless of whether the
+        // disallowed surface would have been matched or shadowed by a
+        // longer allowed one — matching tiktoken, which errors on *any*
+        // occurrence of a disallowed surface.
+        if let Some((allowed, disallowed)) = policy {
+            match disallowed {
+                DisallowedSpecials::None => {}
+                DisallowedSpecials::All => {
+                    for (surface, _id) in &all_specials {
+                        if !allowed.contains(surface.as_str())
+                            && find_subslice(bytes, surface.as_bytes()).is_some()
+                        {
+                            return Err(TokenizerError::DisallowedSpecialToken(surface.clone()));
+                        }
+                    }
+                }
+                DisallowedSpecials::These(set) => {
+                    for surface in *set {
+                        // `allowed_special` wins if a surface is listed in both.
+                        if !allowed.contains(surface)
+                            && find_subslice(bytes, surface.as_bytes()).is_some()
+                        {
+                            return Err(TokenizerError::DisallowedSpecialToken(String::from(
+                                *surface,
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build the effective list of specials the main walk should
+        // *match*. When there's no policy, every registered special is
+        // in play; with a policy, only surfaces in `allowed_special` are
+        // considered — everything else flows through the BPE loop as
+        // regular text.
+        let effective_specials: Vec<(String, TokenId)> = match policy {
+            None => all_specials,
+            Some((allowed, _)) => all_specials
+                .into_iter()
+                .filter(|(s, _)| allowed.contains(s.as_str()))
+                .collect(),
+        };
+
         let mut out = Vec::new();
         // Walk the input, extracting special-token literal matches. The
         // regions between matches are handed to the BPE loop.
-        let specials_sorted = self.sorted_specials();
-        let bytes = text.as_bytes();
         let mut cursor = 0usize;
         while cursor < bytes.len() {
             // Try to match a special token at `cursor`.
             let mut matched = None;
-            for (surface, id) in &specials_sorted {
+            for (surface, id) in &effective_specials {
                 let sb = surface.as_bytes();
                 if bytes[cursor..].starts_with(sb) {
                     matched = Some((surface.clone(), *id, sb.len()));
@@ -569,7 +762,7 @@ impl BpeTokenizer {
             // No special match here: consume up to the next special
             // occurrence (or end-of-input) and BPE-encode that region.
             let mut next_special = bytes.len();
-            for (surface, _id) in &specials_sorted {
+            for (surface, _id) in &effective_specials {
                 let sb = surface.as_bytes();
                 if let Some(rel) = find_subslice(&bytes[cursor..], sb) {
                     let abs = cursor + rel;
@@ -1824,6 +2017,166 @@ mod tests {
                 "n={n:4}: naive {naive_ns:>10} ns  nlogn {nlogn_ns:>10} ns  speedup {speedup:.2}x"
             );
         }
+    }
+
+    // ------------------------------------------------------------------
+    // encode_with_special_policy — tiktoken-style allowed_special /
+    // disallowed_special enforcement at encode time.
+    // ------------------------------------------------------------------
+
+    /// Build a byte-alphabet tokenizer with three registered specials.
+    /// The chosen surface strings are deliberately not BPE-mergeable
+    /// under the empty merge table so the "flow through as regular
+    /// text" case is easy to distinguish from the "emit as special" case
+    /// in id-space.
+    fn tokenizer_with_three_specials() -> (BpeTokenizer, TokenId, TokenId, TokenId) {
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let mut specials = BTreeMap::new();
+        specials.insert(String::from("<|endoftext|>"), 50000);
+        specials.insert(String::from("<|foo|>"), 50001);
+        specials.insert(String::from("<|bar|>"), 50002);
+        let tok =
+            BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_special_tokens(specials);
+        (tok, 50000, 50001, 50002)
+    }
+
+    #[test]
+    fn policy_allowed_all_registered_matches_default_encode() {
+        let (tok, _endoftext, _foo, _bar) = tokenizer_with_three_specials();
+        let text = "hi<|endoftext|> world <|foo|>x<|bar|>";
+        // Default encode: every registered special treated as special.
+        let default = tok.encode(text).unwrap();
+        // Policy with allowed = every registered surface + disallowed = None:
+        // must match byte-for-byte.
+        let allowed: BTreeSet<&str> = tok.special_tokens().keys().map(String::as_str).collect();
+        let policy = tok
+            .encode_with_special_policy(text, &allowed, &DisallowedSpecials::None)
+            .unwrap();
+        assert_eq!(policy.ids, default.ids);
+        assert_eq!(policy.offsets, default.offsets);
+        assert_eq!(policy.special_mask, default.special_mask);
+    }
+
+    #[test]
+    fn policy_disallowed_all_empty_allowed_errors_on_any_registered_special() {
+        let (tok, _endoftext, _foo, _bar) = tokenizer_with_three_specials();
+        let allowed: BTreeSet<&str> = BTreeSet::new();
+        // Each of the three surfaces should trigger the error when it
+        // appears in the input, carrying its own surface string.
+        let err = tok
+            .encode_with_special_policy("hi<|endoftext|>", &allowed, &DisallowedSpecials::All)
+            .unwrap_err();
+        assert!(
+            matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|endoftext|>")
+        );
+        let err = tok
+            .encode_with_special_policy("<|foo|>", &allowed, &DisallowedSpecials::All)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|foo|>"));
+        let err = tok
+            .encode_with_special_policy("<|bar|>", &allowed, &DisallowedSpecials::All)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|bar|>"));
+        // Input with no special: no error, encodes as plain bytes.
+        let enc = tok
+            .encode_with_special_policy("hi", &allowed, &DisallowedSpecials::All)
+            .unwrap();
+        assert_eq!(enc.ids, vec![u32::from(b'h'), u32::from(b'i')]);
+        assert!(enc.special_mask.iter().all(|&b| !b));
+    }
+
+    #[test]
+    fn policy_disallowed_all_with_allowed_endoftext_lets_endoftext_through_errors_others() {
+        let (tok, endoftext_id, _foo, _bar) = tokenizer_with_three_specials();
+        let mut allowed: BTreeSet<&str> = BTreeSet::new();
+        allowed.insert("<|endoftext|>");
+        // endoftext is permitted — emitted as special.
+        let enc = tok
+            .encode_with_special_policy("a<|endoftext|>b", &allowed, &DisallowedSpecials::All)
+            .unwrap();
+        assert_eq!(
+            enc.ids,
+            vec![u32::from(b'a'), endoftext_id, u32::from(b'b')]
+        );
+        assert_eq!(enc.special_mask, vec![false, true, false]);
+        // foo is not in allowed and disallowed=All → error.
+        let err = tok
+            .encode_with_special_policy("hi<|foo|>", &allowed, &DisallowedSpecials::All)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|foo|>"));
+        // bar is not in allowed and disallowed=All → error.
+        let err = tok
+            .encode_with_special_policy("hi<|bar|>", &allowed, &DisallowedSpecials::All)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|bar|>"));
+    }
+
+    #[test]
+    fn policy_disallowed_these_errors_only_on_listed_surfaces() {
+        let (tok, endoftext_id, _foo, bar_id) = tokenizer_with_three_specials();
+        // Empty allowed; only "<|foo|>" is disallowed. endoftext and bar
+        // are neither allowed nor disallowed — their bytes flow through
+        // the BPE loop as regular text.
+        let allowed: BTreeSet<&str> = BTreeSet::new();
+        let mut disallowed_set: BTreeSet<&str> = BTreeSet::new();
+        disallowed_set.insert("<|foo|>");
+        let disallowed = DisallowedSpecials::These(&disallowed_set);
+        // foo alone → error.
+        let err = tok
+            .encode_with_special_policy("hi<|foo|>", &allowed, &disallowed)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|foo|>"));
+        // endoftext + bar → no error, but they are NOT emitted as
+        // specials — they flow through as raw bytes. To make that
+        // observable, only check we get *no* special-id in the output
+        // and no error.
+        let enc = tok
+            .encode_with_special_policy("<|endoftext|>", &allowed, &disallowed)
+            .unwrap();
+        assert!(enc.special_mask.iter().all(|&b| !b));
+        assert!(!enc.ids.contains(&endoftext_id));
+        assert!(!enc.ids.contains(&bar_id));
+        // But foo is still forbidden even next to bar.
+        let err = tok
+            .encode_with_special_policy("<|bar|><|foo|>", &allowed, &disallowed)
+            .unwrap_err();
+        assert!(matches!(err, TokenizerError::DisallowedSpecialToken(ref s) if s == "<|foo|>"));
+    }
+
+    #[test]
+    fn policy_allowed_wins_over_disallowed_when_surface_is_in_both() {
+        let (tok, endoftext_id, _foo, _bar) = tokenizer_with_three_specials();
+        // Surface listed in both sets: allowed wins → emitted as
+        // special, no error.
+        let mut allowed: BTreeSet<&str> = BTreeSet::new();
+        allowed.insert("<|endoftext|>");
+        let mut disallowed_set: BTreeSet<&str> = BTreeSet::new();
+        disallowed_set.insert("<|endoftext|>");
+        let disallowed = DisallowedSpecials::These(&disallowed_set);
+        let enc = tok
+            .encode_with_special_policy("a<|endoftext|>", &allowed, &disallowed)
+            .unwrap();
+        assert_eq!(enc.ids, vec![u32::from(b'a'), endoftext_id]);
+        assert_eq!(enc.special_mask, vec![false, true]);
+    }
+
+    #[test]
+    fn policy_non_allowed_special_flows_through_as_regular_bytes() {
+        // Verify that a registered special not in allowed_special is
+        // encoded byte-by-byte (BPE loop over its surface bytes). Uses a
+        // vocab where every byte has an id so we can assert exact ids.
+        let (tok, _endoftext, foo_id, _bar) = tokenizer_with_three_specials();
+        let mut allowed: BTreeSet<&str> = BTreeSet::new();
+        allowed.insert("<|endoftext|>");
+        let enc = tok
+            .encode_with_special_policy("<|foo|>", &allowed, &DisallowedSpecials::None)
+            .unwrap();
+        // Should be 7 byte-level tokens (`<`, `|`, `f`, `o`, `o`, `|`, `>`),
+        // not the special id 50001.
+        let expected: Vec<u32> = "<|foo|>".bytes().map(u32::from).collect();
+        assert_eq!(enc.ids, expected);
+        assert!(!enc.ids.contains(&foo_id));
+        assert!(enc.special_mask.iter().all(|&b| !b));
     }
 
     #[test]

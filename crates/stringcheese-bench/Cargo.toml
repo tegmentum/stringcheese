@@ -47,6 +47,11 @@ stringcheese-ident = { workspace = true, features = ["std"] }
 # `digest_of_slice` backends the CDC bench measures — the bench crate
 # is publish = false, so opting in here does not affect downstream.
 stringcheese-cdc = { workspace = true, features = ["std", "simd"] }
+# BPE encoder throughput benches — measures the merge-table lookup
+# cost inside the O(n log n) merge loop, which dominates encode time
+# per the crate's design doc (§11).
+stringcheese-tokenizer-bpe = { workspace = true, features = ["std"] }
+stringcheese-tokenizer = { workspace = true, features = ["std"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }
@@ -158,6 +163,15 @@ harness = false
 # picks (AVX2 / SSE2 on x86_64, NEON on aarch64, SIMD128 on wasm32).
 [[bench]]
 name = "cdc"
+harness = false
+
+# BPE — measures encode throughput on a ~10 KiB English-prose corpus
+# with a byte-alphabet vocab and a few thousand synthetic merges plus
+# a batch of registered special tokens. The dominant cost inside the
+# merge loop is `BpeMergeTable::rank`; this bench tracks its
+# representation across refactors (BTreeMap → HashMap).
+[[bench]]
+name = "bpe"
 harness = false
 
 # Allocation-report binaries. Each one is gated on the `alloc-tracking`
