@@ -78,6 +78,7 @@
 //!   Pre-training of Deep Bidirectional Transformers for Language
 //!   Understanding." NAACL 2019.
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -86,6 +87,8 @@ use core::fmt;
 use stringcheese_tokenizer::{Encoding, Tokenizer, TokenizerError};
 
 use crate::bpe::TokenId;
+use crate::normalizer::{Normalizer, normalize};
+use crate::post_processor::PostProcessor;
 
 /// The pre-tokenizer variant used by [`WordPieceTokenizer`] to split
 /// raw input text into words before the greedy-longest-match loop
@@ -187,6 +190,19 @@ pub struct WordPieceTokenizer {
     /// How to split raw input text into words before the greedy
     /// longest-match loop. See [`WordPiecePreTokenizer`].
     pre_tokenizer: WordPiecePreTokenizer,
+    /// Optional Unicode normalizer applied to the raw input string
+    /// *before* pre-tokenization runs. Matches HF `tokenizers-rs`'
+    /// pipeline order (`normalize -> pre-tokenize -> WordPiece ->
+    /// post-process`) and mirrors [`crate::BpeTokenizer::with_normalizer`].
+    /// A value of `None` leaves the input unchanged, matching the
+    /// pre-normalizer behaviour of the tokenizer.
+    normalizer: Option<Normalizer>,
+    /// Optional post-processor applied to the finished [`Encoding`]
+    /// before it leaves [`Self::encode`]. Mirrors
+    /// [`crate::BpeTokenizer::with_post_processor`]; the default
+    /// [`PostProcessor::None`] is a pass-through so callers that never
+    /// configure a processor see the unchanged BPE-like output.
+    post_processor: PostProcessor,
 }
 
 /// Errors that can arise when building a [`WordPieceTokenizer`].
@@ -264,6 +280,8 @@ impl WordPieceTokenizer {
             continuing_subword_prefix,
             max_input_chars_per_word,
             pre_tokenizer: WordPiecePreTokenizer::default(),
+            normalizer: None,
+            post_processor: PostProcessor::None,
         })
     }
 
@@ -273,6 +291,50 @@ impl WordPieceTokenizer {
     pub fn with_pre_tokenizer(mut self, pre_tokenizer: WordPiecePreTokenizer) -> Self {
         self.pre_tokenizer = pre_tokenizer;
         self
+    }
+
+    /// Attach (or replace) the Unicode normalizer.
+    ///
+    /// The normalizer runs on the raw input string *before* the
+    /// pre-tokenizer, matching HF `tokenizers-rs`' pipeline order:
+    /// `normalize -> pre-tokenize -> WordPiece -> post-process`.
+    /// See [`Normalizer`] for the supported variants. This mirrors
+    /// [`crate::BpeTokenizer::with_normalizer`].
+    ///
+    /// Encoding offsets are not tracked by [`WordPieceTokenizer`], so
+    /// there is no offset-space impedance to worry about — the
+    /// normalizer's `&str -> String` output is what the pre-tokenizer
+    /// consumes verbatim.
+    #[must_use]
+    pub fn with_normalizer(mut self, normalizer: Normalizer) -> Self {
+        self.normalizer = Some(normalizer);
+        self
+    }
+
+    /// Attach (or replace) the post-processor.
+    ///
+    /// The post-processor runs on the finished [`Encoding`] before
+    /// [`Self::encode`] returns it — the same order
+    /// [`crate::BpeTokenizer`] uses. See
+    /// [`crate::post_processor::PostProcessor`] for the shape; the
+    /// default [`PostProcessor::None`] is a pass-through, so callers
+    /// who never configure one see the unchanged `WordPiece` output.
+    #[must_use]
+    pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
+        self.post_processor = post_processor;
+        self
+    }
+
+    /// Read-only access to the configured normalizer, if any.
+    #[must_use]
+    pub fn normalizer(&self) -> Option<&Normalizer> {
+        self.normalizer.as_ref()
+    }
+
+    /// Read-only access to the configured post-processor.
+    #[must_use]
+    pub fn post_processor(&self) -> &PostProcessor {
+        &self.post_processor
     }
 
     /// The registered unknown-token id.
@@ -313,11 +375,48 @@ impl WordPieceTokenizer {
 
     /// Encode `text` into a sequence of token ids.
     ///
-    /// Runs the configured pre-tokenizer to split `text` into words,
-    /// then runs the greedy longest-match `WordPiece` loop on each
-    /// word. Returns the concatenated ids across every word.
+    /// Runs the full BERT-parity pipeline:
+    ///
+    /// 1. Apply the configured [`Normalizer`] (if any) to `text`.
+    /// 2. Run the configured pre-tokenizer to split the normalized
+    ///    text into words.
+    /// 3. Run the greedy longest-match `WordPiece` loop on each word.
+    /// 4. Apply the configured [`PostProcessor`] to the assembled
+    ///    encoding.
+    ///
+    /// The [`Normalizer`] and [`PostProcessor`] default to identity
+    /// (`None` and [`PostProcessor::None`] respectively) so callers
+    /// who never configure them see the plain `pre-tokenize +
+    /// WordPiece` behaviour that this method has always produced.
     #[must_use]
     pub fn encode(&self, text: &str) -> Vec<TokenId> {
+        let normalized = self.normalize_text(text);
+        let ids = self.encode_ids_raw(normalized.as_ref());
+        // Fast-path the identity post-processor to avoid a needless
+        // `Encoding` allocation on the common no-post-processor path.
+        if matches!(self.post_processor, PostProcessor::None) {
+            ids
+        } else {
+            let mut enc: Encoding<TokenId> = Encoding::new();
+            enc.ids = ids;
+            self.post_processor.apply(&enc, true).ids
+        }
+    }
+
+    /// Apply the configured normalizer to `text`, or borrow it through
+    /// unchanged when no normalizer is set. Shared by every encode
+    /// path so all callers see the same normalization semantics.
+    fn normalize_text<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        match &self.normalizer {
+            Some(n) => Cow::Owned(normalize(text, n)),
+            None => Cow::Borrowed(text),
+        }
+    }
+
+    /// Run the pre-tokenizer + greedy longest-match loop over `text`
+    /// and return the raw ids, without normalization or
+    /// post-processing. Shared by both encode paths.
+    fn encode_ids_raw(&self, text: &str) -> Vec<TokenId> {
         let mut out = Vec::new();
         for word in self.split_words(text) {
             self.encode_word_into(&word, &mut out);
@@ -464,10 +563,23 @@ impl Tokenizer for WordPieceTokenizer {
     type Token = TokenId;
 
     fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
-        let ids = Self::encode(self, text);
-        let mut enc = Encoding::new();
+        // Full pipeline: normalize -> pre-tokenize + WordPiece ->
+        // post-process. Mirrors the inherent `encode` above; kept as a
+        // separate assembly because the `Tokenizer` trait must return
+        // an `Encoding<TokenId>` and the post-processor operates on
+        // one. Offsets and `special_mask` remain empty on the primary
+        // encoding (WordPiece does not track offsets); the
+        // post-processor's `apply` gracefully preserves empty
+        // per-token arrays.
+        let normalized = self.normalize_text(text);
+        let ids = self.encode_ids_raw(normalized.as_ref());
+        let mut enc: Encoding<TokenId> = Encoding::new();
         enc.ids = ids;
-        Ok(enc)
+        Ok(if matches!(self.post_processor, PostProcessor::None) {
+            enc
+        } else {
+            self.post_processor.apply(&enc, true)
+        })
     }
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
@@ -475,7 +587,22 @@ impl Tokenizer for WordPieceTokenizer {
     }
 
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
-        Ok(Self::encode(self, text).len())
+        // `count` mirrors `encode`'s full pipeline so
+        // `count(text) == encode(text)?.ids.len()` holds for every
+        // configuration. Fast-path the identity post-processor.
+        let normalized = self.normalize_text(text);
+        let base = self.encode_ids_raw(normalized.as_ref()).len();
+        Ok(match &self.post_processor {
+            PostProcessor::None => base,
+            PostProcessor::TemplateProcessing(_) => {
+                // Cheapest correct answer: run the splice against a
+                // synthetic encoding of the right length and count the
+                // ids field. Matches BpeTokenizer's own approach.
+                let mut synth: Encoding<TokenId> = Encoding::new();
+                synth.ids.resize(base, 0);
+                self.post_processor.apply(&synth, true).ids.len()
+            }
+        })
     }
 }
 
@@ -807,5 +934,134 @@ mod tests {
         for &c in &['a', 'Z', '0', '9', ' ', '\t'] {
             assert!(!is_punctuation(c), "expected '{c}' to be non-punctuation");
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Normalizer + post-processor wiring (BERT parity)
+    // -----------------------------------------------------------------
+
+    /// Build a small BERT-style vocab whose surface strings are all
+    /// lowercased and accent-stripped — the shape the BERT normalizer
+    /// hands to the pre-tokenizer.
+    fn bert_lowercase_vocab() -> BTreeMap<String, TokenId> {
+        let mut vocab = BTreeMap::new();
+        vocab.insert("[UNK]".to_string(), 0);
+        vocab.insert("[CLS]".to_string(), 1);
+        vocab.insert("[SEP]".to_string(), 2);
+        vocab.insert("hello".to_string(), 3);
+        vocab.insert("world".to_string(), 4);
+        vocab.insert("cafe".to_string(), 5);
+        vocab.insert(",".to_string(), 6);
+        vocab.insert("!".to_string(), 7);
+        vocab
+    }
+
+    #[test]
+    fn encode_applies_bert_normalizer_before_pre_tokenization() {
+        // The vocab has only lowercase, accent-stripped entries. Without
+        // the normalizer, `"CAFÉ"` would miss the vocab (`"CAFÉ"` is
+        // not registered, and there is no `##É` continuation) and emit
+        // UNK. With the default BERT normalizer (lowercase + accent
+        // strip), it lands as `"cafe"` → id 5.
+        let tok = WordPieceTokenizer::from_parts(bert_lowercase_vocab(), 0, "##".to_string(), 100)
+            .unwrap()
+            .with_normalizer(Normalizer::Bert {
+                clean_text: true,
+                handle_chinese_chars: true,
+                strip_accents: None,
+                lowercase: true,
+            });
+        // Hand-computed expected sequence for "Héllo, WORLD! CAFÉ":
+        //   normalize -> "hello, world! cafe"
+        //   pre-tokenize (Whitespace + punctuation split) ->
+        //     ["hello", ",", "world", "!", "cafe"]
+        //   WordPiece lookup -> [3, 6, 4, 7, 5]
+        assert_eq!(
+            tok.encode("Héllo, WORLD! CAFÉ"),
+            vec![3, 6, 4, 7, 5],
+            "BERT normalizer must run before pre-tokenization + WordPiece"
+        );
+    }
+
+    #[test]
+    fn encode_without_normalizer_leaves_input_unchanged() {
+        // Same vocab, no normalizer: the mixed-case input misses the
+        // lowercase vocab and produces UNKs — the existing behaviour is
+        // preserved when a caller does not configure a normalizer.
+        let tok = WordPieceTokenizer::from_parts(bert_lowercase_vocab(), 0, "##".to_string(), 100)
+            .unwrap();
+        assert!(tok.normalizer().is_none());
+        // "CAFÉ" without normalization: 4 chars, no vocab hit → UNK.
+        assert_eq!(tok.encode("CAFÉ"), vec![0]);
+    }
+
+    #[test]
+    fn encode_applies_template_processing_post_processor() {
+        // Configure a `[CLS] A [SEP]` template against a small vocab
+        // (ids 1 and 2 for the specials, from `small_bert_vocab`).
+        use crate::post_processor::{
+            PostProcessor, SpecialTokenInfo, TemplatePiece, TemplateProcessing,
+        };
+        let mut specials = BTreeMap::new();
+        specials.insert(
+            "[CLS]".to_string(),
+            SpecialTokenInfo {
+                ids: vec![1],
+                tokens: vec!["[CLS]".to_string()],
+            },
+        );
+        specials.insert(
+            "[SEP]".to_string(),
+            SpecialTokenInfo {
+                ids: vec![2],
+                tokens: vec!["[SEP]".to_string()],
+            },
+        );
+        let tp = TemplateProcessing {
+            single: vec![
+                TemplatePiece::SpecialToken {
+                    id: "[CLS]".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::Sequence {
+                    id: "A".to_string(),
+                    type_id: 0,
+                },
+                TemplatePiece::SpecialToken {
+                    id: "[SEP]".to_string(),
+                    type_id: 0,
+                },
+            ],
+            pair: vec![],
+            special_tokens: specials,
+        };
+        let tok = small_tokenizer().with_post_processor(PostProcessor::TemplateProcessing(tp));
+        // Primary encoding of "cat dog" is [6, 7]; the template
+        // splices [CLS]=1 before and [SEP]=2 after → [1, 6, 7, 2].
+        let ids = tok.encode("cat dog");
+        assert_eq!(ids, vec![1, 6, 7, 2]);
+        assert_eq!(*ids.first().unwrap(), 1, "output must start with CLS id");
+        assert_eq!(*ids.last().unwrap(), 2, "output must end with SEP id");
+        // `count` must agree with `encode(text)?.ids.len()`.
+        assert_eq!(Tokenizer::count(&tok, "cat dog").unwrap(), ids.len());
+        // The trait-shape encode returns the templated encoding too.
+        let enc = Tokenizer::encode(&tok, "cat dog").unwrap();
+        assert_eq!(enc.ids, ids);
+    }
+
+    #[test]
+    fn default_post_processor_is_identity_and_preserves_existing_shape() {
+        // Sanity check: a freshly-built tokenizer with no
+        // post-processor produces the same ids as before, and the
+        // trait-shape encode leaves offsets/special_mask empty (the
+        // documented shape for callers who don't configure a
+        // post-processor).
+        let tok = small_tokenizer();
+        assert!(matches!(tok.post_processor(), PostProcessor::None));
+        assert_eq!(tok.encode("cat dog"), vec![6, 7]);
+        let enc = Tokenizer::encode(&tok, "cat dog").unwrap();
+        assert_eq!(enc.ids, vec![6, 7]);
+        assert!(enc.offsets.is_empty());
+        assert!(enc.special_mask.is_empty());
     }
 }
