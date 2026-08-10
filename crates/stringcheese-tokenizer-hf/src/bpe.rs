@@ -1107,23 +1107,30 @@ impl Tokenizer for BpeTokenizer {
             // (see [`crate::post_processor::PostProcessor::ByteLevel`]);
             // token count is unchanged.
             | crate::post_processor::PostProcessor::ByteLevel { .. } => base,
-            crate::post_processor::PostProcessor::TemplateProcessing(_) => {
+            crate::post_processor::PostProcessor::TemplateProcessing(_)
+            | crate::post_processor::PostProcessor::BertProcessing(_)
+            | crate::post_processor::PostProcessor::RobertaProcessing(_) => {
                 // Cheapest correct answer: run the splice against a
                 // synthetic encoding of the right length and count the
-                // ids field.
+                // ids field. All three variants add a fixed number of
+                // tokens irrespective of ids, so the synthetic-encoding
+                // shape yields the correct count.
                 let mut synth: Encoding<TokenId> = Encoding::new();
                 synth.ids.resize(base, 0);
                 self.post_processor.apply(&synth, true).ids.len()
             }
-            crate::post_processor::PostProcessor::RobertaProcessing(_) => {
-                // Same shape as TemplateProcessing: run the splice
-                // against a synthetic encoding of the right length.
-                // BPE tokenizers rarely ship RobertaProcessing today
-                // (XLM-RoBERTa is Unigram-shaped, not BPE), but the
-                // arm keeps the internal exhaustive match compiling.
+            crate::post_processor::PostProcessor::Sequence(children) => {
+                // Walk the sequence and thread a synthetic-encoding of
+                // the current length through each child, summing the
+                // per-arm additions inductively. Runs the same apply
+                // path the encode-side does — cheapest correct answer
+                // that handles nested Sequence variants uniformly.
                 let mut synth: Encoding<TokenId> = Encoding::new();
                 synth.ids.resize(base, 0);
-                self.post_processor.apply(&synth, true).ids.len()
+                for child in children {
+                    synth = child.apply(&synth, true);
+                }
+                synth.ids.len()
             }
         })
     }
