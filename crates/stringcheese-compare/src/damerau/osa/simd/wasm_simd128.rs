@@ -32,9 +32,13 @@
 //!   cross-lane carries.
 //! * For `m > 128` the pattern no longer fits in one 128-bit register;
 //!   this path delegates back to [`super::scalar`] which handles the
-//!   longer-pattern rolling-rows fallback. A block-form Hyyrö-OSA for
-//!   `m > 128` (matching the SSE2/NEON siblings' scope) is documented
-//!   follow-up work.
+//!   longer-pattern rolling-rows fallback. The AVX2 sibling extends the
+//!   bit-parallel range to `m ≤ 256` using its 256-bit register; a
+//!   256-bit wasm SIMD extension does not exist yet in the wasm spec,
+//!   so extending this path beyond `m ≤ 128` would require a block-form
+//!   Hyyrö that walks the pattern in successive 128-bit blocks — a
+//!   documented follow-up when the wasm ecosystem grows a wider SIMD
+//!   tier or a bench-driven caller needs it.
 //!
 //! # wasm-SIMD-specific carry mechanics
 //!

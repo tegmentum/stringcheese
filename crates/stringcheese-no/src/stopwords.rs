@@ -38,9 +38,12 @@
 //! - **Domain-specific stopwords.** IR practice for legal, medical, or
 //!   scientific corpora typically extends the general list. Downstream
 //!   applications should carry their own.
-//! - **Nynorsk-only extension.** The planned `stringcheese-nn` sibling
-//!   will ship a Nynorsk-tuned list that expands the Nynorsk-flavored
-//!   entries kept here for Snowball parity.
+//! - **Nynorsk-only extension.** The sibling `stringcheese-nn` pack
+//!   ships a Nynorsk-tuned stopword list that adds the Nynorsk-specific
+//!   forms (`eg`, `ho`, `me`, `dei`, `dykk`, `ein`, `ei`, `eit`,
+//!   `ikkje`, `kva`, `kvifor`, `korleis`, `kven`, `vera`, `verta`, …)
+//!   Bokmål does not carry. This pack keeps only the Nynorsk-flavored
+//!   forms Snowball-Norwegian's `voc.txt` embeds for parity reasons.
 //! - **Case sensitivity.** The list is stored lowercase; membership
 //!   checks are performed with [`str::eq_ignore_ascii_case`], so `"og"`,
 //!   `"Og"`, and `"OG"` are all recognized. The default trait-level

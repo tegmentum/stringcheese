@@ -4,9 +4,12 @@
 //! Birch (2016), extending Gage (1994) — over caller-supplied merge
 //! tables and vocabularies. It does not ship any specific model's data;
 //! the pre-configured `OpenAI` variants (`cl100k_base`, `o200k_base`,
-//! `r50k_base`, ...) live in the downstream
-//! `stringcheese-tokenizer-tiktoken` crate (Phase 3, not yet
-//! implemented).
+//! `r50k_base`, `p50k_base`) live in the downstream
+//! [`stringcheese-tokenizer-tiktoken`] crate, each behind its own Cargo
+//! feature so a caller who only needs `cl100k_base` never embeds the
+//! other three vocabularies.
+//!
+//! [`stringcheese-tokenizer-tiktoken`]: https://docs.rs/stringcheese-tokenizer-tiktoken
 //!
 //! # Hugging Face `tokenizer.json`
 //!

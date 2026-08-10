@@ -71,10 +71,6 @@
 //! * **Finland-Swedish (sv-FI) variant.** Regional-variant stopword
 //!   extensions and Finland-Swedish pronunciation-specific PHONEX
 //!   tuning.
-//! * **Norwegian / Danish sibling packs.** Norwegian Bokmål and Danish
-//!   share substantial vocabulary with Swedish; the Snowball project
-//!   ships separate Norwegian and Danish stemmers that will land as
-//!   their own `stringcheese-no` / `stringcheese-da` packs.
 //! * **Full-corpus cross-verification.** The Snowball project
 //!   distributes `voc.txt` / `output.txt` reference files with tens
 //!   of thousands of pairs; the

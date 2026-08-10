@@ -6,12 +6,16 @@
 //! [`crate::jaro`], but rewrites the matching-window
 //! scan into a form that maps cleanly to vector loads — the inner loop
 //! walks a contiguous slice of `b` and compares each cell against a
-//! broadcast `a[i]` plus a "not-already-matched" bitmap mask. On the
-//! current scalar host that shape lowers to a tight scalar loop; the
-//! arch-specific backends can lift the same shape into `pcmpeqb` +
-//! `pmovmskb` (SSE2), `_mm256_cmpeq_epi8` + `_mm256_movemask_epi8` (AVX2),
-//! or the equivalent NEON compare + horizontal-reduce sequence without
-//! any structural change to the algorithm.
+//! broadcast `a[i]` plus a "not-already-matched" bitmap mask. On a
+//! scalar-only host that shape lowers to a tight scalar loop; the
+//! four sibling arch backends ([`super::x86_avx2`], [`super::x86_sse2`],
+//! [`super::aarch64_neon`], [`super::wasm_simd128`]) lift the same shape
+//! into arch-specific byte-lane compares (`_mm256_cmpeq_epi8` on AVX2,
+//! `_mm_cmpeq_epi8` on SSE2, `vceqq_u8` on NEON, `u8x16_eq` on wasm
+//! SIMD128) with the matching mask-reduction (`_mm256_movemask_epi8`,
+//! `_mm_movemask_epi8`, NEON's `vshrn_n_u16::<4>` nibble movemask, and
+//! `u8x16_bitmask` respectively), without any structural change to the
+//! algorithm.
 //!
 //! # Algorithm
 //!
@@ -38,10 +42,12 @@
 //! # Bitmap layout
 //!
 //! `b_matched` is a packed bit-vector (one bit per position of `b`)
-//! rather than a `Vec<bool>` of one byte per position. Packing lets a
-//! future arch-specific backend AND the bitmap against a comparison-mask
-//! word directly, and it halves the memory traffic of the scalar path
-//! too.
+//! rather than a `Vec<bool>` of one byte per position. Packing lets the
+//! four arch backends AND the bitmap against the block's comparison-mask
+//! word directly — the shared [`super::common::Bitmap::read_bits`] hands
+//! back the exact slice of `b_matched` corresponding to a block's window
+//! range as one integer — and it halves the memory traffic of the scalar
+//! path too.
 //!
 //! # Reference
 //!
@@ -108,10 +114,12 @@ pub fn similarity(a: &[u8], b: &[u8]) -> f64 {
         // The vectorizable step: broadcast a[i] and scan b[start..end]
         // for the first position that (a) equals the broadcast byte and
         // (b) is not yet marked in b_matched. `find_match_in_window`
-        // wraps that scan; the arch-specific backends replace its body
-        // with a pcmpeqb / vpcmpeqb / vceqq_u8 lane compare, an AND
-        // against the packed b_matched slice, and a first-set-bit
-        // reduction, without changing the surrounding bookkeeping.
+        // wraps that scan; the four sibling arch backends implement the
+        // same signature with a `cmpeq_epi8` / `vceqq_u8` / `u8x16_eq`
+        // lane compare, an AND against the packed b_matched slice
+        // (fetched through `common::Bitmap::read_bits`), and a
+        // first-set-bit reduction, without changing the surrounding
+        // bookkeeping.
         if let Some(j) = find_match_in_window(a[i], &b[start..end], &b_matched, start) {
             a_matched.set(i);
             b_matched.set(j);
@@ -166,11 +174,12 @@ pub fn similarity(a: &[u8], b: &[u8]) -> f64 {
 ///
 /// Returns the absolute position in `b` on success, `None` if no match
 /// remains in the window. Structuring the scan as a function on a
-/// contiguous slice is what makes the SIMD lowering direct: an
-/// arch-specific backend loads a vector-register block of `window`,
-/// compares against a broadcast `needle`, masks against the corresponding
-/// slice of `b_matched`, and reduces to the first set bit — all without
-/// touching the outer loop.
+/// contiguous slice is what makes the SIMD lowering direct: the four
+/// arch backends load a vector-register block of `window`, compare
+/// against a broadcast `needle`, AND against the corresponding slice of
+/// `b_matched` (via [`super::common::Bitmap::read_bits`]) plus a valid-
+/// lanes mask on the trailing partial block, and reduce to the first
+/// set bit — all without touching the outer loop.
 #[inline]
 fn find_match_in_window(
     needle: u8,

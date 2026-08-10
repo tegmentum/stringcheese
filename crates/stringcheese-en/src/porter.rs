@@ -37,10 +37,12 @@
 //!
 //! # Non-goals
 //!
-//! * **Porter2 (Snowball).** Porter2's revised algorithm is a follow-up
-//!   for a later wave; the classic Porter algorithm is the reference
-//!   the paper and every other library documents against and is enough
-//!   for v0.1.
+//! * **Porter2 (Snowball).** Porter2's revised algorithm is a separate
+//!   module — see [`crate::porter2`], wired into the pack via
+//!   [`crate::English::with_porter2`] and the [`crate::ENGLISH_PORTER2`]
+//!   constant. This module deliberately keeps the classic 1980
+//!   algorithm as the reference the paper and every other library
+//!   documents against.
 //! * **Case preservation.** Porter's algorithm operates on lowercase
 //!   ASCII. This implementation lowercases the input at the entry point
 //!   and returns a lowercase stem; callers who need case preservation

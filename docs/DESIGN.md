@@ -128,10 +128,14 @@ implementations live here. Callers picking a language at runtime
 (user locale, config file, `Accept-Language` header) reach for
 `registry::language(code)`; callers who name the pack at compile
 time keep using the pack's `ENGLISH` / `GERMAN` / `FRENCH`
-constant. Full BCP-47 fallback (`"pt-BR" → "pt"`) is a v0.2 follow-up.
+constant. `registry::language` walks the right-to-left BCP-47
+subtag-strip fallback (`"pt-BR"` → `"pt"`, `"sr-Cyrl-RS"` → `"sr"`,
+`"en-GB-oed"` → `"en"`); callers who need strict-exact semantics
+use `registry::language_exact`.
 
 **Language packs** — `stringcheese-<language>` (e.g.,
-`stringcheese-en`, planned: `stringcheese-de`, `stringcheese-ja`, …).
+`stringcheese-en`, `stringcheese-de`, `stringcheese-ja`, and dozens
+more shipped in the workspace).
 Data-driven implementations of stemming, stopword lists,
 language-specific phonetic encoders, tokenization rules, collation
 tailoring, and morphological analysis — one opt-in crate per

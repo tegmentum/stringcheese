@@ -34,17 +34,19 @@
 //!
 //! # Why the scalar reference stays rolling-rows
 //!
-//! The three arch-specific backends implement Hyyrö's (2003)
-//! bit-parallel OSA — Myers's word-parallel Levenshtein extended with an
-//! extra bit-vector `Pm_old` that carries the transposition-match state
-//! between adjacent columns. The recurrence is more delicate than the
-//! classical Myers pattern (the transposition bit depends on the
-//! *previous column's* equality mask, so the propagation needs a
-//! per-column bookkeeping word). Keeping this scalar backend on the
-//! rolling-rows form deliberately isolates the differential-test anchor
-//! from the bit-parallel encoding under test — a bug in the shared
-//! Hyyrö encoding cannot silently agree with itself across every
-//! backend when the reference is a different algorithm altogether.
+//! The four arch-specific backends ([`super::x86_avx2`],
+//! [`super::x86_sse2`], [`super::aarch64_neon`],
+//! [`super::wasm_simd128`]) implement Hyyrö's (2003) bit-parallel OSA
+//! — Myers's word-parallel Levenshtein extended with an extra bit-vector
+//! `Pm_old` that carries the transposition-match state between adjacent
+//! columns. The recurrence is more delicate than the classical Myers
+//! pattern (the transposition bit depends on the *previous column's*
+//! equality mask, so the propagation needs a per-column bookkeeping
+//! word). Keeping this scalar backend on the rolling-rows form
+//! deliberately isolates the differential-test anchor from the
+//! bit-parallel encoding under test — a bug in the shared Hyyrö encoding
+//! cannot silently agree with itself across every backend when the
+//! reference is a different algorithm altogether.
 //!
 //! # Reference for the bit-parallel form used by the arch backends
 //!
@@ -168,7 +170,8 @@ mod tests {
 
     #[test]
     fn boundary_length_63_matches_oracle() {
-        // Just inside the (future) single-word Myers cutoff.
+        // Just inside the single-word Myers cutoff (m ≤ 64) that the
+        // arch backends share with the scalar path.
         let a: alloc::vec::Vec<u8> = (0..63u8).collect();
         let mut b = a.clone();
         b.swap(10, 11);
@@ -188,8 +191,11 @@ mod tests {
 
     #[test]
     fn boundary_length_65_matches_oracle() {
-        // One position past the single-word boundary — the future
-        // block-Myers case.
+        // One position past the single-word boundary — inside the
+        // wide-block Hyyrö range that the four arch backends implement
+        // (64 < m ≤ 128 on SSE2 / NEON / wasm SIMD128; up to 256 on
+        // AVX2). The scalar here stays on rolling-rows and anchors the
+        // differential tests for those backends.
         let a: alloc::vec::Vec<u8> = (0..65u8).collect();
         let mut b = a.clone();
         b[64] ^= 0x01;
