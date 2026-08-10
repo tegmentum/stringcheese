@@ -848,13 +848,22 @@ pub enum HfNormalizer {
         content: String,
     },
     /// Trim whitespace from one or both sides.
+    ///
+    /// HF's on-disk `tokenizer.json` shape names the two toggles
+    /// `strip_left` and `strip_right` (matching upstream's
+    /// [`tokenizers-rs`][hf-strip] source); those are the primary
+    /// serde names. The bare `left` / `right` spellings are accepted
+    /// as aliases so any legacy blob written by tools that use the
+    /// short names still parses.
+    ///
+    /// [hf-strip]: https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/normalizers/strip.rs
     Strip {
         /// If `true`, strip leading whitespace.
-        #[serde(default = "default_true")]
-        left: bool,
+        #[serde(rename = "strip_left", alias = "left", default = "default_true")]
+        strip_left: bool,
         /// If `true`, strip trailing whitespace.
-        #[serde(default = "default_true")]
-        right: bool,
+        #[serde(rename = "strip_right", alias = "right", default = "default_true")]
+        strip_right: bool,
     },
     /// Prepend a fixed literal to the input (`SentencePiece` "`▁`"
     /// pattern).
@@ -3874,9 +3883,12 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
                 content: content.clone(),
             }),
         },
-        HfNormalizer::Strip { left, right } => Ok(Normalizer::Strip {
-            left: *left,
-            right: *right,
+        HfNormalizer::Strip {
+            strip_left,
+            strip_right,
+        } => Ok(Normalizer::Strip {
+            left: *strip_left,
+            right: *strip_right,
         }),
         HfNormalizer::Prepend { prepend } => Ok(Normalizer::Prepend {
             prepend: prepend.clone(),
@@ -5095,6 +5107,173 @@ mod tests {
         // is not exercised further here — the conformance corpus is
         // the right home for encode-side parity assertions.
         let _tok = to_tokenizer(&config).unwrap();
+    }
+
+    #[test]
+    fn normalizer_deberta_v3_real_stack_loads_and_normalizes() {
+        // The exact `Sequence[Replace(Regex), NFC, Strip{strip_right}]`
+        // stack that microsoft/deberta-v3-base and
+        // microsoft/mdeberta-v3-base ship on disk (transformers==5.14.1
+        // conversion output). Two things are being pinned here:
+        //
+        //   1. Sequence composes Replace(Regex) + NFC + Strip in order
+        //      through the runtime `normalize` fold — earlier waves
+        //      shipped Replace(String) inside Sequence but not
+        //      Replace(Regex) or the Strip variant with HF's on-disk
+        //      `strip_left`/`strip_right` field names.
+        //   2. `Strip { strip_left: false, strip_right: true }`
+        //      deserialises with the HF-canonical field names (before
+        //      this landing the loader used the short names `left` /
+        //      `right`, which meant HF's `strip_left`/`strip_right`
+        //      were silently dropped and defaults applied — mDeBERTa's
+        //      trailing-whitespace normalisation would silently swap
+        //      to two-sided strip).
+        let json = r#"{
+            "added_tokens": [],
+            "normalizer": {
+                "type": "Sequence",
+                "normalizers": [
+                    {"type": "Replace", "pattern": {"Regex": "\\s{2,}|[\\n\\r\\t]"}, "content": " "},
+                    {"type": "NFC"},
+                    {"type": "Strip", "strip_left": false, "strip_right": true}
+                ]
+            },
+            "model": {
+                "type": "Unigram",
+                "vocab": [["<unk>", 0.0], ["a", -1.0], ["b", -2.0], [" ", -3.0]],
+                "unk_id": 0
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        // Assert the Strip child parsed with the HF field names,
+        // *not* the alias defaults — before this landing the loader
+        // silently dropped `strip_left`/`strip_right` and applied
+        // `left: true, right: true` via serde defaults.
+        match config.normalizer.as_ref().unwrap() {
+            HfNormalizer::Sequence { normalizers } => {
+                assert_eq!(normalizers.len(), 3);
+                match &normalizers[2] {
+                    HfNormalizer::Strip {
+                        strip_left,
+                        strip_right,
+                    } => {
+                        assert!(!*strip_left, "strip_left must parse as false");
+                        assert!(*strip_right, "strip_right must parse as true");
+                    }
+                    other => panic!("expected Strip, got {other:?}"),
+                }
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
+        let tok = to_tokenizer(&config).unwrap();
+        // Sanity: the runtime normalizer is a Sequence of three.
+        let n = match &tok {
+            HfTokenizer::Unigram(u) => u.normalizer(),
+            other => panic!("expected Unigram tokenizer, got {other:?}"),
+        };
+        match n {
+            Some(crate::normalizer::Normalizer::Sequence(children)) => {
+                assert_eq!(children.len(), 3);
+                assert!(matches!(
+                    children[2],
+                    crate::normalizer::Normalizer::Strip {
+                        left: false,
+                        right: true,
+                    }
+                ));
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizer_strip_accepts_short_field_alias() {
+        // Defensive: any legacy tokenizer.json blob that uses the
+        // short `left` / `right` field names (mirroring the runtime
+        // type's fields, not HF's on-disk shape) still parses via the
+        // serde alias.
+        let n: HfNormalizer =
+            serde_json::from_str(r#"{"type": "Strip", "left": false, "right": true}"#).unwrap();
+        match n {
+            HfNormalizer::Strip {
+                strip_left,
+                strip_right,
+            } => {
+                assert!(!strip_left);
+                assert!(strip_right);
+            }
+            other => panic!("expected Strip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizer_nested_sequence_loads_and_flattens_at_runtime() {
+        // A nested Sequence — outer contains an inner Sequence plus a
+        // sibling — must parse (nested `HfNormalizer::Sequence` is
+        // valid on the wire) and materialise into a runtime Sequence
+        // whose fold is left-to-right through both layers. This
+        // pins the associativity behaviour tested on the runtime side
+        // (`sequence_nesting_is_associative`) for the loader path too.
+        let json = r#"{
+            "added_tokens": [],
+            "normalizer": {
+                "type": "Sequence",
+                "normalizers": [
+                    {
+                        "type": "Sequence",
+                        "normalizers": [
+                            {"type": "NFD"},
+                            {"type": "Lowercase"}
+                        ]
+                    },
+                    {"type": "Strip", "strip_left": true, "strip_right": true}
+                ]
+            },
+            "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        match tok.normalizer() {
+            Some(crate::normalizer::Normalizer::Sequence(children)) => {
+                assert_eq!(children.len(), 2);
+                match &children[0] {
+                    crate::normalizer::Normalizer::Sequence(inner) => {
+                        assert_eq!(inner.len(), 2);
+                        assert!(matches!(inner[0], crate::normalizer::Normalizer::Nfd));
+                        assert!(matches!(inner[1], crate::normalizer::Normalizer::Lowercase));
+                    }
+                    other => panic!("expected inner Sequence, got {other:?}"),
+                }
+                assert!(matches!(
+                    children[1],
+                    crate::normalizer::Normalizer::Strip {
+                        left: true,
+                        right: true,
+                    }
+                ));
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn normalizer_empty_sequence_loads_as_identity() {
+        // An empty Sequence must parse and materialise into a runtime
+        // Sequence with zero children — which the runtime `normalize`
+        // fold treats as the identity function.
+        let json = r#"{
+            "added_tokens": [],
+            "normalizer": {"type": "Sequence", "normalizers": []},
+            "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        match tok.normalizer() {
+            Some(crate::normalizer::Normalizer::Sequence(children)) => {
+                assert!(children.is_empty());
+            }
+            other => panic!("expected empty Sequence, got {other:?}"),
+        }
     }
 
     #[test]
