@@ -1102,7 +1102,11 @@ impl Tokenizer for BpeTokenizer {
         let base = self.encode_pieces(normalized.as_ref())?.len();
         // Post-processor may inject or drop tokens.
         Ok(match &self.post_processor {
-            crate::post_processor::PostProcessor::None => base,
+            crate::post_processor::PostProcessor::None
+            // ByteLevel is a documented no-op on the encoding
+            // (see [`crate::post_processor::PostProcessor::ByteLevel`]);
+            // token count is unchanged.
+            | crate::post_processor::PostProcessor::ByteLevel { .. } => base,
             crate::post_processor::PostProcessor::TemplateProcessing(_) => {
                 // Cheapest correct answer: run the splice against a
                 // synthetic encoding of the right length and count the
