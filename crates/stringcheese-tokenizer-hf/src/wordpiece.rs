@@ -213,6 +213,13 @@ pub struct WordPieceTokenizer {
     /// [`PostProcessor::None`] is a pass-through so callers that never
     /// configure a processor see the unchanged BPE-like output.
     post_processor: PostProcessor,
+    /// Optional decoder chain applied at [`Self::decode`] time. When
+    /// set, the ids' surface strings are threaded through the chain
+    /// (mirroring HF's own `Decoder::decode_chain`) instead of the
+    /// default `WordPiece` prefix-stripping decoder. Only the "chain"
+    /// variants of [`crate::Decoder`] participate; passthrough /
+    /// byte-level are treated as identity here.
+    decoder: Option<crate::Decoder>,
     /// Optional truncation configuration; see
     /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
     truncation: Option<stringcheese_tokenizer::truncation::TruncationConfig>,
@@ -299,6 +306,7 @@ impl WordPieceTokenizer {
             special_tokens: BTreeMap::new(),
             normalizer: None,
             post_processor: PostProcessor::None,
+            decoder: None,
             truncation: None,
             padding: None,
         })
@@ -364,6 +372,29 @@ impl WordPieceTokenizer {
     pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
         self.post_processor = post_processor;
         self
+    }
+
+    /// Attach (or replace) the decoder chain applied at
+    /// [`Self::decode`] time.
+    ///
+    /// When set, `decode` walks each id to its per-token surface
+    /// string (via the vocab) and threads the list through the chain
+    /// (see [`crate::Decoder`] for the shape). This bypasses the
+    /// default `WordPiece` continuing-subword-prefix decoder — callers
+    /// who want that behaviour must leave the decoder unset. Only the
+    /// "chain" variants of [`crate::Decoder`] participate here;
+    /// passthrough / byte-level are treated as identity because the
+    /// `WordPiece` runtime has no byte-level interpretation.
+    #[must_use]
+    pub fn with_decoder(mut self, decoder: crate::Decoder) -> Self {
+        self.decoder = Some(decoder);
+        self
+    }
+
+    /// Read-only access to the configured decoder chain, if any.
+    #[must_use]
+    pub fn decoder(&self) -> Option<&crate::Decoder> {
+        self.decoder.as_ref()
     }
 
     /// Attach (or replace) the truncation configuration; see
@@ -585,6 +616,29 @@ impl WordPieceTokenizer {
     /// Returns [`WordPieceDecodeError::UnknownId`] if any id in
     /// `tokens` is not registered in the vocabulary.
     pub fn decode(&self, tokens: &[TokenId]) -> Result<String, WordPieceDecodeError> {
+        // Chain-decoder fast path: if a decoder chain is configured,
+        // route each id to its vocab surface string and thread the
+        // list through the chain. Mirrors [`crate::BpeTokenizer::decode`]
+        // and [`crate::hf::UnigramTokenizer::decode`]: an explicit
+        // chain-shape decoder overrides the runtime's default per-family
+        // decode. A checkpoint that ships without a decoder block keeps
+        // the `WordPiece` continuing-subword-prefix behaviour below.
+        if let Some(dec) = self.decoder.as_ref().filter(|d| d.is_chain()) {
+            let mut token_strs: Vec<String> = Vec::with_capacity(tokens.len());
+            for &id in tokens {
+                let Some(surface) = self.reverse.get(&id) else {
+                    return Err(WordPieceDecodeError::UnknownId(id));
+                };
+                token_strs.push(surface.clone());
+            }
+            let out = dec.apply_chain(token_strs);
+            let mut buf = String::new();
+            for s in &out {
+                buf.push_str(s);
+            }
+            return Ok(buf);
+        }
+
         let mut out = String::new();
         for (i, &id) in tokens.iter().enumerate() {
             let Some(surface) = self.reverse.get(&id) else {

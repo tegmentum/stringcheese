@@ -719,10 +719,12 @@ pub struct HfByteLevelPreTokenizer {
 
 /// The `decoder` block of a `tokenizer.json` file.
 ///
-/// Only [`HfDecoder::ByteLevel`] is honoured at conversion time; the
-/// others parse successfully and preserve their raw JSON so callers
-/// can inspect what was rejected. See
-/// [`HfTokenizerConfig::decoder`] for the field's role.
+/// The variants named here are honoured at conversion time and
+/// materialise into a runtime [`Decoder`]; every other tag string
+/// falls through to [`Self::Other`] (raw JSON preserved for caller
+/// inspection, no runtime decoder attached). See
+/// [`HfTokenizerConfig::decoder`] for the field's role and
+/// [`to_bpe_tokenizer`] for the wiring.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 #[non_exhaustive]
@@ -747,13 +749,70 @@ pub enum HfDecoder {
         #[serde(default = "default_true")]
         use_regex: bool,
     },
+    /// Compose several decoders left-to-right. Every child materialises
+    /// into a runtime [`Decoder`] arm at conversion time, producing a
+    /// [`Decoder::Sequence`] whose stages match this block's `decoders`
+    /// array in order. Llama-2 ships as `Sequence[Replace(▁→ ),
+    /// ByteFallback, Fuse, Strip(" ",1,0)]` — see
+    /// [`Decoder::Sequence`] for the semantics.
+    Sequence {
+        /// The child decoders. HF calls this field `"decoders"` on
+        /// disk (matching every other `Sequence`-shape's plural naming
+        /// in the spec).
+        decoders: Vec<HfDecoder>,
+    },
+    /// Per-token literal or regex replace. Only [`HfPattern::String`]
+    /// is honoured at conversion — the runtime [`Decoder::Replace`] is
+    /// literal-only. An [`HfPattern::Regex`] here surfaces
+    /// [`HfConversionError::UnsupportedDecoder`] with the offending
+    /// variant name; no shipped HF checkpoint's decoder-side `Replace`
+    /// uses a regex, so this restriction is a real-world no-op.
+    Replace {
+        /// The literal-or-regex pattern block.
+        pattern: HfPattern,
+        /// The replacement string.
+        content: String,
+    },
+    /// Concatenate every token string into a single-entry list
+    /// (empty-string separator). Materialises into
+    /// [`Decoder::Fuse`]. Ships in the Llama-2 chain as the third
+    /// stage, after `Replace` and `ByteFallback` have run and before
+    /// `Strip` trims the surviving leading space.
+    Fuse,
+    /// Strip up to `start` leading / `stop` trailing occurrences of
+    /// [`Self::Strip::content`] from each token. HF stores `content`
+    /// as a JSON string; at conversion time we validate it is exactly
+    /// one Unicode scalar (which every shipped checkpoint's decoder
+    /// satisfies — Llama-2 uses `" "`) and materialise it into
+    /// [`Decoder::Strip`]. A multi-character `content` surfaces
+    /// [`HfConversionError::UnsupportedDecoder`].
+    Strip {
+        /// The character to strip — on disk a JSON string of length 1.
+        content: String,
+        /// Maximum leading occurrences to remove.
+        #[serde(default)]
+        start: usize,
+        /// Maximum trailing occurrences to remove.
+        #[serde(default)]
+        stop: usize,
+    },
+    /// `SentencePiece` byte-fallback reassembly at the decoder-chain
+    /// level. Materialises into [`Decoder::ByteFallback`]. Distinct
+    /// from the model-side `byte_fallback` flag under
+    /// [`HfBpeModel::byte_fallback`] / [`HfUnigramModel::byte_fallback`]:
+    /// the model-side flag controls the *encode* path (how OOV chars
+    /// become ids); the decoder-side stage controls the *decode* path
+    /// (how `<0xXX>` surface strings reassemble into UTF-8 chars).
+    /// Both stages typically ship together in real checkpoints — Llama-2
+    /// enables the model-side flag *and* wires `ByteFallback` into
+    /// its decoder chain, and this crate honours both.
+    ByteFallback,
     /// Any other decoder (`WordPiece`, `Metaspace`, `BPEDecoder`,
-    /// `Sequence`, ...). Serde's `#[serde(other)]` catches every
-    /// tag string that does not match the variants listed above;
-    /// the payload beyond the tag is discarded (callers who need to
-    /// inspect a rejected decoder can re-parse the raw JSON
-    /// themselves — the original `tokenizer.json` byte string is the
-    /// authoritative source).
+    /// ...). Serde's `#[serde(other)]` catches every tag string that
+    /// does not match the variants listed above; the payload beyond
+    /// the tag is discarded (callers who need to inspect a rejected
+    /// decoder can re-parse the raw JSON themselves — the original
+    /// `tokenizer.json` byte string is the authoritative source).
     #[serde(other)]
     Other,
 }
@@ -1511,9 +1570,27 @@ pub enum HfConversionError {
         /// all 256 possible values.
         first_missing_byte: u8,
     },
+    /// The `decoder` block used a tag or field this crate cannot
+    /// materialise. Currently surfaces for
+    /// [`HfDecoder::Replace`] with an [`HfPattern::Regex`] (the
+    /// runtime is literal-only), for [`HfDecoder::Strip`] whose
+    /// `content` string is not exactly one Unicode scalar, and for
+    /// [`HfDecoder::Other`] (unrecognised tag names such as
+    /// `WordPieceDecoder`, `Metaspace`, `BPEDecoder`, ...).
+    UnsupportedDecoder {
+        /// A short label naming the offending shape.
+        reason: String,
+    },
 }
 
 impl fmt::Display for HfConversionError {
+    // One arm per variant of a wide, non-exhaustive error enum — every
+    // arm is a single `write!` call, so the length is proportional to
+    // the variant count rather than the algorithmic complexity of the
+    // function. Splitting it into per-variant helpers would obscure
+    // the shape reviewers actually want to see (one arm per
+    // `HfConversionError` variant, all in one place).
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedModel { type_name } => write!(
@@ -1613,6 +1690,9 @@ impl fmt::Display for HfConversionError {
                  is missing {missing_count} of the required 256 <0xXX> \
                  byte-fallback tokens (first missing byte: 0x{first_missing_byte:02X})"
             ),
+            Self::UnsupportedDecoder { reason } => {
+                write!(f, "unsupported HF decoder configuration: {reason}")
+            }
         }
     }
 }
@@ -1864,10 +1944,16 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
         }
     }
 
-    // Decoder — only ByteLevel is honoured; the passthrough default
-    // covers every other shape.
-    if let Some(HfDecoder::ByteLevel { .. }) = &config.decoder {
-        tok = tok.with_decoder(Decoder::ByteLevel);
+    // Decoder — every honoured HfDecoder variant materialises into a
+    // runtime `Decoder` (ByteLevel keeps its byte-buffer legacy path;
+    // Sequence / Replace / Fuse / Strip / ByteFallback take the chain
+    // path). Unrecognised tags fall through to the tokenizer's default
+    // decoder — see [`to_runtime_decoder`] for the soft-fail
+    // rationale.
+    if let Some(hd) = &config.decoder {
+        if let Some(dec) = to_runtime_decoder(hd)? {
+            tok = tok.with_decoder(dec);
+        }
     }
 
     // Normalizer — runs before the pre-tokenizer at encode time.
@@ -2160,6 +2246,21 @@ pub fn to_wordpiece_tokenizer(
         let pp = to_runtime_post_processor(hp)?;
         tok = tok.with_post_processor(pp);
     }
+
+    // Decoder — honour any HF decoder chain the config carries. The
+    // WordPiece runtime's default decode path already glues subwords
+    // with the continuing-subword prefix and inserts spaces between
+    // full words, so a checkpoint that ships without a decoder block
+    // — or with a shape this crate doesn't materialise (BERT's own
+    // `WordPieceDecoder` falls through to `Ok(None)` per
+    // [`to_runtime_decoder`]'s soft-fail rationale) — keeps that
+    // behaviour.
+    if let Some(hd) = &config.decoder {
+        if let Some(dec) = to_runtime_decoder(hd)? {
+            tok = tok.with_decoder(dec);
+        }
+    }
+
     if let Some(t) = &config.truncation {
         tok = tok.with_truncation(t.clone().into());
     }
@@ -2545,6 +2646,16 @@ pub struct UnigramTokenizer {
     /// Boxed so a clone of `UnigramTokenizer` avoids a 2 KiB memcpy
     /// on the common (byte-fallback-off) path.
     byte_fallback: Option<alloc::boxed::Box<[usize; 256]>>,
+    /// Optional decoder chain applied at [`Self::decode`] time. When
+    /// set, ids are converted to per-token surface strings (via the
+    /// vocab) and threaded through the chain — mirroring HF's own
+    /// `Decoder::decode_chain` — instead of running the crate's
+    /// default Metaspace-reversing decoder. Only the "chain" variants
+    /// of [`Decoder`] participate here; [`Decoder::Passthrough`] and
+    /// [`Decoder::ByteLevel`] are kept in the enum for API-shape
+    /// parity with [`BpeTokenizer::decoder`] and behave as identity
+    /// on the Unigram path.
+    decoder: Option<Decoder>,
     /// Optional truncation configuration; see
     /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
     truncation: Option<stringcheese_tokenizer::truncation::TruncationConfig>,
@@ -2667,6 +2778,7 @@ impl UnigramTokenizer {
             post_processor: PostProcessor::None,
             byte_fallback: None,
             special_tokens: BTreeMap::new(),
+            decoder: None,
             truncation: None,
             padding: None,
         })
@@ -2733,6 +2845,25 @@ impl UnigramTokenizer {
         self
     }
 
+    /// Attach (or replace) the decoder chain applied at
+    /// [`Self::decode`] time.
+    ///
+    /// When set, `decode` walks each id to its per-token surface
+    /// string (via the vocab) and threads the list through the chain
+    /// (see [`Decoder`] for the shape). This bypasses the default
+    /// Metaspace-reversal decode path — callers who want that
+    /// behaviour must leave the decoder unset.
+    ///
+    /// Only the "chain" variants of [`Decoder`] have semantic effect
+    /// here; [`Decoder::Passthrough`] and [`Decoder::ByteLevel`] are
+    /// treated as identity because the Unigram runtime's byte-level
+    /// interpretation lives on the pre-tokenizer / normalizer side.
+    #[must_use]
+    pub fn with_decoder(mut self, decoder: Decoder) -> Self {
+        self.decoder = Some(decoder);
+        self
+    }
+
     /// Attach (or replace) the truncation configuration; see
     /// [`crate::BpeTokenizer::with_truncation`] for the semantics.
     #[must_use]
@@ -2753,6 +2884,12 @@ impl UnigramTokenizer {
     ) -> Self {
         self.padding = Some(padding);
         self
+    }
+
+    /// Read-only access to the configured decoder chain, if any.
+    #[must_use]
+    pub fn decoder(&self) -> Option<&Decoder> {
+        self.decoder.as_ref()
     }
 
     /// Read-only access to the configured truncation, if any.
@@ -3020,6 +3157,33 @@ impl UnigramTokenizer {
     /// offending id if any id in `tokens` is out of range for the
     /// configured vocabulary.
     pub fn decode(&self, tokens: &[usize]) -> Result<String, UnigramDecodeError> {
+        // Chain-decoder fast path: when a decoder chain is configured,
+        // walk each id to its vocab surface string and thread the list
+        // through the chain — mirroring HF's own `Decoder::decode_chain`
+        // — instead of the default Metaspace-reversal path below.
+        //
+        // The model-side byte-fallback reassembly is skipped in this
+        // branch for the same reason as the BPE side: the chain's own
+        // `ByteFallback` stage (when present) is what reassembles the
+        // `<0xXX>` runs on the token surface strings; running both
+        // would double-decode.
+        if let Some(dec) = self.decoder.as_ref().filter(|d| d.is_chain()) {
+            let mut token_strs: Vec<String> = Vec::with_capacity(tokens.len());
+            for &id in tokens {
+                if id >= self.vocab.len() {
+                    return Err(UnigramDecodeError::UnknownId(id));
+                }
+                let (surface, _) = &self.vocab[id];
+                token_strs.push(surface.clone());
+            }
+            let out = dec.apply_chain(token_strs);
+            let mut buf = String::new();
+            for s in &out {
+                buf.push_str(s);
+            }
+            return Ok(buf);
+        }
+
         let mut buf = String::new();
         // Accumulator for a run of byte-fallback tokens. Bytes are
         // pushed here while consecutive byte-fallback ids arrive; the
@@ -3542,6 +3706,20 @@ pub fn to_unigram_tokenizer(
         tok = tok.with_special_tokens(uni_specials);
     }
 
+    // Decoder — honour any HF decoder chain the config carries. The
+    // Unigram runtime's default decode path already reverses the
+    // Metaspace substitution unconditionally, so a checkpoint that
+    // ships without a decoder block — or with a decoder shape this
+    // crate doesn't materialise (real xlm-roberta-base ships
+    // `Metaspace` here, which falls through to `Ok(None)` — see
+    // [`to_runtime_decoder`] for the soft-fail rationale) — keeps
+    // that Metaspace-reversal behaviour.
+    if let Some(hd) = &config.decoder {
+        if let Some(dec) = to_runtime_decoder(hd)? {
+            tok = tok.with_decoder(dec);
+        }
+    }
+
     if let Some(t) = &config.truncation {
         tok = tok.with_truncation(t.clone().into());
     }
@@ -4034,6 +4212,107 @@ fn to_runtime_post_processor(hp: &HfPostProcessor) -> Result<PostProcessor, HfCo
     }
 }
 
+/// Materialise a parsed [`HfDecoder`] block into a runtime [`Decoder`],
+/// or `None` if the block references a tag this crate does not
+/// materialise.
+///
+/// Called by [`to_bpe_tokenizer`] / [`to_unigram_tokenizer`] /
+/// [`to_wordpiece_tokenizer`] whenever `config.decoder` is
+/// `Some(...)`. When this function returns `Ok(None)`, the caller
+/// leaves the tokenizer's decoder slot unset — the runtime's
+/// per-family default decode wins (byte-buffer passthrough for BPE,
+/// Metaspace-reversal for Unigram, continuing-subword-prefix for
+/// `WordPiece`).
+///
+/// Every honoured variant maps to exactly one runtime [`Decoder`] arm:
+///
+/// * [`HfDecoder::ByteLevel`] → `Some(Decoder::ByteLevel)`. The
+///   `add_prefix_space` / `trim_offsets` / `use_regex` fields are
+///   preserved on [`HfTokenizerConfig::decoder`] for caller inspection
+///   but not read here — the runtime decoder is the byte↔char inverse
+///   mapping and takes no other config.
+/// * [`HfDecoder::Sequence`] → `Some(Decoder::Sequence)`. Recursively
+///   materialises each child; nested `Sequence` values are permitted.
+///   A child that materialises to `None` is silently dropped from the
+///   sequence (mirrors HF's forward-compat behaviour when a decoder
+///   tag is unrecognised — the surrounding pipeline still runs). An
+///   all-unmaterialised child list therefore produces
+///   `Some(Decoder::Sequence(vec![]))`, i.e. identity, which matches
+///   HF's own "empty Sequence == identity" semantics.
+/// * [`HfDecoder::Replace`] → `Some(Decoder::Replace)`. Requires
+///   `pattern` to be an [`HfPattern::String`] (literal); an
+///   [`HfPattern::Regex`] surfaces
+///   [`HfConversionError::UnsupportedDecoder`].
+/// * [`HfDecoder::Fuse`] → `Some(Decoder::Fuse)`.
+/// * [`HfDecoder::Strip`] → `Some(Decoder::Strip)`. Requires `content`
+///   to be exactly one Unicode scalar (as HF's own type demands); a
+///   multi-character `content` surfaces
+///   [`HfConversionError::UnsupportedDecoder`].
+/// * [`HfDecoder::ByteFallback`] → `Some(Decoder::ByteFallback)`.
+/// * [`HfDecoder::Other`] → `Ok(None)`. Every unrecognised tag string
+///   (`Metaspace`, `WordPiece`, `BPEDecoder`, ...) falls here at
+///   parse time; a soft-fail keeps loaders that ship such decoders
+///   (real xlm-roberta-base ships `Metaspace`) working end-to-end,
+///   with the runtime's own per-family default decode taking over.
+///
+/// # Errors
+///
+/// [`HfConversionError::UnsupportedDecoder`] fires only for a shape
+/// that would silently produce wrong output — a `Replace` with a
+/// regex pattern or a `Strip` whose `content` is not a single Unicode
+/// scalar. Every tag string this crate does not know about lands in
+/// [`HfDecoder::Other`] and produces `Ok(None)` instead, so the
+/// forward-compat guarantee ("loading a config never fails on an
+/// unrecognised decoder tag") holds.
+fn to_runtime_decoder(hd: &HfDecoder) -> Result<Option<Decoder>, HfConversionError> {
+    match hd {
+        HfDecoder::ByteLevel { .. } => Ok(Some(Decoder::ByteLevel)),
+        HfDecoder::Sequence { decoders } => {
+            let mut children: Vec<Decoder> = Vec::with_capacity(decoders.len());
+            for child in decoders {
+                if let Some(c) = to_runtime_decoder(child)? {
+                    children.push(c);
+                }
+            }
+            Ok(Some(Decoder::Sequence(children)))
+        }
+        HfDecoder::Replace { pattern, content } => match pattern {
+            HfPattern::String(s) => Ok(Some(Decoder::Replace {
+                pattern: s.clone(),
+                content: content.clone(),
+            })),
+            HfPattern::Regex(_) => Err(HfConversionError::UnsupportedDecoder {
+                reason: "Replace decoder with Regex pattern is not supported \
+                         (runtime is literal-only)"
+                    .to_string(),
+            }),
+        },
+        HfDecoder::Fuse => Ok(Some(Decoder::Fuse)),
+        HfDecoder::Strip {
+            content,
+            start,
+            stop,
+        } => {
+            let mut chars = content.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else {
+                return Err(HfConversionError::UnsupportedDecoder {
+                    reason: alloc::format!(
+                        "Strip decoder `content` must be exactly one Unicode scalar; \
+                         got {content:?}"
+                    ),
+                });
+            };
+            Ok(Some(Decoder::Strip {
+                content: c,
+                start: *start,
+                stop: *stop,
+            }))
+        }
+        HfDecoder::ByteFallback => Ok(Some(Decoder::ByteFallback)),
+        HfDecoder::Other => Ok(None),
+    }
+}
+
 fn to_runtime_piece(p: &HfTemplatePiece) -> TemplatePiece {
     match p {
         HfTemplatePiece::SpecialToken { id, type_id } => TemplatePiece::SpecialToken {
@@ -4357,7 +4636,7 @@ mod tests {
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
         let tok = to_bpe_tokenizer(&config).unwrap();
-        assert_eq!(tok.decoder(), crate::Decoder::ByteLevel);
+        assert_eq!(tok.decoder(), &crate::Decoder::ByteLevel);
         // "hello" with add_prefix_space=true becomes " hello" →
         // GPT-2 regex yields [" hello"] → byte-level encoded to
         // "Ġhello" → merges reach the vocab entry `Ġhello` (id 9).
@@ -4502,7 +4781,7 @@ mod tests {
             tok.normalizer(),
             Some(crate::normalizer::Normalizer::Nfc)
         ));
-        assert_eq!(tok.decoder(), Decoder::Passthrough);
+        assert_eq!(tok.decoder(), &Decoder::Passthrough);
         assert_eq!(tok.encode("ab").unwrap().ids, vec![0, 1]);
     }
 
@@ -4603,7 +4882,7 @@ mod tests {
         // matches the real GPT-2 shape: leading-space words become
         // `Ġword`, and the merge table reaches the whole-word id.
         let tok = to_bpe_tokenizer(&config).unwrap();
-        assert_eq!(tok.decoder(), Decoder::ByteLevel);
+        assert_eq!(tok.decoder(), &Decoder::ByteLevel);
         // "hello" with add_prefix_space=true encodes to " hello" →
         // GPT-2 regex → [" hello"] → byte-level `Ġhello` → id 21.
         let hello = tok.encode("hello").unwrap();
@@ -4805,7 +5084,7 @@ mod tests {
                 assert!(trim_offsets);
                 assert!(use_regex);
             }
-            HfDecoder::Other => panic!("bare ByteLevel decoder parsed as Other"),
+            other => panic!("bare ByteLevel decoder parsed as {other:?}"),
         }
     }
 
@@ -7186,5 +7465,194 @@ mod tests {
         let tok = to_bpe_tokenizer(&config).unwrap();
         assert!(tok.truncation().is_none());
         assert!(tok.padding().is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // Decoder-chain loader tests — the Llama-2 shape and the
+    // per-variant parse-then-materialise plumbing.
+    // ---------------------------------------------------------------------
+
+    /// The full Llama-2 decoder block, exactly as it appears in
+    /// `NousResearch/Llama-2-7b-hf/tokenizer.json`. Kept as a constant
+    /// so the same JSON drives both the parse-shape and
+    /// convert-shape tests below.
+    const LLAMA2_DECODER_JSON: &str = r#"{
+        "type": "Sequence",
+        "decoders": [
+            {"type": "Replace", "pattern": {"String": "▁"}, "content": " "},
+            {"type": "ByteFallback"},
+            {"type": "Fuse"},
+            {"type": "Strip", "content": " ", "start": 1, "stop": 0}
+        ]
+    }"#;
+
+    #[test]
+    fn hf_decoder_llama2_shape_parses_into_typed_sequence() {
+        let dec: HfDecoder = serde_json::from_str(LLAMA2_DECODER_JSON).unwrap();
+        let HfDecoder::Sequence { decoders } = dec else {
+            panic!("expected Sequence variant, got a different shape");
+        };
+        assert_eq!(decoders.len(), 4);
+        match &decoders[0] {
+            HfDecoder::Replace { pattern, content } => {
+                assert_eq!(*pattern, HfPattern::String(String::from("\u{2581}")));
+                assert_eq!(content, " ");
+            }
+            other => panic!("stage 0: expected Replace, got {other:?}"),
+        }
+        assert!(matches!(decoders[1], HfDecoder::ByteFallback));
+        assert!(matches!(decoders[2], HfDecoder::Fuse));
+        match &decoders[3] {
+            HfDecoder::Strip {
+                content,
+                start,
+                stop,
+            } => {
+                assert_eq!(content, " ");
+                assert_eq!(*start, 1);
+                assert_eq!(*stop, 0);
+            }
+            other => panic!("stage 3: expected Strip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hf_decoder_llama2_shape_materialises_into_runtime_sequence() {
+        // Wrap the block in a minimal BPE-shape config and load it end
+        // to end. The runtime `Decoder` must be a 4-stage Sequence
+        // whose arms match Llama-2's shape byte-for-byte.
+        let mut json = String::from(
+            r#"{
+                "added_tokens": [],
+                "decoder": "#,
+        );
+        json.push_str(LLAMA2_DECODER_JSON);
+        json.push_str(
+            r#",
+                "model": {
+                    "type": "BPE",
+                    "vocab": {"a": 0, "b": 1},
+                    "merges": []
+                }
+            }"#,
+        );
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        match tok.decoder() {
+            Decoder::Sequence(children) => {
+                assert_eq!(children.len(), 4);
+                match &children[0] {
+                    Decoder::Replace { pattern, content } => {
+                        assert_eq!(pattern, "\u{2581}");
+                        assert_eq!(content, " ");
+                    }
+                    other => panic!("stage 0: {other:?}"),
+                }
+                assert!(matches!(children[1], Decoder::ByteFallback));
+                assert!(matches!(children[2], Decoder::Fuse));
+                match &children[3] {
+                    Decoder::Strip {
+                        content,
+                        start,
+                        stop,
+                    } => {
+                        assert_eq!(*content, ' ');
+                        assert_eq!(*start, 1);
+                        assert_eq!(*stop, 0);
+                    }
+                    other => panic!("stage 3: {other:?}"),
+                }
+            }
+            other => panic!("expected Sequence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hf_decoder_bytefallback_bare_parses_and_materialises() {
+        let json = r#"{"type": "ByteFallback"}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        assert!(matches!(dec, HfDecoder::ByteFallback));
+        assert!(matches!(
+            to_runtime_decoder(&dec).unwrap(),
+            Some(Decoder::ByteFallback)
+        ));
+    }
+
+    #[test]
+    fn hf_decoder_fuse_bare_parses_and_materialises() {
+        let dec: HfDecoder = serde_json::from_str(r#"{"type": "Fuse"}"#).unwrap();
+        assert!(matches!(dec, HfDecoder::Fuse));
+        assert!(matches!(
+            to_runtime_decoder(&dec).unwrap(),
+            Some(Decoder::Fuse)
+        ));
+    }
+
+    #[test]
+    fn hf_decoder_strip_multichar_content_surfaces_error() {
+        let json = r#"{"type": "Strip", "content": "  ", "start": 1, "stop": 0}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            to_runtime_decoder(&dec).unwrap_err(),
+            HfConversionError::UnsupportedDecoder { .. }
+        ));
+    }
+
+    #[test]
+    fn hf_decoder_replace_regex_pattern_surfaces_error() {
+        let json = r#"{"type": "Replace", "pattern": {"Regex": "a+"}, "content": "b"}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            to_runtime_decoder(&dec).unwrap_err(),
+            HfConversionError::UnsupportedDecoder { .. }
+        ));
+    }
+
+    #[test]
+    fn hf_decoder_unknown_tag_falls_through_as_soft_fail() {
+        // A `Metaspace` decoder falls to `HfDecoder::Other`; the loader
+        // must not attach a runtime decoder (so the per-family default
+        // decode wins). Real xlm-roberta-base ships this shape.
+        let json = r#"{"type": "Metaspace"}"#;
+        let dec: HfDecoder = serde_json::from_str(json).unwrap();
+        assert!(matches!(dec, HfDecoder::Other));
+        assert!(to_runtime_decoder(&dec).unwrap().is_none());
+    }
+
+    #[test]
+    fn hf_decoder_llama2_shape_end_to_end_decode() {
+        // Wire the Llama-2 chain end-to-end: build a BPE tokenizer
+        // with a Llama-style vocab (character-BPE with `<0xXX>`
+        // byte-fallback tokens and a `▁hi` piece), attach the chain,
+        // and decode a synthetic id sequence.
+        let mut json = String::from(
+            r#"{
+                "added_tokens": [],
+                "decoder": "#,
+        );
+        json.push_str(LLAMA2_DECODER_JSON);
+        json.push_str(
+            r#",
+                "model": {
+                    "type": "BPE",
+                    "vocab": {
+                        "▁hi": 0,
+                        "<0xF0>": 1,
+                        "<0x9F>": 2,
+                        "<0x98>": 3,
+                        "<0x80>": 4
+                    },
+                    "merges": []
+                }
+            }"#,
+        );
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        // Ids: ▁hi, then the emoji byte-fallback run 😀 (F0 9F 98 80).
+        // Expected decode: "hi😀" (the ▁ became ' ', which the Strip
+        // stripped from the head, and the byte-fallback run reassembled
+        // into 😀).
+        let decoded = <BpeTokenizer as Tokenizer>::decode(&tok, &[0, 1, 2, 3, 4]).unwrap();
+        assert_eq!(decoded, "hi😀");
     }
 }

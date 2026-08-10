@@ -361,28 +361,238 @@ impl PreTokenizerRegex {
 /// Decoder applied to the concatenated byte string produced by
 /// [`BpeTokenizer::decode`] before it is interpreted as UTF-8.
 ///
-/// Two variants:
+/// # Variants
 ///
-/// * [`Self::Passthrough`] — the default. Concatenate every token's
-///   byte-string and interpret the result as UTF-8. Matches tiktoken
-///   and any raw-byte BPE.
-/// * [`Self::ByteLevel`] — after concatenation, treat the buffer as
-///   UTF-8 and reverse the `ByteLevel` mapping via
-///   [`byte_level::decode_chars`](crate::byte_level::decode_chars).
-///   Every char in the range `U+0000..=U+0143` is looked up in the
-///   inverse table; unknown chars are passed through as their own
-///   UTF-8 bytes so the decoder never panics on an input that was not
-///   encoded by [`PreTokenizerRegex::ByteLevel`]. This is the shape
-///   required to round-trip GPT-2 / Llama byte-level tokenizers back
-///   to their original raw input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// The two legacy variants — [`Self::Passthrough`] and [`Self::ByteLevel`]
+/// — operate on the tokenizer's concatenated byte buffer: the ids are
+/// looked up in the vocabulary, the raw bytes are joined into one buffer,
+/// and (for `ByteLevel`) the byte↔char bijection is reversed before UTF-8
+/// interpretation. That is the shape tiktoken / GPT-2 style decoders need
+/// and it is what [`BpeTokenizer::decode`] historically applied.
+///
+/// The "chain" variants — [`Self::Sequence`], [`Self::Replace`],
+/// [`Self::Fuse`], [`Self::Strip`], and [`Self::ByteFallback`] — mirror
+/// Hugging Face's per-token `Decoder` trait. They operate on a
+/// `Vec<String>` (one entry per input id) built by looking each id up in
+/// the vocabulary (or in the special-token map) and interpreting the
+/// surface bytes as UTF-8. Each stage transforms the list; the final
+/// list is joined with an empty separator to produce the decoded string.
+///
+/// The chain shape lets the loader materialise Llama-2's
+/// `Sequence[Replace(▁→ ), ByteFallback, Fuse, Strip(" ",1,0)]` decoder
+/// exactly as HF stores it, so [`BpeTokenizer::decode`] produces
+/// byte-for-byte identical output to
+/// `transformers.AutoTokenizer.decode`.
+///
+/// When a chain decoder is configured, the model-side byte-fallback
+/// reassembly in [`BpeTokenizer::decode`] is bypassed — the chain's
+/// [`Self::ByteFallback`] stage does the run reassembly itself. This
+/// keeps the two mechanisms from double-applying.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum Decoder {
     /// No post-processing: emit the concatenated byte string as UTF-8.
     #[default]
     Passthrough,
     /// Reverse the byte-level char↔byte mapping before UTF-8 decoding.
+    /// Every char in the range `U+0000..=U+0143` is looked up in the
+    /// inverse table; unknown chars are passed through as their own
+    /// UTF-8 bytes so the decoder never panics on an input that was not
+    /// encoded by [`PreTokenizerRegex::ByteLevel`]. This is the shape
+    /// required to round-trip GPT-2 / Llama byte-level tokenizers back
+    /// to their original raw input.
     ByteLevel,
+    /// Compose several decoders left-to-right. Each stage takes the
+    /// previous stage's output (a `Vec<String>`) and returns a new list.
+    /// Matches HF's own `Decoder::Sequence`.
+    Sequence(Vec<Decoder>),
+    /// Per-token literal replace. Every occurrence of `pattern` in each
+    /// token's surface string is substituted with `content`. Matches
+    /// HF's on-disk `{"type":"Replace","pattern":{"String":"▁"},
+    /// "content":" "}` shape (Llama-2 uses this to unmap the
+    /// `SentencePiece` space mark). Regex patterns are not honoured —
+    /// this crate keeps the decoder chain literal-only because every
+    /// real HF checkpoint's decoder-side `Replace` uses a literal.
+    Replace {
+        /// The literal search string.
+        pattern: String,
+        /// The replacement string.
+        content: String,
+    },
+    /// Concatenate every token string into a single-entry list.
+    /// Matches HF's `Decoder::Fuse` — the default for the byte-level
+    /// family and the third stage of the Llama-2 chain.
+    Fuse,
+    /// Strip up to `start` leading and up to `stop` trailing
+    /// occurrences of `content` from each token's surface string.
+    /// Llama-2 uses `Strip{content: ' ', start: 1, stop: 0}` to remove
+    /// the single leading space its Prepend normalizer inserted at
+    /// encode time. Matches HF's `Decoder::Strip` semantics (one char
+    /// per removal, up to the declared count, stopping early on a
+    /// non-match).
+    Strip {
+        /// The character to strip.
+        content: char,
+        /// Maximum leading occurrences to remove.
+        start: usize,
+        /// Maximum trailing occurrences to remove.
+        stop: usize,
+    },
+    /// `SentencePiece` byte-fallback reassembly at the decoder-chain
+    /// level. Scans the token list for runs of `<0xXX>` surface
+    /// strings, decodes each hex pair to a byte, and interprets each
+    /// completed run as UTF-8 — producing one new list entry per
+    /// completed run when the bytes are valid UTF-8, or one U+FFFD
+    /// per invalid byte otherwise (matching HF's `Decoder::ByteFallback`
+    /// per-invalid-byte replacement policy). Distinct from the
+    /// model-side byte-fallback path in [`BpeTokenizer::decode`] — the
+    /// model-side path fires on ids (via [`BpeTokenizer::with_byte_fallback`]);
+    /// this chain-side path fires on the token *surface strings* the
+    /// decoder chain sees.
+    ByteFallback,
+}
+
+impl Decoder {
+    /// `true` for the variants that operate on the token list rather
+    /// than on the concatenated byte buffer. The routing helper in
+    /// [`BpeTokenizer::decode`] uses this to decide which path to
+    /// take.
+    #[must_use]
+    pub fn is_chain(&self) -> bool {
+        matches!(
+            self,
+            Self::Sequence(_)
+                | Self::Replace { .. }
+                | Self::Fuse
+                | Self::Strip { .. }
+                | Self::ByteFallback
+        )
+    }
+
+    /// Run this decoder's chain semantics over `tokens`.
+    /// [`Self::Passthrough`] and [`Self::ByteLevel`] are identity here
+    /// — the "chain" path caller must not invoke this method on them.
+    /// See [`Self::is_chain`].
+    #[must_use]
+    pub fn apply_chain(&self, tokens: Vec<String>) -> Vec<String> {
+        match self {
+            Self::Passthrough | Self::ByteLevel => tokens,
+            Self::Sequence(children) => {
+                let mut current = tokens;
+                for c in children {
+                    current = c.apply_chain(current);
+                }
+                current
+            }
+            Self::Replace { pattern, content } => tokens
+                .into_iter()
+                .map(|t| t.replace(pattern.as_str(), content.as_str()))
+                .collect(),
+            Self::Fuse => {
+                let mut fused = String::new();
+                for t in &tokens {
+                    fused.push_str(t);
+                }
+                alloc::vec![fused]
+            }
+            Self::Strip {
+                content,
+                start,
+                stop,
+            } => tokens
+                .into_iter()
+                .map(|t| decoder_strip_one_char(&t, *content, *start, *stop))
+                .collect(),
+            Self::ByteFallback => decoder_byte_fallback_chain(tokens),
+        }
+    }
+}
+
+/// Strip up to `start` leading and up to `stop` trailing occurrences of
+/// `content` from `s`. Stops early at the first non-matching character
+/// on either side — matches HF's `Decoder::Strip::decode_chain`
+/// per-token behaviour byte for byte.
+fn decoder_strip_one_char(s: &str, content: char, start: usize, stop: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut lo = 0usize;
+    while lo < n && lo < start && chars[lo] == content {
+        lo += 1;
+    }
+    let mut hi = n;
+    let mut trimmed = 0usize;
+    while hi > lo && trimmed < stop && chars[hi - 1] == content {
+        hi -= 1;
+        trimmed += 1;
+    }
+    chars[lo..hi].iter().collect()
+}
+
+/// The decoder-chain `ByteFallback` stage — scan `tokens` for runs of
+/// `<0xXX>` surface strings, reassemble each run into a UTF-8 string
+/// (lossy: one U+FFFD per invalid byte, matching HF), and emit the
+/// reassembled entry in place of the run.
+fn decoder_byte_fallback_chain(tokens: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(tokens.len());
+    let mut byte_run: Vec<u8> = Vec::new();
+    for t in tokens {
+        if let Some(b) = decoder_byte_fallback_surface(&t) {
+            byte_run.push(b);
+        } else {
+            if !byte_run.is_empty() {
+                flush_decoder_byte_run(&mut byte_run, &mut out);
+            }
+            out.push(t);
+        }
+    }
+    if !byte_run.is_empty() {
+        flush_decoder_byte_run(&mut byte_run, &mut out);
+    }
+    out
+}
+
+/// Push the accumulated byte run onto `out` and clear the buffer.
+/// Runs that are not valid UTF-8 fan out to one U+FFFD per byte, which
+/// is what HF's own `ByteFallback::decode_chain` emits.
+fn flush_decoder_byte_run(byte_run: &mut Vec<u8>, out: &mut Vec<String>) {
+    match core::str::from_utf8(byte_run) {
+        Ok(s) => out.push(String::from(s)),
+        Err(_) => {
+            for _ in byte_run.iter() {
+                out.push(String::from("\u{FFFD}"));
+            }
+        }
+    }
+    byte_run.clear();
+}
+
+/// Recognise a `<0xXX>` surface string and return the byte value, or
+/// `None` if `s` is not one of the 256 reserved byte-fallback surfaces.
+/// Kept module-local to the runtime so the loader-side sibling in
+/// [`crate::hf::parse_byte_fallback_surface`] can stay `pub(crate)`.
+fn decoder_byte_fallback_surface(s: &str) -> Option<u8> {
+    let bytes = s.as_bytes();
+    if bytes.len() != 6 {
+        return None;
+    }
+    if bytes[0] != b'<' || bytes[1] != b'0' || bytes[2] != b'x' || bytes[5] != b'>' {
+        return None;
+    }
+    let hi = decoder_hex_digit(bytes[3])?;
+    let lo = decoder_hex_digit(bytes[4])?;
+    Some((hi << 4) | lo)
+}
+
+/// Decode one ASCII hex digit to its 0..=15 value. Mirrors
+/// [`crate::hf::decode_hex_digit`] byte for byte; a `const fn` so the
+/// call is inlineable.
+const fn decoder_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
 }
 
 /// A BPE tokenizer over a caller-supplied merge table and vocabulary.
@@ -749,8 +959,8 @@ impl BpeTokenizer {
 
     /// Read-only access to the configured decoder strategy.
     #[must_use]
-    pub fn decoder(&self) -> Decoder {
-        self.decoder
+    pub fn decoder(&self) -> &Decoder {
+        &self.decoder
     }
 
     // ---- internal encoding pipeline ----
@@ -1240,6 +1450,50 @@ impl Tokenizer for BpeTokenizer {
     }
 
     fn decode(&self, tokens: &[Self::Token]) -> Result<String, TokenizerError> {
+        // Chain-decoder fast path: when a `Sequence` / `Replace` /
+        // `Fuse` / `Strip` / `ByteFallback` decoder is configured, the
+        // decode pipeline is a per-token surface-string chain that
+        // mirrors HF's own `Decoder::decode_chain`. Route through it
+        // instead of the byte-buffer path so decoders that ship with
+        // real checkpoints (Llama-2's `Sequence[Replace, ByteFallback,
+        // Fuse, Strip]`) produce byte-for-byte identical output to
+        // `transformers.AutoTokenizer.decode`.
+        //
+        // The model-side byte-fallback reassembly is deliberately
+        // skipped in this branch — the chain's own `ByteFallback` stage
+        // (when present) is what reassembles the `<0xXX>` runs; running
+        // both would double-decode.
+        if self.decoder.is_chain() {
+            let mut token_strs: Vec<String> = Vec::with_capacity(tokens.len());
+            for &id in tokens {
+                if let Some(bytes) = self.vocab.bytes(id) {
+                    // Vocab surface bytes are always valid UTF-8 for
+                    // every shipped HF-shape checkpoint (character-BPE
+                    // stores UTF-8 characters directly; byte-level
+                    // stores the byte↔char-encoded printable form).
+                    // Use lossy decoding as a defence for hand-crafted
+                    // vocabs.
+                    token_strs.push(alloc::string::String::from_utf8_lossy(bytes).into_owned());
+                } else if let Some(surface) = self
+                    .special_tokens
+                    .iter()
+                    .find(|&(_, &tid)| tid == id)
+                    .map(|(k, _)| k.clone())
+                {
+                    token_strs.push(surface);
+                } else {
+                    return Err(TokenizerError::UnknownToken(format_id(id)));
+                }
+            }
+            let out = self.decoder.apply_chain(token_strs);
+            let mut buf = String::new();
+            for s in &out {
+                buf.push_str(s);
+            }
+            return Ok(buf);
+        }
+
+        // Legacy byte-buffer path — Passthrough (default) and ByteLevel.
         let mut buf: Vec<u8> = Vec::new();
         // Accumulator for a run of byte-fallback tokens. Bytes are
         // pushed here while consecutive byte-fallback ids arrive; the
@@ -1280,7 +1534,7 @@ impl Tokenizer for BpeTokenizer {
             let flushed = alloc::string::String::from_utf8_lossy(&byte_run);
             buf.extend_from_slice(flushed.as_bytes());
         }
-        match self.decoder {
+        match &self.decoder {
             Decoder::Passthrough => String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8),
             Decoder::ByteLevel => {
                 // A byte-level vocabulary stores its surface strings in
@@ -1291,6 +1545,17 @@ impl Tokenizer for BpeTokenizer {
                 let encoded = String::from_utf8(buf).map_err(|_| TokenizerError::InvalidUtf8)?;
                 let raw = crate::byte_level::decode_chars(&encoded);
                 String::from_utf8(raw).map_err(|_| TokenizerError::InvalidUtf8)
+            }
+            // Every chain-shape variant was routed above via `is_chain`.
+            // The match arm exists so a future non-chain variant added
+            // to `Decoder` surfaces as a compile error rather than
+            // silently falling through.
+            Decoder::Sequence(_)
+            | Decoder::Replace { .. }
+            | Decoder::Fuse
+            | Decoder::Strip { .. }
+            | Decoder::ByteFallback => {
+                unreachable!("chain-shape decoder handled by the early-return path above")
             }
         }
     }
@@ -2713,6 +2978,228 @@ mod tests {
         assert_eq!(batch[0].attention_mask, vec![true, true, false, false]);
         assert_eq!(batch[1].attention_mask, vec![true, true, true, true]);
         assert_eq!(batch[2].attention_mask, vec![true, false, false, false]);
+    }
+
+    // ------------------------------------------------------------------
+    // Decoder-chain unit tests — one per new [`Decoder`] variant, driven
+    // by hand-crafted `Vec<String>` inputs so the semantics are checked
+    // in isolation of any tokenizer wiring. The full Llama-2 chain also
+    // gets its own end-to-end test at the bottom.
+    // ------------------------------------------------------------------
+
+    fn s(x: &str) -> String {
+        String::from(x)
+    }
+
+    #[test]
+    fn decoder_is_chain_reports_variants_correctly() {
+        assert!(!Decoder::Passthrough.is_chain());
+        assert!(!Decoder::ByteLevel.is_chain());
+        assert!(Decoder::Sequence(vec![]).is_chain());
+        assert!(
+            Decoder::Replace {
+                pattern: s("_"),
+                content: s(" "),
+            }
+            .is_chain()
+        );
+        assert!(Decoder::Fuse.is_chain());
+        assert!(
+            Decoder::Strip {
+                content: ' ',
+                start: 1,
+                stop: 0,
+            }
+            .is_chain()
+        );
+        assert!(Decoder::ByteFallback.is_chain());
+    }
+
+    #[test]
+    fn decoder_replace_substitutes_literal_pattern_per_token() {
+        let dec = Decoder::Replace {
+            pattern: s("_"),
+            content: s(" "),
+        };
+        let out = dec.apply_chain(vec![s("_Hello"), s("_world"), s("no-op")]);
+        assert_eq!(out, vec![s(" Hello"), s(" world"), s("no-op")]);
+    }
+
+    #[test]
+    fn decoder_replace_handles_multiple_occurrences_in_one_token() {
+        let dec = Decoder::Replace {
+            pattern: s("aa"),
+            content: s("b"),
+        };
+        assert_eq!(dec.apply_chain(vec![s("aaaa")]), vec![s("bb")]);
+    }
+
+    #[test]
+    fn decoder_fuse_joins_tokens_without_separator() {
+        let dec = Decoder::Fuse;
+        let out = dec.apply_chain(vec![s(" Hello"), s(" world"), s("!")]);
+        assert_eq!(out, vec![s(" Hello world!")]);
+    }
+
+    #[test]
+    fn decoder_fuse_on_empty_input_yields_single_empty_entry() {
+        assert_eq!(Decoder::Fuse.apply_chain(vec![]), vec![s("")]);
+    }
+
+    #[test]
+    fn decoder_strip_removes_up_to_start_leading_content_chars() {
+        let dec = Decoder::Strip {
+            content: ' ',
+            start: 1,
+            stop: 0,
+        };
+        // Only the first space is stripped even when the token has more.
+        assert_eq!(dec.apply_chain(vec![s("  hi")]), vec![s(" hi")]);
+        // No effect when the leading char doesn't match.
+        assert_eq!(dec.apply_chain(vec![s("hi")]), vec![s("hi")]);
+        // Empty tokens are safe (no-op).
+        assert_eq!(dec.apply_chain(vec![s("")]), vec![s("")]);
+    }
+
+    #[test]
+    fn decoder_strip_removes_up_to_stop_trailing_content_chars() {
+        let dec = Decoder::Strip {
+            content: '.',
+            start: 0,
+            stop: 2,
+        };
+        assert_eq!(dec.apply_chain(vec![s("hi....")]), vec![s("hi..")]);
+        assert_eq!(dec.apply_chain(vec![s("hi.")]), vec![s("hi")]);
+    }
+
+    #[test]
+    fn decoder_byte_fallback_reassembles_multibyte_utf8_run() {
+        // 😀 = U+1F600 = f0 9f 98 80
+        let dec = Decoder::ByteFallback;
+        let out = dec.apply_chain(vec![s("<0xF0>"), s("<0x9F>"), s("<0x98>"), s("<0x80>")]);
+        assert_eq!(out, vec![s("😀")]);
+    }
+
+    #[test]
+    fn decoder_byte_fallback_mixes_run_with_normal_tokens() {
+        let dec = Decoder::ByteFallback;
+        // "hi" + 😀 + "!"
+        let out = dec.apply_chain(vec![
+            s("hi"),
+            s("<0xF0>"),
+            s("<0x9F>"),
+            s("<0x98>"),
+            s("<0x80>"),
+            s("!"),
+        ]);
+        assert_eq!(out, vec![s("hi"), s("😀"), s("!")]);
+    }
+
+    #[test]
+    fn decoder_byte_fallback_invalid_utf8_run_produces_replacement_chars() {
+        // A stray 0xFF byte is not valid UTF-8; HF's own ByteFallback
+        // emits one U+FFFD per invalid byte.
+        let dec = Decoder::ByteFallback;
+        let out = dec.apply_chain(vec![s("<0xFF>")]);
+        assert_eq!(out, vec![s("\u{FFFD}")]);
+    }
+
+    #[test]
+    fn decoder_byte_fallback_flushes_run_at_end_of_input() {
+        // A byte-fallback run that ends the input still flushes.
+        let dec = Decoder::ByteFallback;
+        let out = dec.apply_chain(vec![
+            s("prefix"),
+            s("<0xF0>"),
+            s("<0x9F>"),
+            s("<0x98>"),
+            s("<0x80>"),
+        ]);
+        assert_eq!(out, vec![s("prefix"), s("😀")]);
+    }
+
+    #[test]
+    fn decoder_sequence_composes_left_to_right() {
+        // Replace ▁ → ' ', then Fuse.
+        let dec = Decoder::Sequence(vec![
+            Decoder::Replace {
+                pattern: s("\u{2581}"),
+                content: s(" "),
+            },
+            Decoder::Fuse,
+        ]);
+        let out = dec.apply_chain(vec![s("\u{2581}Hello"), s("\u{2581}world")]);
+        assert_eq!(out, vec![s(" Hello world")]);
+    }
+
+    #[test]
+    fn decoder_sequence_llama2_full_chain() {
+        // Sequence[Replace{▁→ }, ByteFallback, Fuse, Strip{" ",1,0}]
+        // Input tokens simulate: leading "▁" (Llama-2's Prepend adds
+        // one), a byte-fallback run for 😀, and a further piece.
+        let dec = Decoder::Sequence(vec![
+            Decoder::Replace {
+                pattern: s("\u{2581}"),
+                content: s(" "),
+            },
+            Decoder::ByteFallback,
+            Decoder::Fuse,
+            Decoder::Strip {
+                content: ' ',
+                start: 1,
+                stop: 0,
+            },
+        ]);
+        let out = dec.apply_chain(vec![
+            s("\u{2581}"),
+            s("hi"),
+            s("<0xF0>"),
+            s("<0x9F>"),
+            s("<0x98>"),
+            s("<0x80>"),
+        ]);
+        assert_eq!(out, vec![s("hi😀")]);
+    }
+
+    #[test]
+    fn decoder_sequence_empty_is_identity() {
+        let dec = Decoder::Sequence(vec![]);
+        assert_eq!(dec.apply_chain(vec![s("a"), s("b")]), vec![s("a"), s("b")]);
+    }
+
+    #[test]
+    fn bpe_decode_routes_through_chain_when_configured() {
+        // Build a small vocab with the SentencePiece byte-fallback surface
+        // strings for the emoji 😀 (F0 9F 98 80), plus a plain "hi" token,
+        // and the Llama-2-shape "▁hi" token.
+        let mut v = BpeVocabulary::new();
+        v.insert(0, b"hi".to_vec()).unwrap();
+        // U+2581 "▁" is E2 96 81 — three bytes.
+        v.insert(1, "\u{2581}hi".as_bytes().to_vec()).unwrap();
+        v.insert(2, b"<0xF0>".to_vec()).unwrap();
+        v.insert(3, b"<0x9F>".to_vec()).unwrap();
+        v.insert(4, b"<0x98>".to_vec()).unwrap();
+        v.insert(5, b"<0x80>".to_vec()).unwrap();
+
+        let dec = Decoder::Sequence(vec![
+            Decoder::Replace {
+                pattern: String::from("\u{2581}"),
+                content: String::from(" "),
+            },
+            Decoder::ByteFallback,
+            Decoder::Fuse,
+            Decoder::Strip {
+                content: ' ',
+                start: 1,
+                stop: 0,
+            },
+        ]);
+
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), v).with_decoder(dec);
+
+        // Ids: "▁hi" + emoji byte run — a Llama-2-style encoding.
+        let decoded = tok.decode(&[1, 2, 3, 4, 5]).unwrap();
+        assert_eq!(decoded, "hi😀");
     }
 }
 

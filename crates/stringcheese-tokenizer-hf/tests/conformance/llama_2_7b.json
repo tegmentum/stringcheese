@@ -1,7 +1,7 @@
 {
   "checkpoint": "llama-2-7b-hf",
-  "source": "transformers.AutoTokenizer.from_pretrained('NousResearch/Llama-2-7b-hf', use_fast=True).encode(input) - the tokenizer.json comes from the same NousResearch mirror; the model weights themselves are not required.",
-  "note": "Real Llama-2 tokenizer.json exercises the BPE-side SentencePiece byte_fallback path end-to-end. The 20 cases span ASCII / Latin / Cyrillic / CJK / Hebrew / Arabic / Devanagari / rare Unicode / 4-byte-emoji inputs so the byte-fallback fan-out is hit under a real 32k-entry character-BPE vocabulary. Every case's expected_ids were produced by transformers.AutoTokenizer against the same tokenizer.json - pass criterion is byte-for-byte parity.",
+  "source": "transformers.AutoTokenizer.from_pretrained('NousResearch/Llama-2-7b-hf', use_fast=True).encode(input) - the tokenizer.json comes from the same NousResearch mirror; the model weights themselves are not required. `expected_decoded` values come from `.decode(ids, skip_special_tokens=False, clean_up_tokenization_spaces=False)` against the same tokenizer; the BOS <s> is preserved in the output so the runner exercises the decoder chain's Sequence[Replace, ByteFallback, Fuse, Strip] end-to-end on inputs that contain the leading special token.",
+  "note": "Real Llama-2 tokenizer.json exercises the BPE-side SentencePiece byte_fallback path end-to-end. The 20 cases span ASCII / Latin / Cyrillic / CJK / Hebrew / Arabic / Devanagari / rare Unicode / 4-byte-emoji inputs so the byte-fallback fan-out is hit under a real 32k-entry character-BPE vocabulary. Every case's expected_ids were produced by transformers.AutoTokenizer against the same tokenizer.json - pass criterion is byte-for-byte parity. `expected_decoded` (added with the decoder-chain landing) captures the round-trip through the Llama-2 decoder Sequence[Replace(▁→ ), ByteFallback, Fuse, Strip(' ',1,0)]; the runner asserts `tok.decode(expected_ids) == expected_decoded` under `--features parity-real-vocab`.",
   "cases": [
     {
       "input": "Hello",
@@ -9,6 +9,7 @@
         1,
         15043
       ],
+      "expected_decoded": "<s> Hello",
       "note": "ascii-hello"
     },
     {
@@ -17,6 +18,7 @@
         1,
         7251
       ],
+      "expected_decoded": "<s> hi",
       "note": "ascii-hi"
     },
     {
@@ -25,6 +27,7 @@
         1,
         3186
       ],
+      "expected_decoded": "<s> world",
       "note": "ascii-world"
     },
     {
@@ -34,6 +37,7 @@
         15043,
         3186
       ],
+      "expected_decoded": "<s> Hello world",
       "note": "greeting-hello-world"
     },
     {
@@ -46,6 +50,7 @@
         155,
         131
       ],
+      "expected_decoded": "<s> 😀",
       "note": "emoji-smile-4byte"
     },
     {
@@ -58,6 +63,7 @@
         145,
         140
       ],
+      "expected_decoded": "<s> 🎉",
       "note": "emoji-party-4byte"
     },
     {
@@ -66,6 +72,7 @@
         1,
         9433
       ],
+      "expected_decoded": "<s> др",
       "note": "cyrillic-2byte"
     },
     {
@@ -76,6 +83,7 @@
         30919,
         31076
       ],
+      "expected_decoded": "<s> 你好",
       "note": "chinese-2char-3byte"
     },
     {
@@ -88,6 +96,7 @@
         30205,
         30404
       ],
+      "expected_decoded": "<s> שלום",
       "note": "hebrew-2byte"
     },
     {
@@ -98,6 +107,7 @@
         30159,
         30156
       ],
+      "expected_decoded": "<s> مر",
       "note": "arabic-2byte"
     },
     {
@@ -109,6 +119,7 @@
         30485,
         30489
       ],
+      "expected_decoded": "<s> नमस",
       "note": "hindi-3byte"
     },
     {
@@ -121,6 +132,7 @@
         155,
         131
       ],
+      "expected_decoded": "<s> hi😀",
       "note": "word-plus-emoji"
     },
     {
@@ -134,6 +146,7 @@
         131,
         2918
       ],
+      "expected_decoded": "<s> 😀hi",
       "note": "emoji-plus-word"
     },
     {
@@ -154,6 +167,7 @@
         156,
         133
       ],
+      "expected_decoded": "<s> 😀🎉🙂",
       "note": "multi-emoji"
     },
     {
@@ -165,6 +179,7 @@
         159,
         139
       ],
+      "expected_decoded": "<s> ✈",
       "note": "rare-symbol-airplane"
     },
     {
@@ -177,6 +192,7 @@
         147,
         131
       ],
+      "expected_decoded": "<s> 𝐀",
       "note": "mathematical-alphanumeric"
     },
     {
@@ -188,6 +204,7 @@
         168,
         147
       ],
+      "expected_decoded": "<s> ॐ",
       "note": "devanagari-om"
     },
     {
@@ -197,6 +214,7 @@
         29871,
         30942
       ],
+      "expected_decoded": "<s> ⠀",
       "note": "braille-blank"
     },
     {
@@ -209,6 +227,7 @@
         135,
         165
       ],
+      "expected_decoded": "<s> 𝄢",
       "note": "musical-note"
     },
     {
@@ -225,6 +244,7 @@
         131,
         131
       ],
+      "expected_decoded": "<s> 😀𓀀",
       "note": "multi-obscure"
     }
   ]
