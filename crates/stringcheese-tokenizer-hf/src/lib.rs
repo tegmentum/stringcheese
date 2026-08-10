@@ -121,6 +121,15 @@ pub mod post_processor;
 #[cfg(feature = "hf-tokenizer")]
 pub mod wordpiece;
 
+// `WordLevel` model — plain whole-word vocabulary lookup. A handful
+// of specialised HF checkpoints ship this shape (tag / chord / fixed-
+// vocabulary tasks). The full module docs live in
+// `src/wordlevel.rs`; here we only gate compilation. Gated behind
+// `hf-tokenizer` for the same reason as [`wordpiece`]: the runtime is
+// tiny and the HF loader is the primary consumer.
+#[cfg(feature = "hf-tokenizer")]
+pub mod wordlevel;
+
 // Hugging Face `tokenizer.json` parser and adapter. The full module
 // docs (support matrix, error taxonomy, deferred features) live in
 // `src/hf.rs`; here we only gate compilation on the crate feature.

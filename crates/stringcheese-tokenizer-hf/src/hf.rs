@@ -53,11 +53,13 @@
 //! All errors below carry the offending type name in their message so
 //! callers can diagnose immediately.
 //!
-//! * `model.type == "WordLevel"` — a separate algorithm landing, out of
-//!   scope for the current wave. `Unigram` is materialised via
+//! * `model.type == "WordLevel"` is materialised via
+//!   [`to_wordlevel_tokenizer`] into a
+//!   [`crate::wordlevel::WordLevelTokenizer`] — a plain whole-word
+//!   vocabulary lookup — and `Unigram` is materialised via
 //!   [`to_unigram_tokenizer`] into a [`UnigramTokenizer`] whose
 //!   `encode` runs the Viterbi forward-DP over the vocabulary's log
-//!   probabilities; see that type's docs for the algorithm.
+//!   probabilities; see each type's docs for the algorithm.
 //! * `pre_tokenizer.type == "Metaspace"` parses into typed fields
 //!   ([`HfPreTokenizer::Metaspace`]) and can be materialised via
 //!   [`to_runtime_metaspace`] into a runtime [`Metaspace`] that
@@ -225,14 +227,14 @@ pub struct HfAddedToken {
 
 /// The `model` block of a `tokenizer.json` file.
 ///
-/// [`HfModel::Bpe`] and [`HfModel::WordPiece`] carry typed fields and
-/// are materialised at conversion time; the remaining variants keep
-/// the raw JSON so callers can inspect what was rejected. Use
-/// [`to_tokenizer`] (which returns the [`HfTokenizer`] enum) to
-/// materialise either supported variant; the sibling
-/// [`to_bpe_tokenizer`] / [`to_wordpiece_tokenizer`] entry points
-/// return a concrete tokenizer type when the caller already knows
-/// which family a config belongs to.
+/// Every variant carries typed fields and is materialised at
+/// conversion time. Use [`to_tokenizer`] (which returns the
+/// [`HfTokenizer`] enum) to materialise a config without caring which
+/// family it belongs to; the sibling [`to_bpe_tokenizer`] /
+/// [`to_wordpiece_tokenizer`] / [`to_unigram_tokenizer`] /
+/// [`to_wordlevel_tokenizer`] entry points return a concrete
+/// tokenizer type when the caller already knows which family a
+/// config belongs to.
 ///
 /// # Deserialisation
 ///
@@ -266,8 +268,10 @@ pub enum HfModel {
     /// [`HfUnigramModel`] for the fields and [`UnigramTokenizer`] for
     /// the runtime.
     Unigram(HfUnigramModel),
-    /// Simple word-level model (a plain vocabulary lookup). Deferred.
-    WordLevel(serde_json::Value),
+    /// Simple word-level model — a plain vocabulary lookup. See
+    /// [`HfWordLevelModel`] for the fields and
+    /// [`crate::wordlevel::WordLevelTokenizer`] for the runtime.
+    WordLevel(HfWordLevelModel),
 }
 
 /// Internal helper mirroring HF's canonical `#[serde(tag = "type")]`
@@ -287,7 +291,7 @@ enum HfModelTagged {
     #[serde(rename = "Unigram")]
     Unigram(HfUnigramModel),
     #[serde(rename = "WordLevel")]
-    WordLevel(serde_json::Value),
+    WordLevel(HfWordLevelModel),
 }
 
 impl From<HfModelTagged> for HfModel {
@@ -384,6 +388,26 @@ pub struct HfWordPieceModel {
     /// default) when absent from the JSON.
     #[serde(default = "default_max_input_chars_per_word")]
     pub max_input_chars_per_word: usize,
+}
+
+/// The `WordLevel`-specific fields of a `model` block.
+///
+/// `WordLevel` is HF's plain whole-word vocabulary-lookup model: no
+/// merges, no subword decomposition, one vocab entry per word.
+/// [`Self::unk_token`] is the surface string of the unknown token; it
+/// must map to some id in [`Self::vocab`], otherwise
+/// [`to_wordlevel_tokenizer`] surfaces
+/// [`HfConversionError::WordLevelUnkNotInVocab`].
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfWordLevelModel {
+    /// The surface-string ↔ id map. Every word the tokenizer will
+    /// ever encode must appear here; anything else maps to
+    /// [`Self::unk_token`].
+    pub vocab: BTreeMap<String, TokenId>,
+    /// The surface string of the unknown token. Required — HF's own
+    /// spec makes this field mandatory on a `WordLevel` model.
+    pub unk_token: String,
 }
 
 /// Default `continuing_subword_prefix` when the JSON omits it —
@@ -1096,8 +1120,12 @@ impl From<serde_json::Error> for HfParseError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HfConversionError {
-    /// `model.type` is one this crate does not materialise (Unigram,
-    /// `WordLevel`). Carries the specific type name.
+    /// `model.type` is one this crate does not materialise. Every
+    /// currently-shipped variant (`BPE`, `WordPiece`, `Unigram`,
+    /// `WordLevel`) has its own conversion path, so this variant is
+    /// currently unreachable from the loader — kept for
+    /// forward-compatibility if HF adds a fifth model type. Carries
+    /// the specific type name.
     UnsupportedModel {
         /// The `model.type` string from the source config.
         type_name: String,
@@ -1124,6 +1152,13 @@ pub enum HfConversionError {
         /// The `model.type` string from the source config.
         type_name: String,
     },
+    /// [`to_wordlevel_tokenizer`] was called on a config whose
+    /// `model.type` is not `"WordLevel"`. Carries the specific type
+    /// name.
+    UnsupportedModelForWordLevel {
+        /// The `model.type` string from the source config.
+        type_name: String,
+    },
     /// A `Unigram` config's `unk_id` points past the end of its
     /// vocabulary — the config is internally inconsistent.
     UnigramUnkIdOutOfRange {
@@ -1136,6 +1171,13 @@ pub enum HfConversionError {
     /// the vocab. Encoding would produce ids the caller cannot
     /// decode.
     WordPieceUnkNotInVocab {
+        /// The surface string that should have been in the vocab.
+        unk_token: String,
+    },
+    /// A `WordLevel` config's `unk_token` surface string is not in
+    /// the vocab. Encoding an out-of-vocab word would emit an id the
+    /// caller cannot decode.
+    WordLevelUnkNotInVocab {
         /// The surface string that should have been in the vocab.
         unk_token: String,
     },
@@ -1239,8 +1281,8 @@ impl fmt::Display for HfConversionError {
             Self::UnsupportedModel { type_name } => write!(
                 f,
                 "unsupported HF model type {type_name:?} \
-                 (this crate materialises \"BPE\" and \"WordPiece\"; \
-                 Unigram / WordLevel are deferred to later landings)"
+                 (this crate materialises \"BPE\", \"WordPiece\", \"Unigram\", \
+                 and \"WordLevel\"; every other tag is unrecognised)"
             ),
             Self::UnsupportedModelForBpe { type_name } => write!(
                 f,
@@ -1257,6 +1299,12 @@ impl fmt::Display for HfConversionError {
                 "to_unigram_tokenizer called on non-Unigram model type {type_name:?}; \
                  use to_bpe_tokenizer, to_wordpiece_tokenizer, or to_tokenizer instead"
             ),
+            Self::UnsupportedModelForWordLevel { type_name } => write!(
+                f,
+                "to_wordlevel_tokenizer called on non-WordLevel model type {type_name:?}; \
+                 use to_bpe_tokenizer, to_wordpiece_tokenizer, to_unigram_tokenizer, \
+                 or to_tokenizer instead"
+            ),
             Self::UnigramUnkIdOutOfRange { unk_id, vocab_size } => write!(
                 f,
                 "Unigram model's unk_id {unk_id} is out of range for a vocabulary of size {vocab_size}"
@@ -1264,6 +1312,10 @@ impl fmt::Display for HfConversionError {
             Self::WordPieceUnkNotInVocab { unk_token } => write!(
                 f,
                 "WordPiece model's unk_token {unk_token:?} is not present in the vocabulary"
+            ),
+            Self::WordLevelUnkNotInVocab { unk_token } => write!(
+                f,
+                "WordLevel model's unk_token {unk_token:?} is not present in the vocabulary"
             ),
             Self::UnsupportedPreTokenizer { type_name, reason } => write!(
                 f,
@@ -1436,7 +1488,7 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
             });
         }
         HfModel::WordLevel(_) => {
-            return Err(HfConversionError::UnsupportedModel {
+            return Err(HfConversionError::UnsupportedModelForBpe {
                 type_name: "WordLevel".to_string(),
             });
         }
@@ -1549,9 +1601,10 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
 /// * [`HfTokenizer::Unigram`] wraps a [`UnigramTokenizer`] — every
 ///   `model.type == "Unigram"` config (Llama, Mistral, T5,
 ///   XLM-RoBERTa) lands here.
-///
-/// `WordLevel` is deferred; [`to_tokenizer`] rejects it with
-/// [`HfConversionError::UnsupportedModel`].
+/// * [`HfTokenizer::WordLevel`] wraps a
+///   [`crate::wordlevel::WordLevelTokenizer`] — every
+///   `model.type == "WordLevel"` config (specialised BERT-family and
+///   fixed-vocabulary checkpoints) lands here.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HfTokenizer {
@@ -1565,20 +1618,28 @@ pub enum HfTokenizer {
     WordPiece(crate::wordpiece::WordPieceTokenizer),
     /// A [`UnigramTokenizer`] materialised from a `Unigram` model.
     Unigram(UnigramTokenizer),
+    /// A [`crate::wordlevel::WordLevelTokenizer`] materialised from a
+    /// `WordLevel` model.
+    WordLevel(crate::wordlevel::WordLevelTokenizer),
 }
 
 /// Materialise an [`HfTokenizerConfig`] as a runnable [`HfTokenizer`].
 ///
 /// Dispatches on `model.type`: `BPE` produces
 /// [`HfTokenizer::Bpe`]; `WordPiece` produces
-/// [`HfTokenizer::WordPiece`]. Every other model type surfaces
-/// [`HfConversionError::UnsupportedModel`] with the offending type
-/// name.
+/// [`HfTokenizer::WordPiece`]; `Unigram` produces
+/// [`HfTokenizer::Unigram`]; `WordLevel` produces
+/// [`HfTokenizer::WordLevel`]. Every currently-shipped HF model type
+/// is covered; a fifth type added upstream would surface
+/// [`HfConversionError::UnsupportedModel`] via the tagged-enum's
+/// "unknown variant" error at deserialisation time before ever
+/// reaching this dispatch.
 ///
 /// # Errors
 ///
 /// Returns any [`HfConversionError`] the underlying
-/// [`to_bpe_tokenizer`] or [`to_wordpiece_tokenizer`] would.
+/// [`to_bpe_tokenizer`] / [`to_wordpiece_tokenizer`] /
+/// [`to_unigram_tokenizer`] / [`to_wordlevel_tokenizer`] would.
 ///
 /// # Examples
 ///
@@ -1604,9 +1665,7 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
         )?))),
         HfModel::WordPiece(_) => Ok(HfTokenizer::WordPiece(to_wordpiece_tokenizer(config)?)),
         HfModel::Unigram(_) => Ok(HfTokenizer::Unigram(to_unigram_tokenizer(config)?)),
-        HfModel::WordLevel(_) => Err(HfConversionError::UnsupportedModel {
-            type_name: "WordLevel".to_string(),
-        }),
+        HfModel::WordLevel(_) => Ok(HfTokenizer::WordLevel(to_wordlevel_tokenizer(config)?)),
     }
 }
 
@@ -1776,6 +1835,207 @@ pub fn to_wordpiece_tokenizer(
     }
 
     Ok(tok)
+}
+
+/// Materialise an [`HfTokenizerConfig`] as a runnable
+/// [`crate::wordlevel::WordLevelTokenizer`].
+///
+/// The config's `model.type` must be `"WordLevel"`; any other type
+/// (including `"BPE"`) surfaces
+/// [`HfConversionError::UnsupportedModelForWordLevel`].
+///
+/// Supported ancillary features today:
+///
+/// * `pre_tokenizer.type ∈ {"WhitespaceSplit", "Whitespace",
+///   "BertPreTokenizer"}` — routes through the corresponding
+///   [`crate::wordlevel::WordLevelPreTokenizer`] variant. A missing
+///   `pre_tokenizer` block defaults to
+///   [`crate::wordlevel::WordLevelPreTokenizer::WhitespaceSplit`] —
+///   the shape real HF `WordLevel` checkpoints ship.
+/// * The `WordLevel` model's `unk_token` field is resolved to an id
+///   via the vocab; a missing entry surfaces
+///   [`HfConversionError::WordLevelUnkNotInVocab`].
+/// * `normalizer` — every variant this crate's internal normalizer
+///   materialiser accepts (see [`HfNormalizer`] for the shipped tags)
+///   is attached to the produced tokenizer via
+///   [`crate::wordlevel::WordLevelTokenizer::with_normalizer`], so
+///   `encode` runs `normalize -> pre-tokenize -> lookup -> post-process`
+///   end to end.
+/// * `post_processor` — every variant this crate's internal
+///   post-processor materialiser accepts (see [`HfPostProcessor`] for
+///   the shipped tags) is attached via
+///   [`crate::wordlevel::WordLevelTokenizer::with_post_processor`].
+///
+/// **Deferred** ancillary features (parse but reject at conversion):
+///
+/// * `decoder` — the raw config is preserved on
+///   [`HfTokenizerConfig::decoder`] for caller inspection but not
+///   applied; [`crate::wordlevel::WordLevelTokenizer::decode`] joins
+///   surface strings with single ASCII spaces regardless of what the
+///   config declares (the only shape a real `WordLevel` checkpoint
+///   ships).
+///
+/// # Errors
+///
+/// * [`HfConversionError::UnsupportedModelForWordLevel`] — the
+///   config's `model.type` is not `"WordLevel"`.
+/// * [`HfConversionError::WordLevelUnkNotInVocab`] — the config's
+///   `unk_token` surface string is not present in the vocabulary.
+/// * [`HfConversionError::UnsupportedNormalizer`] /
+///   [`HfConversionError::UnsupportedPreTokenizer`] /
+///   [`HfConversionError::UnsupportedPostProcessor`] — the config
+///   references an ancillary shape this crate does not materialise.
+/// * [`HfConversionError::Vocabulary`] — the vocabulary is
+///   internally inconsistent (duplicate id or duplicate surface).
+///
+/// # Examples
+///
+/// ```
+/// use stringcheese_tokenizer_hf::hf::{parse_tokenizer_json, to_wordlevel_tokenizer};
+///
+/// let json = r#"{
+///     "added_tokens": [],
+///     "model": {
+///         "type": "WordLevel",
+///         "vocab": {"[UNK]": 0, "hello": 1, "world": 2},
+///         "unk_token": "[UNK]"
+///     }
+/// }"#;
+/// let config = parse_tokenizer_json(json).unwrap();
+/// let tok = to_wordlevel_tokenizer(&config).unwrap();
+/// assert_eq!(tok.encode("hello world").unwrap(), vec![1, 2]);
+/// assert_eq!(tok.encode("unknown").unwrap(), vec![0]);
+/// ```
+pub fn to_wordlevel_tokenizer(
+    config: &HfTokenizerConfig,
+) -> Result<crate::wordlevel::WordLevelTokenizer, HfConversionError> {
+    let wl = match &config.model {
+        HfModel::WordLevel(wl) => wl,
+        HfModel::Bpe(_) => {
+            return Err(HfConversionError::UnsupportedModelForWordLevel {
+                type_name: "BPE".to_string(),
+            });
+        }
+        HfModel::WordPiece(_) => {
+            return Err(HfConversionError::UnsupportedModelForWordLevel {
+                type_name: "WordPiece".to_string(),
+            });
+        }
+        HfModel::Unigram(_) => {
+            return Err(HfConversionError::UnsupportedModelForWordLevel {
+                type_name: "Unigram".to_string(),
+            });
+        }
+    };
+
+    // Resolve unk_token surface string to an id via the vocab.
+    let Some(&unk_id) = wl.vocab.get(&wl.unk_token) else {
+        return Err(HfConversionError::WordLevelUnkNotInVocab {
+            unk_token: wl.unk_token.clone(),
+        });
+    };
+
+    // Fold added_tokens into the vocabulary so callers who inspect
+    // added specials find them under the same lookup as the model
+    // vocab. Overlapping (id, surface) pairs are idempotent; a
+    // conflicting one surfaces as a vocabulary-builder error.
+    let mut vocab: BTreeMap<String, TokenId> = wl.vocab.clone();
+    for at in &config.added_tokens {
+        if let Some(&existing) = vocab.get(&at.content) {
+            if existing != at.id {
+                return Err(HfConversionError::Vocabulary(
+                    VocabularyBuilderError::DuplicateByteString,
+                ));
+            }
+        } else {
+            vocab.insert(at.content.clone(), at.id);
+        }
+    }
+
+    // Assemble via `from_parts`; propagate its build errors as
+    // targeted HF-conversion errors so callers get a specific
+    // diagnostic.
+    let mut tok = crate::wordlevel::WordLevelTokenizer::from_parts(vocab, Some(unk_id)).map_err(
+        |e| match e {
+            crate::wordlevel::WordLevelBuildError::UnkNotInVocab(_) => {
+                HfConversionError::WordLevelUnkNotInVocab {
+                    unk_token: wl.unk_token.clone(),
+                }
+            }
+            crate::wordlevel::WordLevelBuildError::Vocabulary(v) => {
+                HfConversionError::Vocabulary(v)
+            }
+        },
+    )?;
+
+    // Pre-tokenizer routing. `WordLevel` cares only about the
+    // whitespace / punctuation split; a `Sequence` around one of the
+    // supported entries is unwrapped.
+    let pre = extract_wordlevel_pre_tokenizer(config.pre_tokenizer.as_ref())?;
+    tok = tok.with_pre_tokenizer(pre);
+
+    // Normalizer — runs before the pre-tokenizer at encode time.
+    if let Some(hn) = &config.normalizer {
+        let n = to_runtime_normalizer(hn)?;
+        tok = tok.with_normalizer(n);
+    }
+
+    // Post-processor — runs on the finished encoding before it
+    // leaves `encode`.
+    if let Some(hp) = &config.post_processor {
+        let pp = to_runtime_post_processor(hp)?;
+        tok = tok.with_post_processor(pp);
+    }
+
+    Ok(tok)
+}
+
+/// Reduce an [`HfPreTokenizer`] (or its absence) to a
+/// [`crate::wordlevel::WordLevelPreTokenizer`], following the
+/// `WordLevel` routing rules documented on [`to_wordlevel_tokenizer`].
+fn extract_wordlevel_pre_tokenizer(
+    pt: Option<&HfPreTokenizer>,
+) -> Result<crate::wordlevel::WordLevelPreTokenizer, HfConversionError> {
+    use crate::wordlevel::WordLevelPreTokenizer;
+    let Some(pt) = pt else {
+        // Missing pre_tokenizer block: fall back to the WhitespaceSplit
+        // default (what real WordLevel checkpoints ship).
+        return Ok(WordLevelPreTokenizer::WhitespaceSplit);
+    };
+    match pt {
+        HfPreTokenizer::WhitespaceSplit(_) => Ok(WordLevelPreTokenizer::WhitespaceSplit),
+        HfPreTokenizer::Whitespace(_) => Ok(WordLevelPreTokenizer::Whitespace),
+        HfPreTokenizer::BertPreTokenizer(_) => Ok(WordLevelPreTokenizer::Bert),
+        HfPreTokenizer::Sequence { pretokenizers } => {
+            if pretokenizers.is_empty() {
+                return Ok(WordLevelPreTokenizer::WhitespaceSplit);
+            }
+            if pretokenizers.len() == 1 {
+                return extract_wordlevel_pre_tokenizer(Some(&pretokenizers[0]));
+            }
+            Err(HfConversionError::AmbiguousSequencePreTokenizer {
+                child_count: pretokenizers.len(),
+            })
+        }
+        HfPreTokenizer::Split(_) => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "Split".to_string(),
+            reason: "Split pre-tokenizers are for BPE; WordLevel uses whitespace / punctuation",
+        }),
+        HfPreTokenizer::ByteLevel(_) => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "ByteLevel".to_string(),
+            reason: "ByteLevel pre-tokenizers are for byte-level BPE, not WordLevel",
+        }),
+        other => {
+            if let Some(err) = deferred_pre_tokenizer_reason(other) {
+                Err(err)
+            } else {
+                Err(HfConversionError::UnsupportedPreTokenizer {
+                    type_name: "unknown".to_string(),
+                    reason: "unhandled pre_tokenizer variant on WordLevel path",
+                })
+            }
+        }
+    }
 }
 
 /// Reduce an [`HfPreTokenizer`] (or its absence) to a
@@ -3508,22 +3768,26 @@ mod tests {
     }
 
     #[test]
-    fn wordlevel_model_reports_deferred_error() {
+    fn wordlevel_model_rejected_by_to_bpe_tokenizer() {
+        // WordLevel is materialised via `to_wordlevel_tokenizer` /
+        // `to_tokenizer`, not `to_bpe_tokenizer`. Backwards-compat:
+        // `to_bpe_tokenizer` errors with `UnsupportedModelForBpe` so
+        // callers can dispatch on the specific model type.
         let json = r#"{
             "added_tokens": [],
             "model": {
                 "type": "WordLevel",
-                "vocab": {"a": 0},
+                "vocab": {"[UNK]": 0, "a": 1},
                 "unk_token": "[UNK]"
             }
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
         let err = to_bpe_tokenizer(&config).unwrap_err();
         match err {
-            HfConversionError::UnsupportedModel { type_name } => {
+            HfConversionError::UnsupportedModelForBpe { type_name } => {
                 assert_eq!(type_name, "WordLevel");
             }
-            other => panic!("expected UnsupportedModel(WordLevel), got {other:?}"),
+            other => panic!("expected UnsupportedModelForBpe(WordLevel), got {other:?}"),
         }
     }
 
@@ -4949,18 +5213,28 @@ mod tests {
     }
 
     #[test]
-    fn to_tokenizer_rejects_wordlevel() {
-        // WordLevel remains deferred. Unigram, which used to appear
-        // in this test, is now materialised via `to_unigram_tokenizer`
-        // — see `to_tokenizer_dispatches_to_unigram_enum_variant`.
-        let json = r#"{"added_tokens":[],"model":{"type":"WordLevel","vocab":{"a":0},"unk_token":"[UNK]"}}"#;
-        let config = parse_tokenizer_json(json).unwrap();
-        let err = to_tokenizer(&config).unwrap_err();
-        match err {
-            HfConversionError::UnsupportedModel { type_name } => {
-                assert_eq!(type_name, "WordLevel");
+    fn to_tokenizer_dispatches_to_wordlevel_enum_variant() {
+        // WordLevel now routes through `to_tokenizer` and produces the
+        // `HfTokenizer::WordLevel` variant. `[UNK]` at id 0 is the
+        // fallback for the OOV "unknown" word.
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "WordLevel",
+                "vocab": {"[UNK]": 0, "hello": 1, "world": 2, "foo": 3, "bar": 4},
+                "unk_token": "[UNK]"
             }
-            other => panic!("expected UnsupportedModel(WordLevel), got {other:?}"),
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        match tok {
+            HfTokenizer::WordLevel(wl) => {
+                assert_eq!(
+                    wl.encode("hello world foo unknown").unwrap(),
+                    vec![1, 2, 3, 0]
+                );
+            }
+            other => panic!("expected HfTokenizer::WordLevel, got {other:?}"),
         }
     }
 
@@ -5429,5 +5703,237 @@ mod tests {
         // [101, 203, 102]. Outer Sequence over that single-child
         // result: same output.
         assert_eq!(tok.encode("cat"), vec![101, 203, 102]);
+    }
+
+    // -----------------------------------------------------------------
+    // WordLevel loader
+    // -----------------------------------------------------------------
+
+    /// Inline minimal `WordLevel` `tokenizer.json`: 5-word vocab with
+    /// `[UNK]` at id 0. No `pre_tokenizer` block — the loader falls
+    /// back to `WhitespaceSplit` per HF's real `WordLevel` shipping
+    /// convention.
+    const MINIMAL_WORDLEVEL_JSON: &str = r#"{
+        "version": "1.0",
+        "added_tokens": [],
+        "model": {
+            "type": "WordLevel",
+            "vocab": {
+                "[UNK]": 0,
+                "hello": 1,
+                "world": 2,
+                "foo": 3,
+                "bar": 4
+            },
+            "unk_token": "[UNK]"
+        }
+    }"#;
+
+    #[test]
+    fn wordlevel_model_parses_typed() {
+        let config = parse_tokenizer_json(MINIMAL_WORDLEVEL_JSON).unwrap();
+        match &config.model {
+            HfModel::WordLevel(wl) => {
+                assert_eq!(wl.unk_token, "[UNK]");
+                assert_eq!(wl.vocab.len(), 5);
+                assert!(wl.vocab.contains_key("hello"));
+                assert_eq!(wl.vocab.get("[UNK]"), Some(&0));
+            }
+            other => panic!("expected WordLevel model, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_encodes_and_emits_unk() {
+        // HF-loader test the task asks for: inline WordLevel-shape
+        // tokenizer.json, verify `to_tokenizer` returns
+        // `HfTokenizer::WordLevel`, encode "hello world foo unknown"
+        // and check the unk id (0) appears in the "unknown" slot.
+        let config = parse_tokenizer_json(MINIMAL_WORDLEVEL_JSON).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        let wl = match tok {
+            HfTokenizer::WordLevel(wl) => wl,
+            other => panic!("expected HfTokenizer::WordLevel, got {other:?}"),
+        };
+        let ids = wl.encode("hello world foo unknown").unwrap();
+        assert_eq!(ids, vec![1, 2, 3, 0]);
+        // Round-trip through decode joins the surface strings with
+        // single ASCII spaces; `[UNK]` decodes to its literal
+        // registered surface.
+        assert_eq!(wl.decode(&ids).unwrap(), "hello world foo [UNK]");
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_defaults_pre_tokenizer_to_whitespace_split() {
+        let config = parse_tokenizer_json(MINIMAL_WORDLEVEL_JSON).unwrap();
+        let tok = to_wordlevel_tokenizer(&config).unwrap();
+        assert_eq!(
+            tok.pre_tokenizer(),
+            crate::wordlevel::WordLevelPreTokenizer::WhitespaceSplit
+        );
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_rejects_unk_missing_from_vocab() {
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "WordLevel",
+                "vocab": {"cat": 0},
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let err = to_wordlevel_tokenizer(&config).unwrap_err();
+        match err {
+            HfConversionError::WordLevelUnkNotInVocab { unk_token } => {
+                assert_eq!(unk_token, "[UNK]");
+            }
+            other => panic!("expected WordLevelUnkNotInVocab, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_rejects_bpe_model() {
+        let json = r#"{
+            "added_tokens": [],
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1},
+                "merges": [["a", "b"]]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let err = to_wordlevel_tokenizer(&config).unwrap_err();
+        match err {
+            HfConversionError::UnsupportedModelForWordLevel { type_name } => {
+                assert_eq!(type_name, "BPE");
+            }
+            other => panic!("expected UnsupportedModelForWordLevel(BPE), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_routes_whitespace_pre_tokenizer() {
+        let json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "Whitespace"},
+            "model": {
+                "type": "WordLevel",
+                "vocab": {"[UNK]": 0, "hello": 1, ",": 2, "world": 3},
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordlevel_tokenizer(&config).unwrap();
+        assert_eq!(
+            tok.pre_tokenizer(),
+            crate::wordlevel::WordLevelPreTokenizer::Whitespace
+        );
+        // "hello, world" via whitespace + punctuation split →
+        // ["hello", ",", "world"] → [1, 2, 3].
+        assert_eq!(tok.encode("hello, world").unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_routes_bert_pre_tokenizer() {
+        let json = r#"{
+            "added_tokens": [],
+            "pre_tokenizer": {"type": "BertPreTokenizer"},
+            "model": {
+                "type": "WordLevel",
+                "vocab": {"[UNK]": 0, "hello": 1, ",": 2, "world": 3},
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordlevel_tokenizer(&config).unwrap();
+        assert_eq!(
+            tok.pre_tokenizer(),
+            crate::wordlevel::WordLevelPreTokenizer::Bert
+        );
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_wires_normalizer_and_post_processor_end_to_end() {
+        // BertNormalizer (lowercase) + WhitespaceSplit + TemplateProcessing
+        // ([CLS] .. [SEP]).
+        let json = r#"{
+            "added_tokens": [
+                {"id": 0, "content": "[UNK]", "special": true},
+                {"id": 1, "content": "[CLS]", "special": true},
+                {"id": 2, "content": "[SEP]", "special": true}
+            ],
+            "normalizer": {
+                "type": "BertNormalizer",
+                "clean_text": true,
+                "handle_chinese_chars": true,
+                "strip_accents": true,
+                "lowercase": true
+            },
+            "post_processor": {
+                "type": "TemplateProcessing",
+                "single": [
+                    {"SpecialToken": {"id": "[CLS]", "type_id": 0}},
+                    {"Sequence": {"id": "A", "type_id": 0}},
+                    {"SpecialToken": {"id": "[SEP]", "type_id": 0}}
+                ],
+                "pair": [],
+                "special_tokens": {
+                    "[CLS]": {"id": "[CLS]", "ids": [1], "tokens": ["[CLS]"]},
+                    "[SEP]": {"id": "[SEP]", "ids": [2], "tokens": ["[SEP]"]}
+                }
+            },
+            "model": {
+                "type": "WordLevel",
+                "vocab": {
+                    "[UNK]": 0,
+                    "[CLS]": 1,
+                    "[SEP]": 2,
+                    "hello": 3,
+                    "world": 4
+                },
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_tokenizer(&config).unwrap();
+        let wl = match tok {
+            HfTokenizer::WordLevel(wl) => wl,
+            other => panic!("expected HfTokenizer::WordLevel, got {other:?}"),
+        };
+        assert!(matches!(
+            wl.normalizer(),
+            Some(crate::normalizer::Normalizer::Bert { .. })
+        ));
+        assert!(matches!(
+            wl.post_processor(),
+            crate::post_processor::PostProcessor::TemplateProcessing(_)
+        ));
+        // "Hello WORLD" -> normalizer lowercases -> "hello world" ->
+        // WhitespaceSplit -> ["hello", "world"] -> [3, 4] ->
+        // template splice -> [1, 3, 4, 2].
+        assert_eq!(wl.encode("Hello WORLD").unwrap(), vec![1, 3, 4, 2]);
+    }
+
+    #[test]
+    fn to_wordlevel_tokenizer_added_specials_land_in_vocab() {
+        // added_tokens with unique surface strings are folded into
+        // the vocab; conflicting duplicates surface a vocabulary
+        // builder error.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 5, "content": "[BOS]", "special": true}
+            ],
+            "model": {
+                "type": "WordLevel",
+                "vocab": {"[UNK]": 0, "cat": 1},
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordlevel_tokenizer(&config).unwrap();
+        // The added special is in the vocab: encoding it produces id 5.
+        assert_eq!(tok.encode("[BOS] cat").unwrap(), vec![5, 1]);
     }
 }
