@@ -70,8 +70,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
-use unicode_normalization::char::canonical_combining_class;
 
 pub mod precompiled;
 
@@ -138,11 +138,20 @@ pub enum Normalizer {
     /// order:
     ///
     /// 1. **`clean_text`** — drop NUL (`U+0000`), the Unicode
-    ///    replacement character (`U+FFFD`), and every other Unicode
-    ///    "control" scalar *except* tab / newline / carriage return;
-    ///    then replace every remaining whitespace scalar with a single
-    ///    ASCII space (which lets the subsequent BERT pre-tokenizer
-    ///    handle any run of whitespace uniformly).
+    ///    replacement character (`U+FFFD`), and every scalar whose
+    ///    Unicode `General_Category` starts with `C` (i.e. `Cc`
+    ///    control, `Cf` format, `Co` private-use, `Cn` unassigned —
+    ///    `Cs` surrogate is unreachable in a Rust `char`) *except*
+    ///    tab / newline / carriage return; then replace every
+    ///    remaining whitespace scalar with a single ASCII space (which
+    ///    lets the subsequent BERT pre-tokenizer handle any run of
+    ///    whitespace uniformly). Matches HF's
+    ///    [`is_control`][hf-is-control] predicate exactly — the `Cf`
+    ///    coverage is what strips zero-width joiner / non-joiner /
+    ///    space (`U+200B..=U+200D`, `U+FEFF`) and the soft-hyphen
+    ///    (`U+00AD`), all of which the reference tokenizer drops.
+    ///
+    ///    [hf-is-control]: https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/normalizers/bert.rs
     /// 2. **`handle_chinese_chars`** — pad every CJK / Han codepoint
     ///    with an ASCII space on each side, so the downstream
     ///    pre-tokenizer treats each Han character as its own "word".
@@ -151,13 +160,22 @@ pub enum Normalizer {
     ///    CJK Compatibility Ideographs, and CJK Compatibility
     ///    Ideographs Supplement.
     /// 3. **`strip_accents`** — NFD-decompose the input, then drop
-    ///    every combining mark (checked via
-    ///    [`unicode_normalization::char::canonical_combining_class`]
-    ///    `!= 0`, which is the closest zero-table proxy for HF's own
-    ///    `Mn`-only filter and coincides on every Latin-script accent
-    ///    a typical caller cares about). When `strip_accents` is
-    ///    `None`, HF defaults it to the value of `lowercase` — the
-    ///    same behaviour is reproduced here.
+    ///    every scalar whose `General_Category` is `Mn` (Non-Spacing
+    ///    Mark). Matches HF's reference `strip_accents`, which calls
+    ///    [`unicode_categories::UnicodeCategories::is_mark_nonspacing`][hf-strip]
+    ///    on the same NFD stream. The filter is deliberately not a
+    ///    "Latin accents only" whitelist and not a
+    ///    canonical-combining-class filter — the vocabularies of
+    ///    every BERT-family checkpoint (bert-base-uncased,
+    ///    distilbert-base-uncased, ...) are built against the exact
+    ///    Mn-stripped surface HF emits, so any narrower filter
+    ///    silently misses vocab entries on non-Latin scripts (e.g.
+    ///    Devanagari matras U+094D / U+0947 / U+0941 are all Mn and
+    ///    must be dropped; U+093F / U+093E are Mc and must survive).
+    ///    When `strip_accents` is `None`, HF defaults it to the value
+    ///    of `lowercase` — the same behaviour is reproduced here.
+    ///
+    ///    [hf-strip]: https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/normalizers/bert.rs
     /// 4. **`lowercase`** — Unicode-aware lower-casing via
     ///    [`str::to_lowercase`], matching [`Normalizer::Lowercase`].
     ///
@@ -330,10 +348,10 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
 /// BERT's `clean_text` pass.
 ///
 /// Drops NUL (`U+0000`), the Unicode replacement character (`U+FFFD`),
-/// and every other Unicode "control" scalar except tab, newline, and
-/// carriage return (which are treated as whitespace, not controls);
-/// every remaining whitespace scalar is replaced with a single ASCII
-/// space.
+/// and every other Unicode "control" scalar (see [`is_bert_control`])
+/// except tab, newline, and carriage return (which are treated as
+/// whitespace, not controls); every remaining whitespace scalar is
+/// replaced with a single ASCII space.
 fn bert_clean_text(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for c in input.chars() {
@@ -352,17 +370,27 @@ fn bert_clean_text(input: &str) -> String {
 /// HF's "is a control character for BERT" predicate. Tab, newline,
 /// and carriage return are explicitly *not* controls here — they are
 /// treated as whitespace by [`bert_clean_text`].
+///
+/// Matches HF's reference implementation, which filters every scalar
+/// whose `General_Category` starts with `C` (via
+/// `unicode_categories::UnicodeCategories::is_other`): `Cc` (Control),
+/// `Cf` (Format), `Co` (Private Use), and `Cn` (Unassigned). `Cs`
+/// (Surrogate) is technically in the set but is unreachable in a Rust
+/// [`char`]. The `Cf` coverage is what strips the zero-width scalars
+/// (`U+200B..=U+200D`, `U+FEFF`) and the soft-hyphen `U+00AD` that
+/// downstream vocabularies were built to ignore.
 fn is_bert_control(c: char) -> bool {
     if c == '\t' || c == '\n' || c == '\r' {
         return false;
     }
-    // `char::is_control` covers Cc (the C0 and C1 control blocks).
-    // HF's own predicate is more permissive (it also catches Cf / Co /
-    // Cs), but every non-Cc scalar we might see in practice is either
-    // handled by `is_bert_whitespace` below (Zs) or is a normal
-    // letter/mark. Cc coverage is sufficient for round-tripping the
-    // BERT-canonical inputs.
-    c.is_control()
+    matches!(
+        get_general_category(c),
+        GeneralCategory::Control
+            | GeneralCategory::Format
+            | GeneralCategory::Surrogate
+            | GeneralCategory::PrivateUse
+            | GeneralCategory::Unassigned
+    )
 }
 
 /// HF's "is whitespace for BERT" predicate. Tab / newline / CR are
@@ -411,12 +439,27 @@ fn is_chinese_char(c: char) -> bool {
 }
 
 /// BERT's `strip_accents` pass. NFD-decomposes the input then drops
-/// every combining mark (canonical combining class ≠ 0). The result
-/// is left in NFD form, matching HF's own behaviour.
+/// every scalar whose `General_Category` is `Mn` (Non-Spacing Mark).
+/// The result is left in NFD form, matching HF's own behaviour.
+///
+/// The filter is deliberately `Mn` and not
+/// [`unicode_normalization::char::canonical_combining_class`] `!= 0`:
+/// the two sets diverge on Indic-script matras (Devanagari VOWEL SIGN
+/// U `U+0941` and VOWEL SIGN E `U+0947` are both `Mn` but have
+/// `ccc == 0`), and the BERT-family vocabularies were built against
+/// HF's exact `Mn`-stripped surface. A `ccc`-based filter silently
+/// misses those matras, causing `WordPiece` lookups on Devanagari /
+/// Bengali / Thai / ... to fall off vocab and collapse to `[UNK]`.
+/// See HF's reference:
+/// <https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/normalizers/bert.rs>.
+///
+/// `Mc` (Spacing Combining Mark) scalars — e.g. Devanagari VOWEL SIGN
+/// I `U+093F` and VOWEL SIGN AA `U+093E` — are preserved, matching
+/// HF's `is_mark_nonspacing`-only filter.
 fn bert_strip_accents(input: &str) -> String {
     input
         .nfd()
-        .filter(|c| canonical_combining_class(*c) == 0)
+        .filter(|c| !matches!(get_general_category(*c), GeneralCategory::NonspacingMark))
         .collect()
 }
 
@@ -683,6 +726,73 @@ mod tests {
             lowercase: false,
         };
         assert_eq!(normalize("a\u{0001}b", &n), "ab");
+    }
+
+    #[test]
+    fn bert_clean_text_drops_zero_width_and_soft_hyphen() {
+        // Every scalar with `General_Category` starting with `C` is a
+        // control for BERT — that includes `Cf` (Format), which covers
+        // the zero-width joiner / non-joiner / space and the
+        // soft-hyphen. The reference HF tokenizer strips them; this
+        // pins the parity.
+        let n = Normalizer::Bert {
+            clean_text: true,
+            handle_chinese_chars: false,
+            strip_accents: Some(false),
+            lowercase: false,
+        };
+        // The invisible-chars fixture case from the conformance corpus,
+        // condensed: expected output has every U+200B / U+200C /
+        // U+200D and the soft-hyphen (U+00AD) removed.
+        assert_eq!(
+            normalize("he\u{200B}llo\u{200C}world\u{200D}!\u{00AD}end", &n),
+            "helloworld!end",
+        );
+        // U+FEFF (Zero-Width No-Break Space / BOM) is also `Cf` and
+        // must be stripped.
+        assert_eq!(normalize("\u{FEFF}hello", &n), "hello");
+    }
+
+    #[test]
+    fn bert_strip_accents_removes_latin_diacritics() {
+        // Regression: `caf\u{00E9}` still round-trips through NFD →
+        // Mn-filter → NFD as `"cafe"`, matching the historical
+        // canonical-combining-class filter's behaviour on Latin scripts.
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: false,
+            strip_accents: Some(true),
+            lowercase: false,
+        };
+        assert_eq!(normalize("caf\u{00E9}", &n), "cafe");
+        assert_eq!(normalize("CAF\u{00C9}", &n), "CAFE");
+        // Already-decomposed form reaches the same output.
+        assert_eq!(normalize("cafe\u{0301}", &n), "cafe");
+    }
+
+    #[test]
+    fn bert_strip_accents_preserves_devanagari_matras() {
+        // "नमस्ते दुनिया" — the hindi-devanagari fixture case.
+        // HF's Mn-only filter strips VIRAMA (U+094D), VOWEL SIGN E
+        // (U+0947), and VOWEL SIGN U (U+0941) — all `Mn` — leaving
+        // "नमसत दनिया". VOWEL SIGN I (U+093F) and VOWEL SIGN AA
+        // (U+093E) are `Mc` (Spacing Combining Mark) and MUST
+        // survive; the bert-base-uncased vocab only has entries for
+        // this Mn-stripped surface.
+        let n = Normalizer::Bert {
+            clean_text: false,
+            handle_chinese_chars: false,
+            strip_accents: Some(true),
+            lowercase: false,
+        };
+        assert_eq!(
+            normalize("\u{0928}\u{092E}\u{0938}\u{094D}\u{0924}\u{0947}", &n),
+            "\u{0928}\u{092E}\u{0938}\u{0924}",
+        );
+        assert_eq!(
+            normalize("\u{0926}\u{0941}\u{0928}\u{093F}\u{092F}\u{093E}", &n),
+            "\u{0926}\u{0928}\u{093F}\u{092F}\u{093E}",
+        );
     }
 
     #[test]
