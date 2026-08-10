@@ -73,10 +73,10 @@
 //!   `Sequence`, ...). The raw config is preserved on
 //!   [`HfTokenizerConfig::decoder`] for caller inspection.
 //! * `normalizer` — the honoured shapes (NFC / NFD / NFKC / NFKD /
-//!   `Sequence` / `Lowercase` / `Replace(String)` / `Strip` /
-//!   `Prepend` / `BertNormalizer` / `Precompiled`) are materialised
-//!   at [`to_bpe_tokenizer`] time and applied on every `encode` call;
-//!   every other tag string surfaces
+//!   `Sequence` / `Lowercase` / `Replace(String)` / `Replace(Regex)` /
+//!   `Strip` / `Prepend` / `BertNormalizer` / `Precompiled`) are
+//!   materialised at [`to_bpe_tokenizer`] time and applied on every
+//!   `encode` call; every other tag string surfaces
 //!   [`HfConversionError::UnsupportedNormalizer`]. See
 //!   [`HfNormalizer`] for the exhaustive list.
 //! * `post_processor` — [`HfPostProcessor::TemplateProcessing`]
@@ -772,9 +772,8 @@ impl From<HfPrependScheme> for PrependScheme {
 /// `tokenizer.json` blobs load; its runtime pass is a passthrough
 /// today — see [`Normalizer::Precompiled`] for the limitation.
 ///
-/// Deferred variants (`Nmt`, regex `Replace`, custom callables)
-/// surface at conversion as
-/// [`HfConversionError::UnsupportedNormalizer`] with the offending
+/// Deferred variants (`Nmt`, custom callables) surface at conversion
+/// as [`HfConversionError::UnsupportedNormalizer`] with the offending
 /// type name.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -794,15 +793,19 @@ pub enum HfNormalizer {
     Nfkd,
     /// Unicode-aware lower-casing.
     Lowercase,
-    /// Literal-string substitution. HF's spec also permits regex
-    /// patterns; the regex form is deferred and rejected at
-    /// [`to_bpe_tokenizer`] time.
+    /// String or regex substitution. [`HfPattern::String`] materialises
+    /// into [`Normalizer::Replace`] (literal search-and-replace);
+    /// [`HfPattern::Regex`] materialises into
+    /// [`Normalizer::ReplaceRegex`] (compiled `fancy-regex` pattern
+    /// applied at every [`normalize`](crate::normalizer::normalize)
+    /// call — see that variant for the compile-per-call caveat).
     Replace {
-        /// The pattern block. Only [`HfPattern::String`] is honoured;
-        /// [`HfPattern::Regex`] surfaces
-        /// [`HfConversionError::UnsupportedPattern`] at conversion.
+        /// The pattern block. Both [`HfPattern::String`] and
+        /// [`HfPattern::Regex`] are honoured.
         pattern: HfPattern,
-        /// The replacement string.
+        /// The replacement string. Used verbatim — regex capture
+        /// group back-references (`$1`, `${name}`) are not interpreted
+        /// even when `pattern` is a regex.
         content: String,
     },
     /// Trim whitespace from one or both sides.
@@ -1236,12 +1239,12 @@ pub enum HfConversionError {
     /// The `Split` pre-tokenizer's regex pattern failed to compile.
     Regex(PreTokenizerCompileError),
     /// The `normalizer` block used a variant this crate does not
-    /// materialise yet (`Nmt`, a `Replace` with a `Regex` pattern, or
-    /// a custom callable). `Precompiled` is honoured as a passthrough
-    /// and does not surface here.
+    /// materialise yet (`Nmt` or a custom callable). `Precompiled` is
+    /// honoured as a passthrough and does not surface here; `Replace`
+    /// with either a literal or regex pattern is honoured.
     UnsupportedNormalizer {
         /// The `normalizer.type` string, or a short synthesised name
-        /// for a nested rejection (`"Replace(Regex)"`, ...).
+        /// for a nested rejection.
         type_name: String,
     },
     /// The `post_processor` block used a tag string this crate does
@@ -1350,8 +1353,9 @@ impl fmt::Display for HfConversionError {
                 f,
                 "unsupported HF normalizer type {type_name:?}: \
                  this crate materialises NFC/NFD/NFKC/NFKD, Lowercase, \
-                 Replace(String), Strip, Prepend, BertNormalizer, \
-                 Precompiled (passthrough), and their Sequence composition"
+                 Replace(String), Replace(Regex), Strip, Prepend, \
+                 BertNormalizer, Precompiled (passthrough), and their \
+                 Sequence composition"
             ),
             Self::UnsupportedPostProcessor { type_name } => write!(
                 f,
@@ -1697,9 +1701,10 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
 ///   [`crate::wordpiece::WordPieceTokenizer::with_normalizer`], so
 ///   `encode` runs `normalize -> pre-tokenize -> WordPiece` end to
 ///   end. NFC / NFD / NFKC / NFKD / Lowercase / Strip / Prepend /
-///   `Replace(String)` / their `Sequence` composition are honoured
-///   the same way; deferred variants (`Replace(Regex)`, `Nmt`, ...)
-///   surface [`HfConversionError::UnsupportedNormalizer`].
+///   `Replace(String)` / `Replace(Regex)` / their `Sequence`
+///   composition are honoured the same way; deferred variants
+///   (`Nmt`, ...) surface
+///   [`HfConversionError::UnsupportedNormalizer`].
 /// * `post_processor` — `WordPiece` checkpoints usually ship
 ///   `TemplateProcessing` (for `[CLS]` / `[SEP]`); that shape is
 ///   honoured verbatim and attached via
@@ -1812,11 +1817,12 @@ pub fn to_wordpiece_tokenizer(
 
     // Normalizer — runs before the pre-tokenizer at encode time. The
     // shared `to_runtime_normalizer` honours NFC / NFD / NFKC / NFKD /
-    // Lowercase / Strip / Prepend / Replace(String) / BertNormalizer /
-    // their Sequence composition; everything else surfaces as
-    // `UnsupportedNormalizer`. Mirrors `to_bpe_tokenizer`'s wiring —
-    // the runtime `WordPieceTokenizer` now carries a normalizer slot,
-    // so the parsed value is attached and applied end-to-end.
+    // Lowercase / Strip / Prepend / Replace(String) / Replace(Regex) /
+    // BertNormalizer / their Sequence composition; everything else
+    // surfaces as `UnsupportedNormalizer`. Mirrors `to_bpe_tokenizer`'s
+    // wiring — the runtime `WordPieceTokenizer` now carries a
+    // normalizer slot, so the parsed value is attached and applied
+    // end-to-end.
     if let Some(hn) = &config.normalizer {
         let n = to_runtime_normalizer(hn)?;
         tok = tok.with_normalizer(n);
@@ -3196,8 +3202,9 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
                 pattern: p.clone(),
                 content: content.clone(),
             }),
-            HfPattern::Regex(_) => Err(HfConversionError::UnsupportedNormalizer {
-                type_name: "Replace(Regex)".to_string(),
+            HfPattern::Regex(p) => Ok(Normalizer::ReplaceRegex {
+                pattern: p.clone(),
+                content: content.clone(),
             }),
         },
         HfNormalizer::Strip { left, right } => Ok(Normalizer::Strip {
@@ -4362,24 +4369,65 @@ mod tests {
     }
 
     #[test]
-    fn normalizer_replace_regex_pattern_reports_deferred_error() {
+    fn normalizer_replace_regex_pattern_is_honoured() {
+        // The `pattern: {"Regex": "..."}` shape now materialises into
+        // `Normalizer::ReplaceRegex` (DeBERTa-v3 and mDeBERTa-v3 both
+        // ship one — see `to_runtime_normalizer` for the routing).
         let json = r#"{
             "added_tokens": [],
             "normalizer": {
                 "type": "Replace",
-                "pattern": {"Regex": " +"},
+                "pattern": {"Regex": " {2,}"},
                 "content": " "
             },
-            "model": {"type": "BPE", "vocab": {"a": 0}, "merges": []}
+            "model": {
+                "type": "BPE",
+                "vocab": {"a": 0, "b": 1, " ": 2},
+                "merges": []
+            }
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
-        let err = to_bpe_tokenizer(&config).unwrap_err();
-        match err {
-            HfConversionError::UnsupportedNormalizer { type_name } => {
-                assert_eq!(type_name, "Replace(Regex)");
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        // Runs of two-or-more ASCII spaces collapse to one; the BPE
+        // whitespace fallback then discards the surviving space, so
+        // "a    b" encodes to just [a, b].
+        let ids = tok.encode("a    b").unwrap().ids;
+        assert_eq!(ids, vec![0, 1]);
+    }
+
+    #[test]
+    fn normalizer_deberta_v3_shape_loads_end_to_end() {
+        // Inline mini deberta-v3-shape tokenizer.json: the normalizer
+        // is the exact `Sequence[Prepend, Replace(Regex), Replace(String)]`
+        // stack the upstream `AutoTokenizer(...).save_pretrained(...)`
+        // conversion writes for microsoft/deberta-v3-base. This test
+        // asserts the config now converts without error — before the
+        // Replace(Regex) landing, `to_tokenizer` bailed with
+        // `UnsupportedNormalizer{type_name:"Replace(Regex)"}` and
+        // deberta-v3 / mdeberta-v3 could not be loaded at all.
+        let json = r#"{
+            "added_tokens": [],
+            "normalizer": {
+                "type": "Sequence",
+                "normalizers": [
+                    {"type": "Prepend", "prepend": "▁"},
+                    {"type": "Replace", "pattern": {"Regex": " {2,}"}, "content": " "},
+                    {"type": "Replace", "pattern": {"String": "▁"}, "content": " "}
+                ]
+            },
+            "model": {
+                "type": "Unigram",
+                "vocab": [["<unk>", 0.0], ["▁", -1.0], ["a", -2.0], ["b", -3.0]],
+                "unk_id": 0
             }
-            other => panic!("expected UnsupportedNormalizer(Replace(Regex)), got {other:?}"),
-        }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        // Before this landing the next call errored out with
+        // UnsupportedNormalizer(Replace(Regex)); assert it now
+        // succeeds. The Unigram tokenizer built from the tiny vocab
+        // is not exercised further here — the conformance corpus is
+        // the right home for encode-side parity assertions.
+        let _tok = to_tokenizer(&config).unwrap();
     }
 
     #[test]
