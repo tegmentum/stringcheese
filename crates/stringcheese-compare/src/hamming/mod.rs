@@ -83,6 +83,12 @@
 pub mod algorithm;
 pub mod error;
 pub mod kernel;
+/// Optional SIMD-accelerated byte-slice Hamming backend. Compiled only
+/// under `--features simd`; see the [`simd`] module docs for the dispatch
+/// architecture and the documented unsafe-code exception the module
+/// carries.
+#[cfg(feature = "simd")]
+pub mod simd;
 
 #[cfg(test)]
 mod golden;
@@ -90,6 +96,10 @@ mod golden;
 #[cfg(test)]
 #[cfg(not(target_family = "wasm"))]
 mod property_tests;
+
+#[cfg(all(test, feature = "simd"))]
+#[cfg(not(target_family = "wasm"))]
+mod simd_property_tests;
 
 pub use algorithm::Hamming;
 pub use error::LengthMismatch;

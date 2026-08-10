@@ -28,6 +28,9 @@ use stringcheese_core::{
 use crate::hamming::error::LengthMismatch;
 use crate::hamming::kernel::{hamming_distance, hamming_distance_within};
 
+#[cfg(feature = "simd")]
+use crate::hamming;
+
 /// The equal-length Hamming distance.
 ///
 /// The distance is the number of positions at which two sequences of the
@@ -154,6 +157,62 @@ impl Hamming {
             });
         }
         Ok(hamming_distance_within(left, right, cutoff))
+    }
+
+    /// Byte-slice specialization that opts into the SIMD backend when the
+    /// `simd` feature is enabled and the input pair meets the backend's
+    /// viability criterion
+    /// ([`crate::hamming::simd::is_byte_amenable_for_hamming`]).
+    ///
+    /// Unicode-scalar callers (`&[char]`) go through the generic
+    /// [`DistanceMetric::distance`] path; the SIMD backend is byte-oriented
+    /// because the block-wise byte compare is what makes it fast.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `left.len() != right.len()`. Use
+    /// [`Hamming::try_distance`] for a fallible variant that returns
+    /// [`LengthMismatch`] instead.
+    #[inline]
+    pub fn distance_bytes(self, left: &[u8], right: &[u8]) -> Distance<u32> {
+        #[cfg(feature = "simd")]
+        {
+            if hamming::simd::is_byte_amenable_for_hamming(left, right) {
+                return Distance::new(hamming::simd::distance(left, right));
+            }
+        }
+        hamming_distance(left, right)
+    }
+
+    /// Byte-slice specialization for the cutoff-aware variant. Opts into
+    /// the SIMD backend when the `simd` feature is enabled and the input
+    /// pair meets the backend's viability criterion.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `left.len() != right.len()`.
+    #[inline]
+    pub fn distance_bytes_within(
+        self,
+        left: &[u8],
+        right: &[u8],
+        cutoff: u32,
+    ) -> BoundedDistance<u32> {
+        #[cfg(feature = "simd")]
+        {
+            if hamming::simd::is_byte_amenable_for_hamming(left, right) {
+                let raw = hamming::simd::distance_within(left, right, cutoff);
+                // Each SIMD backend returns the exact mismatch count when
+                // it is at most `cutoff`, or a value strictly greater
+                // than `cutoff` (a sentinel meaning "exceeded"). Map to
+                // the `BoundedDistance` shape here.
+                if raw <= cutoff {
+                    return BoundedDistance::Within(Distance::new(raw));
+                }
+                return BoundedDistance::Exceeded { cutoff };
+            }
+        }
+        hamming_distance_within(left, right, cutoff)
     }
 }
 
@@ -342,5 +401,78 @@ mod tests {
         let left: &[u8] = b"abc";
         let right: &[u8] = b"abcd";
         let _ = alg.distance_within(left, right, 2);
+    }
+
+    /// `distance_bytes` must agree with `distance` on every input pair —
+    /// both the SIMD path (long inputs) and the scalar fallback path
+    /// (short inputs, below the amenability threshold).
+    #[test]
+    fn distance_bytes_agrees_with_distance() {
+        let alg = Hamming;
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"", b""),
+            (b"a", b"a"),
+            (b"karolin", b"kathrin"),
+            (b"karolin", b"kerstin"),
+            (b"1011101", b"1001001"),
+            (b"abc", b"xyz"),
+        ];
+        for (a, b) in cases {
+            assert_eq!(
+                alg.distance_bytes(a, b),
+                alg.distance(a, b),
+                "distance_bytes disagreed with distance on ({a:?}, {b:?})",
+            );
+        }
+    }
+
+    /// Long-input case: `distance_bytes` hits the SIMD path when the
+    /// `simd` feature is enabled, and must still match the scalar
+    /// baseline bit-for-bit.
+    #[test]
+    fn distance_bytes_agrees_on_long_inputs() {
+        let alg = Hamming;
+        let a: alloc::vec::Vec<u8> = (0..200u8).collect();
+        let mut b = a.clone();
+        b[10] ^= 0x01;
+        b[50] ^= 0x02;
+        b[100] ^= 0x04;
+        b[199] ^= 0x08;
+        assert_eq!(
+            alg.distance_bytes(&a, &b).into_inner(),
+            hamming_distance(a.as_slice(), b.as_slice()).into_inner(),
+        );
+    }
+
+    /// `distance_bytes_within` must agree with `distance_within` on every
+    /// input pair, including the SIMD path.
+    #[test]
+    fn distance_bytes_within_agrees_with_distance_within() {
+        let alg = Hamming;
+        let a: alloc::vec::Vec<u8> = (0..200u8).collect();
+        let mut b = a.clone();
+        b[10] ^= 0x01;
+        b[50] ^= 0x02;
+        b[100] ^= 0x04;
+        b[150] ^= 0x08;
+        for k in 0..=10 {
+            assert_eq!(
+                alg.distance_bytes_within(&a, &b, k),
+                alg.distance_within(a.as_slice(), b.as_slice(), k),
+                "distance_bytes_within disagreed at k={k}",
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "equal-length")]
+    fn distance_bytes_panics_on_length_mismatch() {
+        let alg = Hamming;
+        // A pair long enough to enter the SIMD amenability path so the
+        // panic must fire inside the dispatcher (rather than being caught
+        // by the scalar generic kernel).
+        let left: alloc::vec::Vec<u8> = alloc::vec![0u8; 40];
+        let right: alloc::vec::Vec<u8> = alloc::vec![0u8; 41];
+        let _ = alg.distance_bytes(&left, &right);
     }
 }
