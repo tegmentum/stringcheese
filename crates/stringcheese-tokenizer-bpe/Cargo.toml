@@ -45,6 +45,16 @@ hf-normalizer = ["std", "dep:unicode-normalization"]
 stringcheese-core = { workspace = true }
 stringcheese-tokenizer = { workspace = true }
 
+# `hashbrown` gives us an `alloc`-friendly, `no_std`-compatible
+# `HashMap` for `BpeMergeTable::rank`. The prior storage —
+# `BTreeMap<(Vec<u8>, Vec<u8>), u32>` — was O(log n) with per-lookup
+# allocations for the tuple key; the audit called it out as the
+# dominant encode-time cost. The concat-key HashMap shape mirrors
+# tiktoken's `HashMap<Vec<u8>, Rank>` layout. `ahash` picks the
+# aarch64 NEON-accelerated variant automatically on the host and
+# stays portable elsewhere; both fall back cleanly on wasm.
+hashbrown = { version = "0.14", default-features = false, features = ["ahash"] }
+
 # Regex backend for the Phase 2b pre-tokenizer. `fancy-regex` is the
 # only mainstream Rust regex crate that supports both Unicode general
 # categories (`\p{L}`, `\p{N}`) *and* look-around (`(?!\S)`) — both

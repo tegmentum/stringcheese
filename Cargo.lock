@@ -1482,6 +1482,8 @@ dependencies = [
  "stringcheese-simhash",
  "stringcheese-stats",
  "stringcheese-textsplit",
+ "stringcheese-tokenizer",
+ "stringcheese-tokenizer-bpe",
  "stringcheese-winnowing",
 ]
 
@@ -2055,6 +2057,7 @@ name = "stringcheese-tokenizer-bpe"
 version = "0.1.0"
 dependencies = [
  "fancy-regex",
+ "hashbrown 0.14.5",
  "proptest",
  "serde",
  "serde_json",

@@ -25,40 +25,75 @@ pub enum VocabularyBuilderError {
 
 /// The merge table for a BPE tokenizer.
 ///
-/// Maps each merge pair `(left, right)` (both as owned byte strings) to
-/// a numeric rank. Lower rank means the merge is applied *earlier* — that
-/// is, when two adjacent pairs are both in the table, the one with the
-/// lower rank wins. This matches the tiktoken / Hugging Face
-/// convention.
+/// Maps each merge pair `(left, right)` — stored internally as the
+/// single *concatenation* `[left, right].concat()` — to a numeric rank.
+/// Lower rank means the merge is applied *earlier* — that is, when two
+/// adjacent pairs are both in the table, the one with the lower rank
+/// wins. This matches the tiktoken / Hugging Face convention.
+///
+/// # Representation
+///
+/// Before Wave-14 this table was a `BTreeMap<(Vec<u8>, Vec<u8>), u32>`.
+/// Every [`Self::rank`] call materialised the tuple key with two
+/// `Vec<u8>` clones, and the map itself did O(log n) byte-slice
+/// comparisons on the way to the leaf. The audit called this out as
+/// the dominant per-token cost — the merge loop invokes `rank` once
+/// per heap-pop validation *and* once per new-adjacency check.
+///
+/// The current representation matches tiktoken's storage: a
+/// [`hashbrown::HashMap`] keyed on the *concatenation* of the two
+/// pieces. Lookup allocates one `Vec<u8>` per call (down from two)
+/// and hits an O(1) hash lookup afterwards.
 #[derive(Debug, Default, Clone)]
 pub struct BpeMergeTable {
-    ranks: BTreeMap<(Vec<u8>, Vec<u8>), u32>,
+    ranks: hashbrown::HashMap<Vec<u8>, u32>,
 }
 
 impl BpeMergeTable {
     /// Constructs an empty merge table. A tokenizer with no merges is
     /// well-defined: it emits one token per input byte.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            ranks: BTreeMap::new(),
+            ranks: hashbrown::HashMap::new(),
         }
     }
 
     /// Inserts a merge with the given rank. Overwrites any prior entry
     /// for the same pair.
+    ///
+    /// Both arguments are consumed: `left` is reused as the underlying
+    /// key allocation and `right` is drained into it, so a caller who
+    /// already owns the two `Vec`s pays no extra copy to build the key.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "public API stability: this signature ships across the workspace and matches every existing caller; changing it to `&[u8]` would be a breaking change"
+    )]
     pub fn insert(&mut self, left: Vec<u8>, right: Vec<u8>, rank: u32) {
-        self.ranks.insert((left, right), rank);
+        // Concatenate into a single key: the internal storage is keyed
+        // on the merged bytes, not the pair-tuple. Reuse `left`'s
+        // allocation (extend in place) so callers who already own the
+        // left `Vec` pay nothing extra to build the key.
+        let mut key = left;
+        key.extend_from_slice(&right);
+        self.ranks.insert(key, rank);
     }
 
     /// Returns the rank of `(left, right)`, or `None` if the pair is
     /// not in the table.
     #[must_use]
     pub fn rank(&self, left: &[u8], right: &[u8]) -> Option<u32> {
-        // BTreeMap requires an owned key for lookup; use a small local
-        // helper to avoid allocation on every scan. Since `Vec<u8>: Borrow<[u8]>`
-        // does not extend to tuples, we materialise once.
-        let key = (left.to_vec(), right.to_vec());
+        // hashbrown requires an owned key (or a matching `Borrow` view)
+        // for `get`; since `Vec<u8>: Borrow<[u8]>` does not extend to a
+        // tuple-of-slices, we materialise one concatenated buffer per
+        // lookup. This is half the allocations of the prior BTreeMap
+        // shape (two `Vec<u8>` clones for the tuple) and reduces the
+        // lookup complexity from O(log n) byte-slice comparisons to a
+        // single hash + comparison — the audit called this out as the
+        // dominant per-token cost.
+        let mut key = Vec::with_capacity(left.len() + right.len());
+        key.extend_from_slice(left);
+        key.extend_from_slice(right);
         self.ranks.get(&key).copied()
     }
 
