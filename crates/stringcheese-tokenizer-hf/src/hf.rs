@@ -262,15 +262,24 @@ pub struct HfAddedToken {
 /// enum which autodetects BPE from the `{vocab, merges}` shape.
 /// `FacebookAI/xlm-roberta-base/tokenizer.json` is the analogous
 /// outlier for Unigram: it too omits `"type"`, with a
-/// `vocab: [[surface, score], ...]` array plus `unk_id`. To load
-/// both blobs without special-casing the caller, deserialisation
-/// falls back to [`HfModel::Bpe`] when the typeless `model` object
-/// carries a `"vocab"` object and a `"merges"` array, and to
-/// [`HfModel::Unigram`] when it instead carries a `"vocab"` JSON
-/// array (of `[surface, score]` pairs). Any other typeless shape
-/// (e.g. a `WordPiece` config with `{vocab: {...}, unk_token: "..."}`
-/// but no `merges`) is rejected rather than silently misclassified
-/// — see the module doc for the rationale.
+/// `vocab: [[surface, score], ...]` array plus `unk_id`.
+/// `google-bert/bert-base-multilingual-cased/tokenizer.json` is the
+/// third — a typeless `WordPiece` config with an object `"vocab"`
+/// and a `"unk_token"` but no `"merges"`. To load every such blob
+/// without special-casing the caller, deserialisation falls back to
+/// [`HfModel::Bpe`] when the typeless `model` object carries a
+/// `"vocab"` object and a `"merges"` array; to [`HfModel::Unigram`]
+/// when it instead carries a `"vocab"` JSON array (of
+/// `[surface, score]` pairs); and to [`HfModel::WordPiece`] when it
+/// carries a `"vocab"` object plus a `"unk_token"` string but no
+/// `"merges"` (the `"merges"`-absent gate is what disambiguates it
+/// from the BPE branch, which requires `"merges"`; the `"unk_token"`
+/// gate is what distinguishes an mBERT-shape config from a corrupt
+/// BPE that dropped its merges by author error). Any other typeless
+/// shape (a bare `{vocab: {...}}` with neither `"merges"` nor
+/// `"unk_token"`; a config missing `"vocab"` entirely) is rejected
+/// rather than silently misclassified — see the module doc for the
+/// rationale.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HfModel {
@@ -350,23 +359,36 @@ impl<'de> Deserialize<'de> for HfModel {
             return Ok(tagged.into());
         }
 
-        // Typeless shape — two real HF checkpoints ship this: the
-        // GPT-2 v1.0 blob (BPE) and `FacebookAI/xlm-roberta-base`
-        // (Unigram). We disambiguate on the JSON type of `vocab`:
+        // Typeless shape — three real HF checkpoints ship this: the
+        // GPT-2 v1.0 blob (BPE), `FacebookAI/xlm-roberta-base`
+        // (Unigram), and `google-bert/bert-base-multilingual-cased`
+        // (WordPiece). We disambiguate on the JSON type of `vocab`
+        // and the presence of `merges` / `unk_token`:
         //
         // * `vocab: {surface → id, ...}` (JSON object) + `merges: [...]`
-        //   → BPE. The `merges` requirement rules out a typeless
-        //   WordPiece config (which uses the same object-shaped
-        //   `vocab` but has no `merges`).
+        //   → BPE. The `merges` requirement is what rules out a
+        //   typeless WordPiece config (same object-shaped `vocab` but
+        //   no `merges`).
         // * `vocab: [[surface, score], ...]` (JSON array of 2-tuples)
         //   → Unigram. The scores are `f64`; `unk_id` is optional per
         //   the type (real xlm-roberta ships it).
+        // * `vocab: {surface → id, ...}` (JSON object), no `merges`,
+        //   *and* a string `unk_token` → WordPiece. The order matters:
+        //   this branch runs after the BPE branch, so a config with
+        //   both `merges` and `unk_token` still routes to BPE (BPE
+        //   permits an optional `unk_token`). The `unk_token`
+        //   requirement is what distinguishes an mBERT-shape config
+        //   from a corrupt BPE that dropped its `merges` by author
+        //   error — WordPiece's spec makes `unk_token` mandatory, so
+        //   its absence on a merges-less object-vocab config is
+        //   diagnostic of a broken shape rather than of WordPiece.
         //
-        // Anything else (a bare `{vocab: {...}}` with no `merges`;
-        // a config missing `vocab` entirely; a `vocab` value of some
-        // other JSON type) is rejected — the fallback deliberately
-        // covers only the shapes real HF checkpoints publish
-        // untagged, not every conceivable typeless config.
+        // Anything else (a bare `{vocab: {...}}` with neither `merges`
+        // nor `unk_token`; a config missing `vocab` entirely; a
+        // `vocab` value of some other JSON type) is rejected — the
+        // fallback deliberately covers only the shapes real HF
+        // checkpoints publish untagged, not every conceivable typeless
+        // config.
         let vocab = value.get("vocab");
         let looks_like_bpe = vocab.is_some_and(serde_json::Value::is_object)
             && value.get("merges").is_some_and(serde_json::Value::is_array);
@@ -379,12 +401,22 @@ impl<'de> Deserialize<'de> for HfModel {
             let uni: HfUnigramModel = serde_json::from_value(value).map_err(D::Error::custom)?;
             return Ok(Self::Unigram(uni));
         }
+        let looks_like_wordpiece = vocab.is_some_and(serde_json::Value::is_object)
+            && value.get("merges").is_none()
+            && value
+                .get("unk_token")
+                .is_some_and(serde_json::Value::is_string);
+        if looks_like_wordpiece {
+            let wp: HfWordPieceModel = serde_json::from_value(value).map_err(D::Error::custom)?;
+            return Ok(Self::WordPiece(wp));
+        }
 
         Err(D::Error::custom(
             "invalid `model` block: missing `type` field and does not \
              match a known typeless shape (BPE requires both an object \
              `vocab` and an array `merges`; Unigram requires an array \
-             `vocab` of `[surface, score]` pairs)",
+             `vocab` of `[surface, score]` pairs; WordPiece requires an \
+             object `vocab` and a string `unk_token` and no `merges`)",
         ))
     }
 }
@@ -6166,11 +6198,16 @@ mod tests {
     }
 
     #[test]
-    fn typeless_model_missing_merges_is_rejected() {
-        // Vocab present as an object but no `merges` — the config
-        // matches neither typeless BPE (needs `merges`) nor typeless
-        // Unigram (needs an array `vocab`). Rejecting is the whole
-        // point of gating each fallback on a distinctive key.
+    fn typeless_model_missing_merges_and_unk_token_is_rejected() {
+        // Vocab present as an object but no `merges` and no
+        // `unk_token` — the config matches neither typeless BPE
+        // (needs `merges`), typeless Unigram (needs an array `vocab`),
+        // nor typeless WordPiece (needs `unk_token`). Rejecting is
+        // the whole point of gating each fallback on a distinctive
+        // key. The mBERT-shape typeless-WordPiece landing widened the
+        // former "missing merges" rejection to allow the WordPiece
+        // shape through — this test now pins the *narrower*
+        // rejection: the config must also lack `unk_token` to reject.
         let json = r#"{
             "added_tokens": [],
             "model": {
@@ -6182,9 +6219,69 @@ mod tests {
         assert!(
             msg.contains("BPE requires")
                 || msg.contains("Unigram requires")
+                || msg.contains("WordPiece requires")
                 || msg.contains("missing `type`"),
             "expected typeless-shape rejection, got: {msg}"
         );
+    }
+
+    #[test]
+    fn typeless_wordpiece_shape_deserialises_as_wordpiece() {
+        // Shape mirrors `google-bert/bert-base-multilingual-cased/tokenizer.json`
+        // (and similarly-shaped typeless-WordPiece configs on the
+        // Hub): the `model` node omits `"type"` and carries a
+        // `vocab` object plus the mandatory `unk_token`, `continuing_subword_prefix`,
+        // and `max_input_chars_per_word` fields. The disambiguation
+        // key vs. typeless-BPE is the absence of `merges` combined
+        // with the presence of `unk_token` — a bare `{vocab: {...}}`
+        // (no `unk_token`) would still reject, distinguishing the
+        // WordPiece shape from a corrupt BPE that dropped its merges.
+        let json = r###"{
+            "version": "1.0",
+            "added_tokens": [],
+            "model": {
+                "vocab": {"[UNK]": 0, "hello": 1, "##ing": 2, "world": 3},
+                "unk_token": "[UNK]",
+                "continuing_subword_prefix": "##",
+                "max_input_chars_per_word": 100
+            }
+        }"###;
+        let config = parse_tokenizer_json(json).unwrap();
+        match &config.model {
+            HfModel::WordPiece(wp) => {
+                assert_eq!(wp.vocab.len(), 4);
+                assert_eq!(wp.unk_token, "[UNK]");
+                assert_eq!(wp.continuing_subword_prefix, "##");
+                assert_eq!(wp.max_input_chars_per_word, 100);
+            }
+            other => panic!("expected typeless WordPiece fallback; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn typeless_wordpiece_shape_applies_serde_defaults() {
+        // Same disambiguation as the canonical typeless-WordPiece
+        // test above, but exercises the serde defaults on
+        // `continuing_subword_prefix` and `max_input_chars_per_word`
+        // — a real Hub config *may* omit them and expect BERT-canonical
+        // values. This pins that behaviour to the untagged fallback
+        // path (the tagged path is already covered elsewhere).
+        let json = r#"{
+            "version": "1.0",
+            "added_tokens": [],
+            "model": {
+                "vocab": {"[UNK]": 0, "hello": 1},
+                "unk_token": "[UNK]"
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        match &config.model {
+            HfModel::WordPiece(wp) => {
+                assert_eq!(wp.continuing_subword_prefix, "##");
+                assert_eq!(wp.max_input_chars_per_word, 100);
+            }
+            other => panic!("expected typeless WordPiece fallback; got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------
