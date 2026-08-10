@@ -48,12 +48,12 @@
 //!
 //! * [`Normalizer::Precompiled`] — `SentencePiece`'s compiled
 //!   char-mapping table (used by every Llama, Mistral, T5, and
-//!   XLM-RoBERTa checkpoint). The raw base64-encoded charsmap parses
-//!   into the variant so real `tokenizer.json` files stop erroring at
-//!   the JSON stage, but the runtime pass is **currently a
-//!   passthrough** — reproducing `SentencePiece`'s `Normalizer::Normalize`
-//!   requires re-implementing the compiled trie the charsmap encodes.
-//!   See the variant's doc-comment for the full limitation.
+//!   XLM-RoBERTa checkpoint). The base64-encoded charsmap is decoded
+//!   into a Darts / `DoubleArray` trie plus replacement-string table
+//!   and applied at runtime — see [`precompiled`] for the wire format
+//!   and algorithm. When the raw payload fails to decode or parse
+//!   (malformed base64, truncated header, ...) the variant falls back
+//!   to a passthrough so callers with unusual inputs still round-trip.
 //!
 //! # Deferred variants
 //!
@@ -72,6 +72,10 @@ use alloc::vec::Vec;
 
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::canonical_combining_class;
+
+pub mod precompiled;
+
+pub use precompiled::{PrecompiledError, PrecompiledNormalizer};
 
 /// A Unicode normalization step to apply before the pre-tokenizer.
 ///
@@ -177,31 +181,32 @@ pub enum Normalizer {
     /// serialized character-remapping trie as `SentencePiece` stores it
     /// on disk.
     ///
-    /// # Runtime behaviour — **currently a passthrough**
+    /// # Runtime behaviour
     ///
-    /// The runtime [`normalize`] call for this variant returns the
-    /// input string unchanged. Full support requires decoding the
-    /// base64 blob and running `SentencePiece`'s
-    /// `Normalizer::Normalize()` (a compiled DFA over the charsmap).
-    /// That implementation is deferred to a later landing; today the
-    /// variant exists so that real `tokenizer.json` files ship a
-    /// [`Normalizer::Precompiled`] alongside their other normalizers
-    /// (typically inside a [`Normalizer::Sequence`] with `Prepend` and
-    /// `Replace`) and parse successfully instead of failing at load
-    /// time.
+    /// The base64 payload is decoded on each call to [`normalize`]
+    /// and applied via [`precompiled::PrecompiledNormalizer`] —
+    /// the Darts / `DoubleArray` trie is walked left-to-right against
+    /// the input, and every longest prefix match is replaced with the
+    /// leaf's NUL-terminated replacement string. Unmatched positions
+    /// pass one UTF-8 scalar through verbatim. Callers that hit this
+    /// path repeatedly should build a [`PrecompiledNormalizer`]
+    /// directly and cache it — the per-call decode is quadratic in
+    /// the number of calls, not in the input length.
     ///
-    /// Callers who need bit-identical `SentencePiece` normalization
-    /// today should decode the blob and apply it themselves; the raw
-    /// base64 string is available via
-    /// [`Self::Precompiled::charsmap_base64`].
-    ///
-    /// TODO: implement `SentencePiece` `Normalizer::Normalize` over the
-    /// decoded charsmap.
+    /// If the payload does not decode as valid base64 or does not
+    /// conform to the charsmap wire format (truncated header, trie
+    /// size not a multiple of 4, trie overrun) the runtime falls back
+    /// to passthrough — the pre-existing landing shipped placeholder
+    /// base64 strings in its tests, and downstream callers who feed
+    /// literal `Normalizer::Precompiled` values (rather than routing
+    /// through the HF loader) rely on the runtime being infallible.
+    /// Callers that want to fail fast on a bad payload should validate
+    /// via [`PrecompiledNormalizer::from_base64_charsmap`] before
+    /// materialising the variant.
     Precompiled {
-        /// The raw, undecoded base64 payload from the source
-        /// `tokenizer.json`. Not decoded or interpreted at runtime
-        /// today — see the variant docs for the passthrough contract
-        /// and the plan for full support.
+        /// The raw base64 payload from the source `tokenizer.json`,
+        /// preserved verbatim for round-trip inspection. Decoded on
+        /// demand by [`normalize`].
         charsmap_base64: String,
     },
 }
@@ -274,16 +279,20 @@ pub fn normalize(text: &str, normalizer: &Normalizer) -> String {
             }
             cur
         }
-        Normalizer::Precompiled { .. } => {
-            // Passthrough — see the variant's doc-comment for the
-            // limitation and the TODO. Returning the input verbatim
-            // keeps the encode/decode pipeline functional for
-            // callers who only need parse-time compatibility with a
-            // Llama / Mistral / T5 / XLM-RoBERTa `tokenizer.json`;
-            // encodings will differ from upstream on any input the
-            // real charsmap would have altered (fullwidth digit
-            // normalization, private-use collapsing, ...).
-            text.into()
+        Normalizer::Precompiled { charsmap_base64 } => {
+            // Decode-per-call because the variant only stores the
+            // raw base64 (kept as-is so existing typed-value
+            // roundtrips through `PartialEq` and callers who need
+            // introspection continue to work). Callers on a hot path
+            // should build a `PrecompiledNormalizer` up front and
+            // apply it directly. When the payload is malformed
+            // (invalid base64, truncated header, ...) fall back to
+            // passthrough — legacy tests and downstream loaders
+            // predating this landing rely on this being infallible.
+            match PrecompiledNormalizer::from_base64_charsmap(charsmap_base64) {
+                Ok(pc) => pc.normalize(text),
+                Err(_) => text.into(),
+            }
         }
         Normalizer::Bert {
             clean_text,
@@ -688,17 +697,37 @@ mod tests {
     }
 
     #[test]
-    fn precompiled_normalizer_is_passthrough() {
-        // The Precompiled variant is documented as a passthrough
-        // today; verify concretely.
+    fn precompiled_normalizer_falls_back_on_invalid_charsmap() {
+        // "AAAA" decodes to three zero bytes — shorter than the
+        // Precompiled charsmap's 4-byte trie-size header. The
+        // runtime falls back to passthrough on malformed payloads;
+        // this test pins that fallback so downstream callers with
+        // legacy placeholder blobs keep working.
         let n = Normalizer::Precompiled {
             charsmap_base64: "AAAA".to_string(),
         };
         assert_eq!(normalize("hello world", &n), "hello world");
-        // Non-ASCII input is passed through byte-for-byte.
         assert_eq!(normalize("café \u{FF11}", &n), "café \u{FF11}");
-        // Empty input stays empty.
         assert_eq!(normalize("", &n), "");
+    }
+
+    #[test]
+    fn precompiled_normalizer_applies_hand_crafted_charsmap() {
+        // Build the smallest possible valid charsmap: a single-byte
+        // key "a" → replacement "AB". The trie shape and node
+        // encoding are documented in the `precompiled` module's
+        // hand-crafted trie test. Rebuilt here via the encoder
+        // helper to exercise the full base64 -> parse -> apply
+        // chain through the outer `normalize()` dispatch.
+        let mut trie = vec![0u32; 98];
+        trie[0] = 0x400; // root: offset=1
+        trie[96] = 0x561; // 'a' transition: label=0x61, has_leaf, offset=1
+        trie[97] = 0x8000_0000; // leaf: value=0
+        let b64 = precompiled::encode_charsmap_for_tests(&trie, b"AB\0");
+        let n = Normalizer::Precompiled {
+            charsmap_base64: b64,
+        };
+        assert_eq!(normalize("banana", &n), "bABnABnAB");
     }
 
     #[test]
