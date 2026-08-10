@@ -72,6 +72,13 @@
 // callers on a bare `default` build get an empty test binary rather
 // than a compile error over missing modules.
 #![cfg(feature = "hf-tokenizer")]
+// Conformance corpus is filesystem-heavy (loads fixture JSON + real
+// tokenizer.json vocabs at test time) and targets Python-oracle-derived
+// reference outputs on host toolchains. Skip on wasm targets — the
+// wasm-runtime CI job runs under wasmtime's sandboxed WASI filesystem
+// and every fixture case's soft-skip branch still exercises the
+// `std::fs::read` failure path in a way wasmtime treats as abort.
+#![cfg(not(target_family = "wasm"))]
 
 use std::collections::BTreeSet;
 use std::env;
