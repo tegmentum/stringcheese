@@ -46,7 +46,7 @@
 //!
 //! `fancy-regex` requires the standard library. The entire module is
 //! therefore gated behind `#[cfg(feature = "std")]`; the
-//! `alloc`-only build of `stringcheese-tokenizer-bpe` retains the
+//! `alloc`-only build of `stringcheese-tokenizer-hf` retains the
 //! literal-separator fallback and the whitespace default.
 
 use alloc::string::{String, ToString};
@@ -153,7 +153,7 @@ impl std::error::Error for PreTokenizerCompileError {}
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::RegexPreTokenizer;
+/// use stringcheese_tokenizer_hf::RegexPreTokenizer;
 ///
 /// let pre = RegexPreTokenizer::tiktoken_canonical();
 /// let chunks: Vec<&str> = pre
@@ -303,7 +303,7 @@ pub enum PrependScheme {
 /// # Example
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::Metaspace;
+/// use stringcheese_tokenizer_hf::Metaspace;
 ///
 /// let ms = Metaspace::new();
 /// assert_eq!(

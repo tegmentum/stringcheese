@@ -13,8 +13,8 @@
 
 #![cfg(feature = "hf-tokenizer")]
 
-use stringcheese_tokenizer_bpe::hf::{HfPreTokenizer, HfPrependScheme, to_runtime_metaspace};
-use stringcheese_tokenizer_bpe::{Metaspace, PrependScheme};
+use stringcheese_tokenizer_hf::hf::{HfPreTokenizer, HfPrependScheme, to_runtime_metaspace};
+use stringcheese_tokenizer_hf::{Metaspace, PrependScheme};
 
 // ---------------------------------------------------------------------
 // Deserialisation.

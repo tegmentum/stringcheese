@@ -50,7 +50,7 @@ stringcheese-cdc = { workspace = true, features = ["std", "simd"] }
 # BPE encoder throughput benches — measures the merge-table lookup
 # cost inside the O(n log n) merge loop, which dominates encode time
 # per the crate's design doc (§11).
-stringcheese-tokenizer-bpe = { workspace = true, features = ["std"] }
+stringcheese-tokenizer-hf = { workspace = true, features = ["std"] }
 stringcheese-tokenizer = { workspace = true, features = ["std"] }
 # Optional so the default build does not link the heap profiler and the
 # criterion benches never inherit its global allocator.

@@ -148,7 +148,7 @@ impl std::error::Error for WordPieceDecodeError {}
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use stringcheese_tokenizer_bpe::wordpiece::WordPieceTokenizer;
+/// use stringcheese_tokenizer_hf::wordpiece::WordPieceTokenizer;
 ///
 /// let mut vocab: HashMap<String, u32> = HashMap::new();
 /// vocab.insert("[UNK]".to_string(), 0);

@@ -83,7 +83,7 @@ stringcheese-align = { workspace = true }
 # languages by direct dependency.
 stringcheese-lang = { workspace = true }
 # Tokenizer/segmenter trait crate + built-in tokenizers. Downstream
-# algorithm crates (`stringcheese-tokenizer-bpe`, planned `-wordpiece`
+# algorithm crates (`stringcheese-tokenizer-hf`, planned `-wordpiece`
 # and `-sentencepiece`) and pre-configured model packs (`-tiktoken`,
 # `-huggingface`) are opt-in per the umbrella pattern.
 stringcheese-tokenizer = { workspace = true }

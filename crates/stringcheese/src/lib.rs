@@ -111,7 +111,7 @@ pub use stringcheese_lang as lang;
 /// needs the built-in segmenters (whitespace, delimiter, identifier,
 /// grapheme, n-gram) never has to add a second dependency. Data-heavy
 /// downstream algorithm crates are per-algorithm, opt-in dependencies:
-/// `stringcheese-tokenizer-bpe`, and the planned `-wordpiece`,
+/// `stringcheese-tokenizer-hf`, and the planned `-wordpiece`,
 /// `-sentencepiece`, `-tiktoken`, and `-huggingface` model packs, are
 /// pulled in by callers who need them. Callers who don't pay nothing —
 /// not a byte of vocabulary data, not an entry in a merge table — at

@@ -6,7 +6,7 @@
 
 #![cfg(feature = "hf-tokenizer")]
 
-use stringcheese_tokenizer_bpe::hf::{
+use stringcheese_tokenizer_hf::hf::{
     HfConversionError, HfModel, HfTokenizer, UnigramEncodeError, UnigramTokenizer,
     parse_tokenizer_json, to_tokenizer, to_unigram_tokenizer,
 };

@@ -1107,7 +1107,7 @@ impl From<PreTokenizerCompileError> for HfConversionError {
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::hf::parse_tokenizer_json;
+/// use stringcheese_tokenizer_hf::hf::parse_tokenizer_json;
 ///
 /// // Minimal, valid config: BPE model with a byte-alphabet-adjacent
 /// // vocabulary and one merge.
@@ -1149,7 +1149,7 @@ pub fn parse_tokenizer_json(json: &str) -> Result<HfTokenizerConfig, HfParseErro
 ///
 /// ```
 /// use stringcheese_tokenizer::Tokenizer;
-/// use stringcheese_tokenizer_bpe::hf::{parse_tokenizer_json, to_bpe_tokenizer};
+/// use stringcheese_tokenizer_hf::hf::{parse_tokenizer_json, to_bpe_tokenizer};
 ///
 /// // A tiny BPE that merges 'a' + 'b' → "ab".
 /// let json = r#"{
@@ -1329,7 +1329,7 @@ pub enum HfTokenizer {
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::hf::{HfTokenizer, parse_tokenizer_json, to_tokenizer};
+/// use stringcheese_tokenizer_hf::hf::{HfTokenizer, parse_tokenizer_json, to_tokenizer};
 ///
 /// let json = r#"{
 ///     "added_tokens": [],
@@ -1413,7 +1413,7 @@ pub fn to_tokenizer(config: &HfTokenizerConfig) -> Result<HfTokenizer, HfConvers
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::hf::{parse_tokenizer_json, to_wordpiece_tokenizer};
+/// use stringcheese_tokenizer_hf::hf::{parse_tokenizer_json, to_wordpiece_tokenizer};
 ///
 /// let json = r###"{
 ///     "added_tokens": [],
@@ -1829,7 +1829,7 @@ impl std::error::Error for UnigramEncodeError {}
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::hf::{parse_tokenizer_json, to_unigram_tokenizer};
+/// use stringcheese_tokenizer_hf::hf::{parse_tokenizer_json, to_unigram_tokenizer};
 ///
 /// let json = r#"{
 ///     "added_tokens": [],
@@ -2166,8 +2166,8 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::{Metaspace, PrependScheme};
-/// use stringcheese_tokenizer_bpe::hf::{HfPreTokenizer, to_runtime_metaspace};
+/// use stringcheese_tokenizer_hf::{Metaspace, PrependScheme};
+/// use stringcheese_tokenizer_hf::hf::{HfPreTokenizer, to_runtime_metaspace};
 ///
 /// let ms_json = r#"{"type": "Metaspace"}"#;
 /// let ms: HfPreTokenizer = serde_json::from_str(ms_json).unwrap();

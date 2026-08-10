@@ -3,7 +3,7 @@
 //! This crate ships two families of traits and a small set of built-in
 //! implementations. It is the foundation Phase 1 of the tokenizer
 //! subsystem described in `docs/design/tokenizers.md` — later phases add
-//! subword algorithm crates (`stringcheese-tokenizer-bpe`, `-wordpiece`,
+//! subword algorithm crates (`stringcheese-tokenizer-hf`, `-wordpiece`,
 //! `-sentencepiece`) and pre-configured model packs
 //! (`-tiktoken`, `-huggingface`) on top of these abstractions.
 //!

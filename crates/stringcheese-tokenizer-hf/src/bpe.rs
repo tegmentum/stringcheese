@@ -399,7 +399,7 @@ pub enum Decoder {
 ///
 /// ```
 /// use stringcheese_tokenizer::Tokenizer;
-/// use stringcheese_tokenizer_bpe::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
+/// use stringcheese_tokenizer_hf::{BpeMergeTable, BpeTokenizer, BpeVocabulary};
 ///
 /// let mut vocab = BpeVocabulary::new();
 /// vocab.ensure_byte_alphabet(0).unwrap();

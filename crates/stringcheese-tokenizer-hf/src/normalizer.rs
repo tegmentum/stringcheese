@@ -222,7 +222,7 @@ pub enum Normalizer {
 /// # Examples
 ///
 /// ```
-/// use stringcheese_tokenizer_bpe::normalizer::{normalize, Normalizer};
+/// use stringcheese_tokenizer_hf::normalizer::{normalize, Normalizer};
 ///
 /// // Precomposed "é" (U+00E9) and decomposed "é" (U+0065 U+0301)
 /// // both normalize to the same NFC output.

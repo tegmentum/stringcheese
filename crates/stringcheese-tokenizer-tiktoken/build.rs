@@ -195,7 +195,7 @@ fn compress(data: &[u8]) -> Vec<u8> {
 /// The vocabulary is intentionally *tiny* (~byte alphabet + a few
 /// hundred merges). Real tiktoken packs have 50k–200k entries; the
 /// synthetic stand-in is enough to prove the SCUD-lite loader and the
-/// integration with `stringcheese-tokenizer-bpe` work end-to-end.
+/// integration with `stringcheese-tokenizer-hf` work end-to-end.
 fn build_synthetic(variant: &str) -> (Vec<VocabEntry>, Vec<MergeEntry>) {
     let mut vocab: Vec<VocabEntry> = Vec::new();
     // Byte alphabet 0..=255.

@@ -1,4 +1,4 @@
-//! Encode-throughput bench for `stringcheese-tokenizer-bpe` on the
+//! Encode-throughput bench for `stringcheese-tokenizer-hf` on the
 //! real `cl100k_base` vocab.
 //!
 //! Only compiled with `--features parity-real-vocab` (see the

@@ -1,12 +1,12 @@
 [package]
-name = "stringcheese-tokenizer-bpe"
+name = "stringcheese-tokenizer-hf"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Data-neutral Byte-Pair Encoding (BPE) tokenizer for the StringCheese toolkit — caller supplies merges and vocabulary."
+description = "HuggingFace-shape tokenizer loader (BPE + WordPiece + Unigram + normalizer + post-processor) for the StringCheese toolkit."
 categories = ["algorithms", "text-processing", "no-std"]
 keywords = ["tokenizer", "bpe", "nlp", "tiktoken", "wasm"]
 

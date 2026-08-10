@@ -4,14 +4,14 @@
 //! `cl100k_base` (GPT-3.5 / GPT-4), `p50k_base` (Codex + some
 //! GPT-3.5), `r50k_base` (GPT-3), and `o200k_base` (GPT-4o / o1) — as
 //! [SCUD-lite] BPE data packs layered on top of the
-//! [`stringcheese-tokenizer-bpe`][bpe] algorithm crate.
+//! [`stringcheese-tokenizer-hf`][bpe] algorithm crate.
 //!
 //! Each variant lives behind its own Cargo feature so a caller who
 //! only needs `cl100k_base` never embeds the other three vocabularies.
 //! The default feature set is `["cl100k_base"]`.
 //!
 //! [SCUD-lite]: crate::scud
-//! [bpe]: stringcheese_tokenizer_bpe
+//! [bpe]: stringcheese_tokenizer_hf
 //!
 //! # Public API
 //!
@@ -75,7 +75,7 @@ pub mod scud;
 use std::sync::OnceLock;
 
 use stringcheese_tokenizer::TokenizerError;
-use stringcheese_tokenizer_bpe::BpeTokenizer;
+use stringcheese_tokenizer_hf::BpeTokenizer;
 
 /// A pre-configured tiktoken variant packaged as an embedded SCUD-lite
 /// blob plus a lazy-decode cache.
