@@ -108,10 +108,16 @@ const VOCAB_DIR_ENV: &str = "STRINGCHEESE_REAL_VOCABS_DIR";
 // Fixture types.
 // ---------------------------------------------------------------------
 
-/// One `(input, expected_ids, note)` triple.
+/// One `(input, expected_ids, expected_decoded, note)` tuple.
+///
+/// `expected_decoded` is optional so fixtures written before the
+/// decoder-chain landing keep loading unchanged; when present, the
+/// runner asserts `tok.decode(expected_ids) == expected_decoded` as a
+/// second per-case oracle.
 struct Case {
     input: String,
     expected: Vec<u32>,
+    expected_decoded: Option<String>,
     note: String,
 }
 
@@ -183,9 +189,17 @@ fn load_fixture(name: &str) -> Fixture {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned();
+        // Optional — fixtures written before the decoder-chain landing
+        // omit the field. When present the runner asserts
+        // `tok.decode(expected_ids) == expected_decoded`.
+        let expected_decoded = c
+            .get("expected_decoded")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         cases.push(Case {
             input,
             expected,
+            expected_decoded,
             note,
         });
     }
@@ -254,6 +268,20 @@ fn load_real_tokenizer(checkpoint: &str) -> Option<HfTokenizer> {
 // Case execution.
 // ---------------------------------------------------------------------
 
+/// Decode `ids` under `tok`, returning the produced string regardless
+/// of the underlying tokenizer variant. Mirrors [`encode_ids`] — the
+/// runner exercises the trait's `decode` path so the full decoder
+/// chain (when a fixture carries an `expected_decoded` field) is
+/// applied.
+fn decode_ids(tok: &HfTokenizer, ids: &[u32]) -> String {
+    match tok {
+        HfTokenizer::Bpe(bpe) => Tokenizer::decode(bpe.as_ref(), ids).expect("BPE decode"),
+        HfTokenizer::WordPiece(wp) => Tokenizer::decode(wp, ids).expect("WordPiece decode"),
+        HfTokenizer::Unigram(uni) => Tokenizer::decode(uni, ids).expect("Unigram decode"),
+        other => panic!("conformance runner: unrecognised HfTokenizer variant {other:?}"),
+    }
+}
+
 /// Encode `input` under `tok`, returning the produced ids as `Vec<u32>`
 /// regardless of the underlying tokenizer variant. Only the token ids
 /// are compared — offsets and the special-mask are not exercised here
@@ -294,7 +322,12 @@ fn encode_ids(tok: &HfTokenizer, input: &str) -> Vec<u32> {
 
 /// Run every case in `fixture` against `tok`, formatting a single
 /// summarising error if any case fails so contributors see the whole
-/// picture rather than the first mismatch alone.
+/// picture rather than the first mismatch alone. When a case carries
+/// an `expected_decoded` field the runner also asserts the produced
+/// decode matches — the decoder chain landing added this second
+/// oracle so Llama-2 and its byte-for-byte
+/// `transformers.AutoTokenizer.decode` parity are exercised end to
+/// end.
 fn run_cases(fixture: &Fixture, tok: &HfTokenizer) {
     let mut failures = Vec::new();
     for (i, case) in fixture.cases.iter().enumerate() {
@@ -304,6 +337,15 @@ fn run_cases(fixture: &Fixture, tok: &HfTokenizer) {
                 "  case[{i}] ({}): input={:?}\n    expected={:?}\n      actual={:?}",
                 case.note, case.input, case.expected, actual,
             ));
+        }
+        if let Some(expected_decoded) = &case.expected_decoded {
+            let actual_decoded = decode_ids(tok, &case.expected);
+            if &actual_decoded != expected_decoded {
+                failures.push(format!(
+                    "  case[{i}] ({}) decode mismatch: input={:?}\n    expected_decoded={:?}\n      actual_decoded={:?}",
+                    case.note, case.input, expected_decoded, actual_decoded,
+                ));
+            }
         }
     }
     assert!(
