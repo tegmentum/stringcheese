@@ -39,7 +39,7 @@ hf-tokenizer = ["std", "dep:serde", "dep:serde_json", "hf-normalizer"]
 # HF JSON parser without also compiling in `unicode-normalization` —
 # `hf-tokenizer` still implies this on by default, matching the
 # expected "I want a full tokenizer.json loader" story.
-hf-normalizer = ["std", "dep:unicode-normalization"]
+hf-normalizer = ["std", "dep:unicode-normalization", "dep:unicode-general-category"]
 # Opt into the conformance suite that exercises the crate against the
 # *real* upstream vocabulary of each fixture checkpoint (`gpt2`,
 # `cl100k_base`, `bert-base-uncased`, `xlm-roberta-base`; see
@@ -94,6 +94,19 @@ serde_json = { version = "1", default-features = false, features = ["std"], opti
 # who only want the raw BPE algorithm do not pay for the crate's
 # static tables.
 unicode-normalization = { version = "0.1", default-features = false, features = ["std"], optional = true }
+
+# Compact `char → GeneralCategory` table used by the BERT normalizer's
+# `clean_text` (drops every General_Category=C scalar except tab / LF /
+# CR — matching HF's own `unicode_categories::UnicodeCategories::is_other`
+# behaviour, which strips zero-width joiners / non-joiners / space and
+# the soft-hyphen U+00AD) and `strip_accents` (filters
+# General_Category=Mn scalars from the NFD stream — the same
+# `is_mark_nonspacing` filter HF's Rust tokenizer applies, and the only
+# way to match HF's post-normalization vocab lookup on non-Latin scripts
+# with combining marks). Gated on the same `hf-normalizer` feature as
+# `unicode-normalization` — both are exclusively used inside the BERT
+# normalizer arm of `normalizer::normalize`.
+unicode-general-category = { version = "1", optional = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
