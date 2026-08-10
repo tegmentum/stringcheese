@@ -246,15 +246,20 @@ pub struct HfAddedToken {
 /// `model` node, and the tagged path is what routes them.
 ///
 /// The `openai-community/gpt2/tokenizer.json` v1.0 blob (still the
-/// shipped GPT-2 config) is the notable outlier: it omits `"type"`
-/// entirely, mirroring HF's own `#[serde(untagged)]` inner enum which
-/// autodetects BPE from the `{vocab, merges}` shape. To load that blob
-/// without special-casing the caller, deserialisation falls back to
-/// [`HfModel::Bpe`] whenever the `model` object has no `"type"` field
-/// *and* carries both a `"vocab"` object and a `"merges"` array. A
-/// typeless object that does not match the BPE shape (e.g. a Unigram
-/// config with `vocab: [...]` + `unk_id`) is rejected rather than
-/// silently misclassified — see the module doc for the rationale.
+/// shipped GPT-2 config) is the notable outlier for BPE: it omits
+/// `"type"` entirely, mirroring HF's own `#[serde(untagged)]` inner
+/// enum which autodetects BPE from the `{vocab, merges}` shape.
+/// `FacebookAI/xlm-roberta-base/tokenizer.json` is the analogous
+/// outlier for Unigram: it too omits `"type"`, with a
+/// `vocab: [[surface, score], ...]` array plus `unk_id`. To load
+/// both blobs without special-casing the caller, deserialisation
+/// falls back to [`HfModel::Bpe`] when the typeless `model` object
+/// carries a `"vocab"` object and a `"merges"` array, and to
+/// [`HfModel::Unigram`] when it instead carries a `"vocab"` JSON
+/// array (of `[surface, score]` pairs). Any other typeless shape
+/// (e.g. a `WordPiece` config with `{vocab: {...}, unk_token: "..."}`
+/// but no `merges`) is rejected rather than silently misclassified
+/// — see the module doc for the rationale.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum HfModel {
@@ -334,30 +339,41 @@ impl<'de> Deserialize<'de> for HfModel {
             return Ok(tagged.into());
         }
 
-        // Typeless shape — the GPT-2 v1.0 blob is the canonical
-        // example. Accept it as BPE iff both `vocab` (as an object)
-        // and `merges` (as an array) are present. The stricter
-        // "vocab must be an object" check rules out a typeless
-        // Unigram config (whose `vocab` is a JSON array of
-        // `[surface, log_prob]` pairs); the `merges` check rules out
-        // a typeless WordPiece config (which has no merges).
+        // Typeless shape — two real HF checkpoints ship this: the
+        // GPT-2 v1.0 blob (BPE) and `FacebookAI/xlm-roberta-base`
+        // (Unigram). We disambiguate on the JSON type of `vocab`:
         //
-        // We do *not* deserialise a typeless Unigram or WordPiece
-        // silently — those would be genuinely ambiguous and their
-        // publishers ship the tag, so a missing tag on that shape is
-        // a signal of a malformed config, not a normal case to
-        // support.
-        let looks_like_bpe = value.get("vocab").is_some_and(serde_json::Value::is_object)
+        // * `vocab: {surface → id, ...}` (JSON object) + `merges: [...]`
+        //   → BPE. The `merges` requirement rules out a typeless
+        //   WordPiece config (which uses the same object-shaped
+        //   `vocab` but has no `merges`).
+        // * `vocab: [[surface, score], ...]` (JSON array of 2-tuples)
+        //   → Unigram. The scores are `f64`; `unk_id` is optional per
+        //   the type (real xlm-roberta ships it).
+        //
+        // Anything else (a bare `{vocab: {...}}` with no `merges`;
+        // a config missing `vocab` entirely; a `vocab` value of some
+        // other JSON type) is rejected — the fallback deliberately
+        // covers only the shapes real HF checkpoints publish
+        // untagged, not every conceivable typeless config.
+        let vocab = value.get("vocab");
+        let looks_like_bpe = vocab.is_some_and(serde_json::Value::is_object)
             && value.get("merges").is_some_and(serde_json::Value::is_array);
         if looks_like_bpe {
             let bpe: HfBpeModel = serde_json::from_value(value).map_err(D::Error::custom)?;
             return Ok(Self::Bpe(bpe));
         }
+        let looks_like_unigram = vocab.is_some_and(serde_json::Value::is_array);
+        if looks_like_unigram {
+            let uni: HfUnigramModel = serde_json::from_value(value).map_err(D::Error::custom)?;
+            return Ok(Self::Unigram(uni));
+        }
 
         Err(D::Error::custom(
             "invalid `model` block: missing `type` field and does not \
              match a known typeless shape (BPE requires both an object \
-             `vocab` and an array `merges`)",
+             `vocab` and an array `merges`; Unigram requires an array \
+             `vocab` of `[surface, score]` pairs)",
         ))
     }
 }
@@ -5779,35 +5795,44 @@ mod tests {
     }
 
     #[test]
-    fn typeless_unigram_shape_is_rejected() {
-        // A typeless Unigram config (vocab as an array of
-        // [surface, log_prob] pairs, plus `unk_id`) must NOT
-        // deserialise as BPE — the untagged fallback deliberately
-        // requires `vocab` to be a JSON object. Rejecting here is
-        // preferable to silent misclassification because a typeless
-        // Unigram config is not a shape any HF release publishes.
+    fn typeless_unigram_shape_deserialises_as_unigram() {
+        // Shape mirrors `FacebookAI/xlm-roberta-base/tokenizer.json`:
+        // the `model` node omits `"type"` and carries a `vocab` array
+        // of `[surface, score]` pairs plus an `unk_id`. Real xlm-r
+        // ships 250 002 entries; this inline blob picks the same
+        // shape at three entries so the loader's disambiguation
+        // (JSON-type of `vocab`) is exercised end-to-end without
+        // pulling real vocab bytes into the crate.
         let json = r#"{
+            "version": "1.0",
             "added_tokens": [],
             "model": {
                 "unk_id": 0,
-                "vocab": [["<unk>", 0.0], ["a", -1.5]]
+                "vocab": [
+                    ["<unk>", 0.0],
+                    ["a", -1.5],
+                    ["b", -2.0]
+                ]
             }
         }"#;
-        let err = parse_tokenizer_json(json).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("missing `type` field")
-                || msg.contains("typeless")
-                || msg.contains("BPE requires"),
-            "expected an untagged-fallback rejection, got: {msg}"
-        );
+        let config = parse_tokenizer_json(json).unwrap();
+        match &config.model {
+            HfModel::Unigram(uni) => {
+                assert_eq!(uni.vocab.len(), 3);
+                assert_eq!(uni.unk_id, Some(0));
+                assert_eq!(uni.vocab[0].0, "<unk>");
+                assert!((uni.vocab[1].1 - -1.5).abs() < f64::EPSILON);
+            }
+            other => panic!("expected typeless Unigram fallback; got {other:?}"),
+        }
     }
 
     #[test]
     fn typeless_model_missing_merges_is_rejected() {
         // Vocab present as an object but no `merges` — the config
-        // does not match any typeless shape we understand. Rejecting
-        // is the whole point of gating the fallback on both keys.
+        // matches neither typeless BPE (needs `merges`) nor typeless
+        // Unigram (needs an array `vocab`). Rejecting is the whole
+        // point of gating each fallback on a distinctive key.
         let json = r#"{
             "added_tokens": [],
             "model": {
@@ -5817,7 +5842,9 @@ mod tests {
         let err = parse_tokenizer_json(json).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("BPE requires") || msg.contains("missing `type`"),
+            msg.contains("BPE requires")
+                || msg.contains("Unigram requires")
+                || msg.contains("missing `type`"),
             "expected typeless-shape rejection, got: {msg}"
         );
     }
