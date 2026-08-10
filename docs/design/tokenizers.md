@@ -189,8 +189,8 @@ The built-ins live in `stringcheese-tokenizer` because none need an external dat
 | `WhitespaceTokenizer` | `Segmenter<Unit = &str>` | Split on Unicode `White_Space`. |
 | `DelimiterTokenizer` | `Segmenter<Unit = &str>` | Split on caller-supplied `char`s or a `&[char]` predicate. |
 | `IdentifierTokenizer` | `Segmenter<Unit = &str>` | camelCase / PascalCase / snake_case / kebab-case / dotted-path / SCREAMING_SNAKE splitting with a configurable mode set. For code-adjacent workloads (searching identifiers, comparing symbol names). |
-| `WordSegmenter` | `Segmenter<Unit = &str>` | UAX #29 word breaks. Delegates to `stringcheese-unicode` once its `words()` API lands (see the deferred stub in [`split/mod.rs`](../../crates/stringcheese-manip/src/split/mod.rs)). |
-| `SentenceSegmenter` | `Segmenter<Unit = &str>` | UAX #29 sentence breaks; same delegation. |
+| `WordSegmenter` | `Segmenter<Unit = &str>` | UAX #29 word breaks. Delegates to `stringcheese_unicode::words` / `word_bounds`; both `WordsOnly` and `AllBoundaries` behaviours are exposed. |
+| `SentenceSegmenter` | `Segmenter<Unit = &str>` | UAX #29 sentence breaks; delegates to `stringcheese_unicode::sentences`. |
 | `GraphemeSegmenter` | `Segmenter<Unit = &str>` | UAX #29 extended grapheme clusters. Delegates to `stringcheese_unicode::graphemes`. |
 | `NgramSegmenter<N>` | `Segmenter<Unit = &[T]>` | Character / byte / word / grapheme n-grams. Thin re-exposure of `stringcheese_compare::ngram::CharacterGrams` / `TokenGrams`. |
 | `RegexTokenizer` | `Segmenter<Unit = &str>` | Split on a regex. Feature-gated (`regex`); accepts `regex-lite` patterns for Wasm-tight builds. |
@@ -441,7 +441,7 @@ For languages whose default subword tokenizer diverges meaningfully (Japanese, C
 
 Delivery is per phase, each phase self-contained enough that a caller who only needs the earlier phases never has to wait on the later ones. Every phase names its "done when" criteria.
 
-**Phase 1 — `stringcheese-tokenizer` trait crate + built-ins.** Done when the `Tokenizer` / `Segmenter` / `Encoding` traits are published in `crates/stringcheese-tokenizer/src/`; `WhitespaceTokenizer`, `DelimiterTokenizer`, `IdentifierTokenizer`, `GraphemeSegmenter`, `NgramSegmenter`, `ByteTokenizer`, and `CharTokenizer` implement the traits and pass ≥ 100 golden vectors each; `WordSegmenter` and `SentenceSegmenter` are stubbed pending UAX #29 support in `stringcheese-unicode`; the crate's `wasm32-unknown-unknown` footprint is reported in CI.
+**Phase 1 — `stringcheese-tokenizer` trait crate + built-ins.** Done when the `Tokenizer` / `Segmenter` / `Encoding` traits are published in `crates/stringcheese-tokenizer/src/`; `WhitespaceTokenizer`, `DelimiterTokenizer`, `IdentifierTokenizer`, `GraphemeSegmenter`, `NgramSegmenter`, `ByteTokenizer`, and `CharTokenizer` implement the traits and pass ≥ 100 golden vectors each; `WordSegmenter` and `SentenceSegmenter` are wired to `stringcheese_unicode::words` / `sentences` (both UAX #29 iterators shipped alongside Phase 1); the crate's `wasm32-unknown-unknown` footprint is reported in CI.
 
 **Phase 2 — `stringcheese-tokenizer-bpe` algorithm crate.** Done when the BPE encoder + decoder pass a hand-constructed merge-table corpus (~20 tables spanning "trivial two-token merge", "byte-level GPT-2 shape", "pre-tokenizer regex-driven tiktoken shape"); the O(n log n) linked-list-plus-heap implementation agrees with the naive O(n²) oracle over exhaustive short inputs; the special-token policy machinery matches tiktoken's `allowed_special` behaviour on their published test cases.
 
