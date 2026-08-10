@@ -104,7 +104,9 @@ use crate::bpe::{
     VocabularyBuilderError,
 };
 use crate::normalizer::Normalizer;
-use crate::post_processor::{PostProcessor, SpecialTokenInfo, TemplatePiece, TemplateProcessing};
+use crate::post_processor::{
+    PostProcessor, RobertaProcessing, SpecialTokenInfo, TemplatePiece, TemplateProcessing,
+};
 use crate::pre_tokenizer::{
     GPT2_PATTERN, Metaspace, PreTokenizerCompileError, PrependScheme, RegexPreTokenizer,
 };
@@ -740,12 +742,50 @@ pub enum HfPostProcessor {
     /// The Llama-shape template that injects BOS/EOS around the
     /// primary encoding. See [`TemplateProcessing`] for the semantics.
     TemplateProcessing(HfTemplateProcessing),
-    /// Any other post-processor (`BertProcessing`,
-    /// `RobertaProcessing`, `ByteLevel`, `Sequence`, ...). Rejected at
-    /// conversion time.
+    /// The `XLM-RoBERTa` / `RoBERTa` `RobertaProcessing` shape — a
+    /// fixed `[CLS] $A [SEP]` splice. Both `cls` and `sep` are the
+    /// on-disk `[surface_string, id]` two-element tuples HF stores.
+    /// See [`RobertaProcessing`] for the runtime semantics.
+    RobertaProcessing(HfRobertaProcessing),
+    /// Any other post-processor (`BertProcessing`, `ByteLevel`,
+    /// `Sequence`, ...). Rejected at conversion time.
     #[serde(other)]
     Other,
 }
+
+/// The typed shape of a `RobertaProcessing` post-processor.
+///
+/// Field names mirror HF's on-disk layout verbatim. `sep` and `cls`
+/// are the two-element `[surface_string, id]` tuples HF writes;
+/// `trim_offsets` and `add_prefix_space` default to `true` — the
+/// values every real `XLM-RoBERTa` / `RoBERTa` checkpoint on the Hub
+/// ships.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct HfRobertaProcessing {
+    /// The `[surface_string, id]` tuple emitted at the SEP slot after
+    /// the primary encoding.
+    pub sep: HfRobertaSpecial,
+    /// The `[surface_string, id]` tuple emitted at the CLS slot before
+    /// the primary encoding.
+    pub cls: HfRobertaSpecial,
+    /// Whether HF would trim ByteLevel-space offsets on the output.
+    /// Preserved but not applied — see the runtime
+    /// [`RobertaProcessing::trim_offsets`] doc for why.
+    #[serde(default = "default_true")]
+    pub trim_offsets: bool,
+    /// Whether HF would insert a leading space before the primary
+    /// text. Preserved but not applied — see the runtime
+    /// [`RobertaProcessing::add_prefix_space`] doc for why.
+    #[serde(default = "default_true")]
+    pub add_prefix_space: bool,
+}
+
+/// The `[surface_string, id]` pair HF stores under `sep` / `cls` in a
+/// `RobertaProcessing` block. Deserialised via a serde
+/// two-element-tuple newtype so `["<s>", 0]` parses directly.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct HfRobertaSpecial(pub String, pub TokenId);
 
 /// The typed shape of a `TemplateProcessing` post-processor.
 ///
@@ -1059,9 +1099,10 @@ impl fmt::Display for HfConversionError {
             Self::UnsupportedPostProcessor { type_name } => write!(
                 f,
                 "unsupported HF post_processor type {type_name:?}: \
-                 this crate materialises only \"TemplateProcessing\" today \
-                 (BertProcessing/RobertaProcessing/ByteLevel/Sequence \
-                 are deferred to later landings)"
+                 this crate materialises \"TemplateProcessing\" and \
+                 \"RobertaProcessing\" today \
+                 (BertProcessing/ByteLevel/Sequence are deferred to \
+                 later landings)"
             ),
             Self::TemplateSpecialTokenNotDeclared { name } => write!(
                 f,
@@ -1632,6 +1673,27 @@ pub struct UnigramTokenizer {
     /// fallback fires. Chosen so a vocab-only path always wins when
     /// one exists.
     unk_penalty: f64,
+    /// Optional Unicode normalizer applied to the raw input string
+    /// *before* the pre-tokenizer runs. Matches HF `tokenizers-rs`'
+    /// pipeline order (`normalize -> pre-tokenize -> Unigram ->
+    /// post-process`) and mirrors [`BpeTokenizer::with_normalizer`] /
+    /// [`crate::wordpiece::WordPieceTokenizer::with_normalizer`]. A
+    /// value of `None` leaves the input unchanged.
+    normalizer: Option<Normalizer>,
+    /// Optional `SentencePiece` Metaspace pre-tokenizer applied to
+    /// the normalized text. When set, each piece produced by
+    /// [`Metaspace::apply`] is fed through the Viterbi loop
+    /// independently, and the resulting ids are concatenated in
+    /// order. When `None` the Viterbi loop runs on the whole
+    /// normalized string as one piece — matching the pre-composition
+    /// behaviour this type shipped with.
+    pre_tokenizer: Option<Metaspace>,
+    /// Optional post-processor applied to the finished [`Encoding`]
+    /// before it leaves [`Self::encode`]. Mirrors
+    /// [`BpeTokenizer::with_post_processor`]; the default
+    /// [`PostProcessor::None`] is a pass-through so callers who never
+    /// configure one see the raw Viterbi output.
+    post_processor: PostProcessor,
 }
 
 impl UnigramTokenizer {
@@ -1673,7 +1735,52 @@ impl UnigramTokenizer {
             lookup,
             unk_id,
             unk_penalty,
+            normalizer: None,
+            pre_tokenizer: None,
+            post_processor: PostProcessor::None,
         })
+    }
+
+    /// Attach (or replace) the Unicode normalizer.
+    ///
+    /// The normalizer runs on the raw input string *before* the
+    /// pre-tokenizer, matching HF `tokenizers-rs`' pipeline order:
+    /// `normalize -> pre-tokenize -> Unigram -> post-process`. See
+    /// [`Normalizer`] for the supported variants. Mirrors
+    /// [`BpeTokenizer::with_normalizer`] and
+    /// [`crate::wordpiece::WordPieceTokenizer::with_normalizer`].
+    #[must_use]
+    pub fn with_normalizer(mut self, normalizer: Normalizer) -> Self {
+        self.normalizer = Some(normalizer);
+        self
+    }
+
+    /// Attach (or replace) the `SentencePiece` Metaspace pre-tokenizer.
+    ///
+    /// When set, [`Self::encode`] splits the normalized input into
+    /// Metaspace pieces (each starting with the replacement `▁`
+    /// character, per HF's `MergedWithNext` split policy) and runs the
+    /// Viterbi loop on each piece independently. This is what makes
+    /// XLM-RoBERTa / Llama / Mistral / T5 encode identically to
+    /// upstream `tokenizers-rs`: the Metaspace mark is what carries
+    /// word-initial position information into the vocab lookup.
+    #[must_use]
+    pub fn with_pre_tokenizer(mut self, pre_tokenizer: Metaspace) -> Self {
+        self.pre_tokenizer = Some(pre_tokenizer);
+        self
+    }
+
+    /// Attach (or replace) the post-processor.
+    ///
+    /// The post-processor runs on the finished [`Encoding`] before
+    /// [`Tokenizer::encode`] returns it. See
+    /// [`crate::post_processor::PostProcessor`] for the shape; the
+    /// default [`PostProcessor::None`] is a pass-through, so callers
+    /// who never configure one see the unchanged Unigram output.
+    #[must_use]
+    pub fn with_post_processor(mut self, post_processor: PostProcessor) -> Self {
+        self.post_processor = post_processor;
+        self
     }
 
     /// The vocabulary this tokenizer was built from.
@@ -1688,17 +1795,135 @@ impl UnigramTokenizer {
         self.unk_id
     }
 
-    /// Run Viterbi tokenization on the given input.
+    /// Read-only access to the configured normalizer, if any.
+    #[must_use]
+    pub fn normalizer(&self) -> Option<&Normalizer> {
+        self.normalizer.as_ref()
+    }
+
+    /// Read-only access to the configured pre-tokenizer, if any.
+    #[must_use]
+    pub fn pre_tokenizer(&self) -> Option<&Metaspace> {
+        self.pre_tokenizer.as_ref()
+    }
+
+    /// Read-only access to the configured post-processor.
+    #[must_use]
+    pub fn post_processor(&self) -> &PostProcessor {
+        &self.post_processor
+    }
+
+    /// Run the full `SentencePiece` pipeline on `input`, returning
+    /// the produced token ids.
     ///
-    /// See the type-level docs for the algorithm and the fallback
-    /// behaviour when [`Self::unk_id`] is set.
+    /// The pipeline is:
+    ///
+    /// 1. Apply the configured [`Normalizer`] (if any) to `input`.
+    /// 2. If a [`Metaspace`] pre-tokenizer is configured, split the
+    ///    normalized string into pieces per its `apply` rule; else
+    ///    treat the whole normalized string as one piece.
+    /// 3. Run [`Self::encode_piece_ids`] (Viterbi forward-DP) on each
+    ///    piece and concatenate the resulting ids in order.
+    /// 4. The [`PostProcessor`] is not applied here — it operates on
+    ///    an [`Encoding`], not a bare `Vec<usize>`, so the trait
+    ///    [`Tokenizer::encode`] entry point is the one that splices
+    ///    the CLS / SEP wrapping. This inherent method returns the
+    ///    raw piece ids so callers who want them without post-
+    ///    processing keep the pre-composition surface.
     ///
     /// # Errors
     ///
     /// Returns [`UnigramEncodeError::UntokenizableChar`] when a
-    /// character in the input is not covered by any vocab entry and
-    /// no `unk_id` is configured.
+    /// character in the (normalized, pre-tokenized) input is not
+    /// covered by any vocab entry and no `unk_id` is configured. The
+    /// carried `char_offset` is a character index into the specific
+    /// piece that failed — the piece-level split is a runtime detail
+    /// and this error type does not attempt to map back to a
+    /// caller-visible offset in the original input.
     pub fn encode(&self, input: &str) -> Result<Vec<usize>, UnigramEncodeError> {
+        // Step 1: normalize.
+        let normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer {
+            Some(n) => alloc::borrow::Cow::Owned(crate::normalizer::normalize(input, n)),
+            None => alloc::borrow::Cow::Borrowed(input),
+        };
+        let text: &str = normalized.as_ref();
+
+        // Step 2 + 3: pre-tokenize into pieces and run Viterbi on
+        // each. Without a Metaspace configured we run on the whole
+        // string (preserving the original pre-composition behaviour
+        // for callers that never call `with_pre_tokenizer`).
+        let mut ids = Vec::new();
+        if let Some(ms) = &self.pre_tokenizer {
+            for piece in ms.apply(text) {
+                let piece_ids = self.encode_piece_ids(&piece)?;
+                ids.extend(piece_ids);
+            }
+        } else {
+            let piece_ids = self.encode_piece_ids(text)?;
+            ids.extend(piece_ids);
+        }
+        Ok(ids)
+    }
+
+    /// Decode a slice of Unigram token ids back into a string.
+    ///
+    /// Concatenates the surface string of each id in order and, when
+    /// a [`Metaspace`] pre-tokenizer is configured, reverses its
+    /// substitution — every occurrence of
+    /// [`Metaspace::replacement`] in the concatenated output is
+    /// replaced with an ASCII space, and a leading space (from the
+    /// prepend-scheme mark) is trimmed. This mirrors HF's own
+    /// `MetaspaceDecoder` behaviour and yields a string that matches
+    /// the original caller-visible input modulo the documented
+    /// normalization losses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnigramDecodeError::UnknownId`] carrying the
+    /// offending id if any id in `tokens` is out of range for the
+    /// configured vocabulary.
+    pub fn decode(&self, tokens: &[usize]) -> Result<String, UnigramDecodeError> {
+        let mut buf = String::new();
+        for &id in tokens {
+            let (surface, _) = self
+                .vocab
+                .get(id)
+                .ok_or(UnigramDecodeError::UnknownId(id))?;
+            buf.push_str(surface);
+        }
+        // If a Metaspace is configured, reverse its substitution:
+        // `replacement` -> ' ', and drop the single leading space
+        // that the prepend-scheme mark inserted (Always / First for
+        // an unmarked input both prepend one).
+        if let Some(ms) = &self.pre_tokenizer {
+            let replacement = ms.replacement;
+            let mut restored = String::with_capacity(buf.len());
+            for c in buf.chars() {
+                if c == replacement {
+                    restored.push(' ');
+                } else {
+                    restored.push(c);
+                }
+            }
+            // Trim a single leading space introduced by the
+            // prepend-scheme mark. Matches HF's MetaspaceDecoder
+            // (`add_prefix_space = true` default) which strips exactly
+            // one leading space from the decoded output.
+            if restored.starts_with(' ') {
+                restored.remove(0);
+            }
+            Ok(restored)
+        } else {
+            Ok(buf)
+        }
+    }
+
+    /// Run Viterbi forward-DP over one already-pre-tokenized piece
+    /// and return the winning path's ids.
+    ///
+    /// This is the inner loop separated from [`Self::encode`] so the
+    /// Metaspace-composed and non-composed paths share it.
+    fn encode_piece_ids(&self, input: &str) -> Result<Vec<usize>, UnigramEncodeError> {
         if input.is_empty() {
             return Ok(Vec::new());
         }
@@ -1776,6 +2001,99 @@ impl UnigramTokenizer {
     }
 }
 
+impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
+    type Token = TokenId;
+
+    fn encode(
+        &self,
+        text: &str,
+    ) -> Result<stringcheese_tokenizer::Encoding<Self::Token>, stringcheese_tokenizer::TokenizerError>
+    {
+        // Reuse the inherent `encode` pipeline for normalize +
+        // pre-tokenize + Viterbi, then splice the post-processor on
+        // top. The inherent method returns `Vec<usize>`; the trait's
+        // `Encoding<TokenId>` uses `u32`. Cast at the boundary — every
+        // id from a real SentencePiece vocab fits.
+        let raw = Self::encode(self, text).map_err(|e| {
+            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+        })?;
+        let mut enc: stringcheese_tokenizer::Encoding<TokenId> =
+            stringcheese_tokenizer::Encoding::new();
+        enc.ids.reserve(raw.len());
+        for id in raw {
+            let tid = TokenId::try_from(id).map_err(|_| {
+                stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!(
+                    "Unigram id {id} does not fit in TokenId (u32)"
+                ))
+            })?;
+            enc.ids.push(tid);
+        }
+        // Fast-path the identity post-processor to avoid an extra
+        // clone on the common no-post-processor path.
+        Ok(if matches!(self.post_processor, PostProcessor::None) {
+            enc
+        } else {
+            self.post_processor.apply(&enc, true)
+        })
+    }
+
+    fn decode(
+        &self,
+        tokens: &[Self::Token],
+    ) -> Result<String, stringcheese_tokenizer::TokenizerError> {
+        // Widen ids to `usize` for the inherent decode. Every shipped
+        // Unigram vocab fits in a u32-indexable Vec so the conversion
+        // is infallible.
+        let widened: Vec<usize> = tokens.iter().map(|&t| t as usize).collect();
+        Self::decode(self, &widened).map_err(|e| {
+            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+        })
+    }
+
+    fn count(&self, text: &str) -> Result<usize, stringcheese_tokenizer::TokenizerError> {
+        // Mirror `encode`'s full pipeline so `count(text) ==
+        // encode(text)?.ids.len()` holds for every configuration. The
+        // synthetic-encoding shape follows the same pattern
+        // `BpeTokenizer::count` and `WordPieceTokenizer::count` use
+        // for the post-processor arm.
+        let raw = Self::encode(self, text).map_err(|e| {
+            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+        })?;
+        let base = raw.len();
+        Ok(if matches!(self.post_processor, PostProcessor::None) {
+            base
+        } else {
+            let mut synth: stringcheese_tokenizer::Encoding<TokenId> =
+                stringcheese_tokenizer::Encoding::new();
+            synth.ids.resize(base, 0);
+            self.post_processor.apply(&synth, true).ids.len()
+        })
+    }
+}
+
+/// Error returned by [`UnigramTokenizer::decode`] when a token id is
+/// out of range for the configured vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnigramDecodeError {
+    /// The wrapped id has no entry in the tokenizer's vocabulary. Any
+    /// id `>= vocab.len()` fails with this variant.
+    UnknownId(usize),
+}
+
+impl fmt::Display for UnigramDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownId(id) => write!(
+                f,
+                "Unigram tokenizer could not decode id {id}: out of range for the configured vocabulary"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UnigramDecodeError {}
+
 /// Error returned by [`UnigramTokenizer::encode`] when the input
 /// cannot be tokenized under the configured vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1812,12 +2130,30 @@ impl std::error::Error for UnigramEncodeError {}
 /// The config's `model.type` must be `"Unigram"`; any other type
 /// surfaces [`HfConversionError::UnsupportedModelForUnigram`].
 ///
-/// Ancillary features (`normalizer`, `pre_tokenizer`, `post_processor`,
-/// `decoder`) are **not applied** on the Unigram path today — the
-/// runtime encodes the raw input string. Callers who need
-/// `Metaspace`, `Precompiled` normalization, or template splicing can
-/// inspect the parsed [`HfTokenizerConfig`] and apply those layers
-/// themselves.
+/// Supported ancillary features today:
+///
+/// * `normalizer` — every variant [`to_runtime_normalizer`] materialises
+///   is attached to the produced [`UnigramTokenizer`] via
+///   [`UnigramTokenizer::with_normalizer`]. This is what runs the
+///   XLM-RoBERTa `Precompiled` charsmap on the raw input before
+///   Viterbi sees it.
+/// * `pre_tokenizer` — the `SentencePiece` [`Metaspace`] shape (either
+///   as a bare `pre_tokenizer` or as the sole entry inside a
+///   `Sequence`) is materialised via [`to_runtime_metaspace`] and
+///   attached via [`UnigramTokenizer::with_pre_tokenizer`]. Every
+///   other pre-tokenizer variant surfaces
+///   [`HfConversionError::UnsupportedPreTokenizer`] with the offending
+///   type name.
+/// * `post_processor` — [`HfPostProcessor::TemplateProcessing`] (the
+///   Llama shape) and [`HfPostProcessor::RobertaProcessing`] (the
+///   XLM-RoBERTa CLS/SEP splice) are honoured and attached via
+///   [`UnigramTokenizer::with_post_processor`]. Every other variant
+///   surfaces [`HfConversionError::UnsupportedPostProcessor`].
+///
+/// **Deferred**: `decoder` is preserved on [`HfTokenizerConfig::decoder`]
+/// for caller inspection but not applied — [`UnigramTokenizer::decode`]
+/// reverses the Metaspace substitution unconditionally, which is the
+/// shape every `SentencePiece` checkpoint expects.
 ///
 /// # Errors
 ///
@@ -1825,6 +2161,13 @@ impl std::error::Error for UnigramEncodeError {}
 ///   `model.type` is not `"Unigram"`.
 /// * [`HfConversionError::UnigramUnkIdOutOfRange`] — the config's
 ///   `unk_id` points past the end of the vocabulary.
+/// * [`HfConversionError::UnsupportedNormalizer`] —
+///   [`to_runtime_normalizer`]'s error.
+/// * [`HfConversionError::UnsupportedPreTokenizer`] — the
+///   `pre_tokenizer` block is not a Metaspace shape (nor a single-entry
+///   Sequence wrapping one).
+/// * [`HfConversionError::UnsupportedPostProcessor`] —
+///   [`to_runtime_post_processor`]'s error.
 ///
 /// # Examples
 ///
@@ -1864,7 +2207,57 @@ pub fn to_unigram_tokenizer(
             });
         }
     };
-    UnigramTokenizer::from_parts(uni.vocab.clone(), uni.unk_id)
+    let mut tok = UnigramTokenizer::from_parts(uni.vocab.clone(), uni.unk_id)?;
+
+    // Normalizer — runs before the pre-tokenizer at encode time.
+    if let Some(hn) = &config.normalizer {
+        let n = to_runtime_normalizer(hn)?;
+        tok = tok.with_normalizer(n);
+    }
+
+    // Pre-tokenizer — Metaspace (or a single-entry Sequence wrapping
+    // one) is the only shape SentencePiece Unigram checkpoints ship.
+    if let Some(pt) = &config.pre_tokenizer {
+        let ms = extract_unigram_pre_tokenizer(pt)?;
+        tok = tok.with_pre_tokenizer(ms);
+    }
+
+    // Post-processor — runs on the finished Encoding before the trait
+    // `Tokenizer::encode` returns it.
+    if let Some(hp) = &config.post_processor {
+        let pp = to_runtime_post_processor(hp)?;
+        tok = tok.with_post_processor(pp);
+    }
+
+    Ok(tok)
+}
+
+/// Reduce an [`HfPreTokenizer`] to a runtime [`Metaspace`], unwrapping
+/// a single-entry `Sequence` if that is what the config carries.
+/// Every other shape surfaces
+/// [`HfConversionError::UnsupportedPreTokenizer`].
+fn extract_unigram_pre_tokenizer(pt: &HfPreTokenizer) -> Result<Metaspace, HfConversionError> {
+    match pt {
+        HfPreTokenizer::Metaspace { .. } => to_runtime_metaspace(pt),
+        HfPreTokenizer::Sequence { pretokenizers } => {
+            // The audit noted that real XLM-RoBERTa / Llama / T5
+            // configs sometimes wrap Metaspace inside a
+            // single-entry Sequence. Accept that; ambiguous multi-
+            // entry sequences that mix Metaspace with something else
+            // are rejected.
+            if pretokenizers.len() == 1 {
+                extract_unigram_pre_tokenizer(&pretokenizers[0])
+            } else {
+                Err(HfConversionError::AmbiguousSequencePreTokenizer {
+                    child_count: pretokenizers.len(),
+                })
+            }
+        }
+        _ => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "non-Metaspace".to_string(),
+            reason: "Unigram tokenizers only accept a SentencePiece Metaspace pre-tokenizer",
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -2231,6 +2624,14 @@ fn to_runtime_post_processor(hp: &HfPostProcessor) -> Result<PostProcessor, HfCo
                 single,
                 pair,
                 special_tokens: specials,
+            }))
+        }
+        HfPostProcessor::RobertaProcessing(rp) => {
+            Ok(PostProcessor::RobertaProcessing(RobertaProcessing {
+                sep: (rp.sep.0.clone(), rp.sep.1),
+                cls: (rp.cls.0.clone(), rp.cls.1),
+                trim_offsets: rp.trim_offsets,
+                add_prefix_space: rp.add_prefix_space,
             }))
         }
         HfPostProcessor::Other => Err(HfConversionError::UnsupportedPostProcessor {

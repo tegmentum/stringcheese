@@ -1111,6 +1111,16 @@ impl Tokenizer for BpeTokenizer {
                 synth.ids.resize(base, 0);
                 self.post_processor.apply(&synth, true).ids.len()
             }
+            crate::post_processor::PostProcessor::RobertaProcessing(_) => {
+                // Same shape as TemplateProcessing: run the splice
+                // against a synthetic encoding of the right length.
+                // BPE tokenizers rarely ship RobertaProcessing today
+                // (XLM-RoBERTa is Unigram-shaped, not BPE), but the
+                // arm keeps the internal exhaustive match compiling.
+                let mut synth: Encoding<TokenId> = Encoding::new();
+                synth.ids.resize(base, 0);
+                self.post_processor.apply(&synth, true).ids.len()
+            }
         })
     }
 }

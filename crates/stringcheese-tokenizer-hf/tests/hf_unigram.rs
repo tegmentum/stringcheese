@@ -6,10 +6,14 @@
 
 #![cfg(feature = "hf-tokenizer")]
 
+use stringcheese_tokenizer::Tokenizer;
 use stringcheese_tokenizer_hf::hf::{
     HfConversionError, HfModel, HfTokenizer, UnigramEncodeError, UnigramTokenizer,
     parse_tokenizer_json, to_tokenizer, to_unigram_tokenizer,
 };
+use stringcheese_tokenizer_hf::normalizer::Normalizer;
+use stringcheese_tokenizer_hf::post_processor::{PostProcessor, RobertaProcessing};
+use stringcheese_tokenizer_hf::{Metaspace, PrependScheme};
 
 /// A tiny vocabulary that exercises the "prefer longer / higher-score
 /// segmentation" behaviour: the word `"hello"` can be produced either
@@ -286,4 +290,229 @@ fn unk_fallback_is_not_preferred_over_vocab_path() {
     // available — and we implement the fallback only when a
     // position is *unreachable* via vocab. So the vocab path wins.
     assert_eq!(tok.encode("ab").unwrap(), vec![1, 2]);
+}
+
+// ---------------------------------------------------------------------
+// Pipeline composition: normalize -> Metaspace -> Viterbi -> post-process
+// ---------------------------------------------------------------------
+
+/// Hand-crafted Metaspace-marked vocabulary. Every "word-initial"
+/// piece starts with `▁` because that is the shape the `SentencePiece`
+/// pre-tokenizer feeds into Viterbi.
+const METASPACE_VOCAB_JSON: &str = r#"{
+    "added_tokens": [],
+    "model": {
+        "type": "Unigram",
+        "vocab": [
+            ["<unk>", 0.0],
+            ["▁hello", -1.0],
+            ["▁world", -1.0],
+            ["▁", -3.0],
+            ["h", -5.0],
+            ["e", -5.0],
+            ["l", -5.0],
+            ["o", -5.0]
+        ],
+        "unk_id": 0
+    }
+}"#;
+
+#[test]
+fn encode_runs_full_pipeline_normalize_metaspace_viterbi() {
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        // A no-op normalizer that still exercises the wiring: NFC on
+        // ASCII is identity.
+        .with_normalizer(Normalizer::Nfc)
+        .with_pre_tokenizer(Metaspace::new());
+    // Pipeline: "hello world" -normalize-> "hello world"
+    //           -metaspace-> ["▁hello", "▁world"]
+    //           -viterbi-> [1, 2]
+    let ids = tok.encode("hello world").unwrap();
+    assert_eq!(ids, vec![1, 2]);
+}
+
+#[test]
+fn encode_without_pre_tokenizer_preserves_pre_composition_behaviour() {
+    // Same vocab, same input, but no Metaspace attached — the whole
+    // string is passed to Viterbi as one piece and the marked pieces
+    // in the vocab never fire (no `▁` in the raw input, so the
+    // fallback single-char path is the only one available).
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    // "hello" without the ▁ mark: char-by-char via the letter entries.
+    let ids = tok.encode("hello").unwrap();
+    assert_eq!(ids, vec![4, 5, 6, 6, 7]);
+}
+
+#[test]
+fn tokenizer_trait_encode_splices_roberta_cls_and_sep() {
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_normalizer(Normalizer::Nfc)
+        .with_pre_tokenizer(Metaspace::new())
+        .with_post_processor(PostProcessor::RobertaProcessing(RobertaProcessing {
+            sep: ("</s>".to_string(), 2),
+            cls: ("<s>".to_string(), 0),
+            trim_offsets: true,
+            add_prefix_space: true,
+        }));
+    // Encode through the Tokenizer trait so the post-processor fires.
+    let enc = Tokenizer::encode(&tok, "hello world").unwrap();
+    // The primary encoding is [1, 2]; the RoBERTa splice wraps it
+    // with CLS on the left and SEP on the right.
+    assert_eq!(enc.ids, vec![0, 1, 2, 2]);
+}
+
+#[test]
+fn decode_reverses_metaspace_substitution() {
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_pre_tokenizer(Metaspace::new());
+    // Encode + decode round-trip through the trait surface.
+    let raw = tok.encode("hello world").unwrap();
+    assert_eq!(raw, vec![1, 2]);
+    let text = tok.decode(&raw).unwrap();
+    assert_eq!(text, "hello world");
+}
+
+#[test]
+fn tokenizer_trait_decode_widens_ids() {
+    // The trait's `decode` takes `&[u32]`; make sure the widen-cast
+    // to the inherent method's `usize` slice works.
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_pre_tokenizer(Metaspace::new());
+    let text = Tokenizer::decode(&tok, &[1u32, 2u32]).unwrap();
+    assert_eq!(text, "hello world");
+}
+
+#[test]
+fn pre_tokenizer_prepend_never_leaves_first_piece_unmarked() {
+    // With PrependScheme::Never a non-space-prefixed input's first
+    // piece has no leading ▁, so the vocab-marked prefixes don't
+    // match at position 0 — this exercises the "Metaspace shape
+    // choice matters" pathway.
+    let config = parse_tokenizer_json(METASPACE_VOCAB_JSON).unwrap();
+    let tok = to_unigram_tokenizer(&config)
+        .unwrap()
+        .with_pre_tokenizer(Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::Never,
+            split: true,
+        });
+    // "hello world" under Never: pieces are ["hello", "▁world"] →
+    // [char-by-char for hello] + [▁world = id 2].
+    let ids = tok.encode("hello world").unwrap();
+    assert_eq!(ids, vec![4, 5, 6, 6, 7, 2]);
+}
+
+// ---------------------------------------------------------------------
+// HF-loader integration
+// ---------------------------------------------------------------------
+
+#[test]
+fn hf_loader_wires_normalizer_metaspace_and_roberta_processor() {
+    // Inline minimal xlm-roberta-shape tokenizer.json: SentencePiece
+    // vocab with `▁hello` / `▁world` entries, an NFC normalizer, a
+    // Metaspace pre-tokenizer, and a RobertaProcessing post-processor.
+    // Verifies `to_tokenizer` returns a `HfTokenizer::Unigram` whose
+    // encode runs the full pipeline end to end.
+    let json = r#"{
+        "added_tokens": [],
+        "normalizer": {"type": "NFC"},
+        "pre_tokenizer": {"type": "Metaspace"},
+        "post_processor": {
+            "type": "RobertaProcessing",
+            "sep": ["</s>", 2],
+            "cls": ["<s>", 0],
+            "trim_offsets": true,
+            "add_prefix_space": true
+        },
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hello", -1.0],
+                ["▁world", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_tokenizer(&config).unwrap();
+    match tok {
+        HfTokenizer::Unigram(uni) => {
+            // Sanity: the loader attached each pipeline piece.
+            assert!(uni.normalizer().is_some());
+            assert!(uni.pre_tokenizer().is_some());
+            assert!(matches!(
+                uni.post_processor(),
+                PostProcessor::RobertaProcessing(_)
+            ));
+            // Encode through the Tokenizer trait so the post-processor
+            // fires; expected shape: [cls, ▁hello, ▁world, sep].
+            let enc = Tokenizer::encode(&uni, "hello world").unwrap();
+            assert_eq!(enc.ids, vec![0, 1, 2, 2]);
+        }
+        other => panic!("expected HfTokenizer::Unigram, got {other:?}"),
+    }
+}
+
+#[test]
+fn hf_loader_wires_metaspace_inside_sequence_wrapper() {
+    // Some real configs wrap Metaspace inside a single-entry Sequence.
+    // The loader must unwrap it and still attach a Metaspace runtime.
+    let json = r#"{
+        "added_tokens": [],
+        "pre_tokenizer": {
+            "type": "Sequence",
+            "pretokenizers": [{"type": "Metaspace"}]
+        },
+        "model": {
+            "type": "Unigram",
+            "vocab": [
+                ["<unk>", 0.0],
+                ["▁hi", -1.0]
+            ],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert!(tok.pre_tokenizer().is_some());
+    assert_eq!(tok.encode("hi").unwrap(), vec![1]);
+}
+
+#[test]
+fn hf_loader_rejects_ambiguous_multi_entry_pre_tokenizer_sequence() {
+    // A Sequence with two children is ambiguous — the loader must
+    // surface `AmbiguousSequencePreTokenizer` instead of picking one.
+    let json = r#"{
+        "added_tokens": [],
+        "pre_tokenizer": {
+            "type": "Sequence",
+            "pretokenizers": [
+                {"type": "Metaspace"},
+                {"type": "Whitespace"}
+            ]
+        },
+        "model": {
+            "type": "Unigram",
+            "vocab": [["<unk>", 0.0]],
+            "unk_id": 0
+        }
+    }"#;
+    let config = parse_tokenizer_json(json).unwrap();
+    let err = to_unigram_tokenizer(&config).unwrap_err();
+    match err {
+        HfConversionError::AmbiguousSequencePreTokenizer { child_count } => {
+            assert_eq!(child_count, 2);
+        }
+        other => panic!("expected AmbiguousSequencePreTokenizer, got {other:?}"),
+    }
 }
