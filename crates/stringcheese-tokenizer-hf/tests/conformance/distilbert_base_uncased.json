@@ -1,7 +1,7 @@
 {
-  "checkpoint": "bert-base-uncased",
-  "source": "transformers.AutoTokenizer.from_pretrained('bert-base-uncased') [transformers==5.14.1]",
-  "note": "WordPiece tokenizer with BertNormalizer (lowercasing + accent stripping + Chinese-character wrapping) and the BertProcessing post-processor. `add_special_tokens=True` so every case is wrapped with [CLS] (101) and [SEP] (102).",
+  "checkpoint": "distilbert-base-uncased",
+  "source": "transformers.AutoTokenizer.from_pretrained('distilbert-base-uncased') [transformers==5.14.1]",
+  "note": "DistilBERT: same WordPiece vocabulary as bert-base-uncased but a distinct tokenizer config (no NSP-adjacent pair template). Kept distinct from `bert_base_uncased.json` so a regression that only surfaces on one config lands here rather than being masked by the shared vocab. `add_special_tokens=True` — [CLS]/[SEP] wrap.",
   "cases": [
     {
       "input": "",

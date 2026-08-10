@@ -65,37 +65,62 @@ default CI signal — green on a naked checkout. A malformed or
 unsupported `tokenizer.json` still panics — those are real regressions
 the suite must surface.
 
-## Fixtures shipped today (Wave-14)
+## Fixtures shipped today
 
-| Checkpoint                | File                          | Cases | Model family      | Source of ids                                                        |
-| ------------------------- | ----------------------------- | ----- | ----------------- | -------------------------------------------------------------------- |
-| `gpt2`                    | `gpt2.json`                   | 20    | Byte-level BPE    | `transformers.AutoTokenizer.from_pretrained('gpt2')` (transformers 5.14.1) |
-| `cl100k_base`             | `cl100k_base.json`            | 20    | tiktoken BPE      | `tiktoken.get_encoding('cl100k_base').encode_ordinary` (tiktoken 0.13.0) |
-| `bert-base-uncased`       | `bert_base_uncased.json`      | 20    | WordPiece + BertNormalizer | `transformers.AutoTokenizer.from_pretrained('bert-base-uncased')` (transformers 5.14.1) |
-| `xlm-roberta-base`        | `xlm_roberta_base.json`       | 20    | SentencePiece Unigram + Precompiled + Metaspace | `transformers.AutoTokenizer.from_pretrained('xlm-roberta-base')` (transformers 5.14.1) |
+| Checkpoint                       | File                                | Cases | Model family                                     | Source of ids                                                                                             |
+| -------------------------------- | ----------------------------------- | ----- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `gpt2`                           | `gpt2.json`                         | 40    | Byte-level BPE                                   | `transformers.AutoTokenizer.from_pretrained('gpt2')` (transformers 5.14.1)                                |
+| `cl100k_base`                    | `cl100k_base.json`                  | 40    | tiktoken BPE                                     | `tiktoken.get_encoding('cl100k_base').encode_ordinary` (tiktoken 0.13.0)                                  |
+| `bert-base-uncased`              | `bert_base_uncased.json`            | 40    | WordPiece + BertNormalizer                       | `transformers.AutoTokenizer.from_pretrained('bert-base-uncased')` (transformers 5.14.1)                   |
+| `xlm-roberta-base`               | `xlm_roberta_base.json`             | 40    | SentencePiece Unigram + Precompiled + Metaspace  | `transformers.AutoTokenizer.from_pretrained('xlm-roberta-base')` (transformers 5.14.1)                    |
+| `distilbert-base-uncased`        | `distilbert_base_uncased.json`      | 40    | WordPiece + BertNormalizer (shared bert vocab)   | `transformers.AutoTokenizer.from_pretrained('distilbert-base-uncased')` (transformers 5.14.1)             |
+| `roberta-base`                   | `roberta_base.json`                 | 40    | Byte-level BPE + RobertaProcessing               | `transformers.AutoTokenizer.from_pretrained('roberta-base')` (transformers 5.14.1)                        |
+| `bert-base-multilingual-cased`   | `bert_base_multilingual_cased.json` | 40    | WordPiece + BertNormalizer (cased, multilingual) | `transformers.AutoTokenizer.from_pretrained('google-bert/bert-base-multilingual-cased')` (transformers 5.14.1) |
+| `bart-base`                      | `bart_base.json`                    | 40    | Byte-level BPE + RobertaProcessing               | `transformers.AutoTokenizer.from_pretrained('facebook/bart-base')` (transformers 5.14.1)                  |
+| `deberta-v3-base`                | `deberta_v3_base.json`              | 40    | SentencePiece Unigram + Sequence normalizer      | `transformers.AutoTokenizer.from_pretrained('microsoft/deberta-v3-base')` (transformers 5.14.1)           |
+| `mdeberta-v3-base`               | `mdeberta_v3_base.json`             | 40    | SentencePiece Unigram + Sequence normalizer (multilingual) | `transformers.AutoTokenizer.from_pretrained('microsoft/mdeberta-v3-base')` (transformers 5.14.1) |
 
-Total: **4 checkpoints × 20 cases = 80 triples**, all
+Total: **10 checkpoints × 40 cases = 400 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
-The four families between them exercise the loader's four "shape"
-axes: byte-level BPE (gpt2), tiktoken BPE (cl100k_base), WordPiece
-with a Bert-style normalizer / post-processor (bert-base-uncased),
-and Unigram over SentencePiece with a Precompiled charsmap + Metaspace
-pre-tokenizer + BOS/EOS splice (xlm-roberta-base).
+Between them the ten checkpoints exercise every runtime shape
+`stringcheese-tokenizer-hf` accepts:
 
-Llama-2 and Mistral-7B were considered but skipped in this first
-landing: both are HF-gated and force every consumer of the corpus
-through an access-token workflow, which the audit's cheap-first
-framing argues against. `xlm-roberta-base` covers the same
-SentencePiece-Unigram slice without the licence hurdle. When the
-parity harness lands and a gated-vocab flow becomes routine, add
-Llama-2 via the recipe below.
+- Byte-level BPE — `gpt2`, `roberta-base`, `bart-base` (three distinct
+  vocabularies over the same BPE runtime).
+- tiktoken BPE — `cl100k_base` (leans on the tiktoken parity harness
+  for the actual vocab; the runner soft-skips when no `tokenizer.json`
+  is provisioned locally for it, since tiktoken has its own format).
+- WordPiece + BertNormalizer — `bert-base-uncased`,
+  `distilbert-base-uncased`, `bert-base-multilingual-cased` (uncased
+  ASCII, DistilBERT sharing the uncased vocab under a distinct config,
+  and cased multilingual).
+- SentencePiece Unigram — `xlm-roberta-base`, `deberta-v3-base`,
+  `mdeberta-v3-base` (three normalizer / pre-tokenizer sequences over
+  the same Unigram Viterbi runtime).
 
-## The 20 inputs
+`microsoft/deberta-v3-base` and `microsoft/mdeberta-v3-base` do not
+publish a `tokenizer.json` under
+`https://huggingface.co/<repo>/tokenizer.json` — the SentencePiece
+`spiece.model` is the on-hub source of truth. The corresponding
+local vocab files are generated by loading the tokenizer via
+`transformers.AutoTokenizer(...).save_pretrained(...)`, which converts
+the SentencePiece model on the fly. The scratchpad helper script
+records the recipe.
 
-Every fixture uses the same 20 inputs, each named by its `note` field.
-Chosen to span the audit's suggested categories with no overlap:
+Llama-2 and Mistral-7B remain out of scope until the `byte_fallback`
+runtime slice lands: both families depend on that path for CJK and
+emoji coverage, and adding fixtures before it lands would tie the
+corpus to a runtime gap. Add them as follow-ups once the runtime
+work is in.
+
+## The 40 inputs
+
+Every fixture uses the same 40 inputs, each named by its `note` field.
+Cases 1–20 are the original Wave-14 corpus; cases 21–40 are the
+Wave-15 widening (long inputs, adversarial normalisation, RTL, more
+scripts, special-token surface forms):
 
 1. `empty` — `""`
 2. `single-char-ascii` — `"a"`
@@ -117,6 +142,33 @@ Chosen to span the audit's suggested categories with no overlap:
 18. `tab-and-newline` — tab + newline between letters
 19. `numbers-and-signs` — `"3.14159 and -42"`
 20. `url-with-query`
+21. `long-prose-paragraph` — >1024 chars of Pride and Prejudice
+22. `long-code-paragraph` — >1024 chars of Python (merge-sort + BST)
+23. `json-blob-escaped` — JSON with `\"`, `é`, nested arrays
+24. `long-url` — >200 char URL with many query params
+25. `mixed-nfc-nfd` — same visible glyphs in NFC and NFD interleaved
+26. `korean-hangul` — precomposed Jamo syllables
+27. `hebrew` — RTL Hebrew
+28. `russian-cyrillic` — Cyrillic
+29. `hindi-devanagari` — Devanagari with combining marks
+30. `long-emoji-zwj-run` — ZWJ sequences + skin-tone modifiers + flags
+31. `invisible-chars` — ZWSP + ZWJ + ZWNJ + soft hyphen
+32. `rtl-with-latin` — Arabic embedded in an English sentence
+33. `cls-surface-form-raw` — literal `[CLS]`/`[SEP]` in input
+34. `mask-surface-form-raw` — literal `[MASK]` in input
+35. `bos-eos-surface-form-raw` — literal `<s>...</s>` in input
+36. `multilingual-single-input` — Latin + CJK + Arabic + Cyrillic + Devanagari
+37. `mixed-case-english` — CamelCase / snake_case
+38. `aaaa-run` — 128× `"a"` (probes cache / reuse)
+39. `numbers-cluster` — `"1234567890 0.0001 1e10 -3.14 +42"`
+40. `punctuation-heavy` — quote/parenthesis-heavy prose
+
+The Wave-15 widening was chosen against the audit's brief to add cases
+for very long inputs, adversarial normalisation, long emoji runs,
+special-token surface forms, and multi-lingual mixes within a single
+input. Cases 33–35 in particular are designed to catch regressions in
+the tokenizer's handling of registered special tokens appearing as
+plain text.
 
 ## Fixture file format
 
@@ -146,7 +198,7 @@ Fields:
 
 1. **Author the fixture.** Pick a checkpoint, write a script (see
    `scratchpad/gen_fixtures.py` or the equivalent for your reference
-   tool) that runs the same 20 inputs through the upstream tool and
+   tool) that runs the same 40 inputs through the upstream tool and
    emits the JSON in the format above. Name the file
    `<canonical-name>.json` — lowercase, `_` for `-`, no `.tokenizer`
    suffix (e.g. `qwen2_5_7b.json`, not `qwen2.5-7B.tokenizer.json`).
@@ -166,6 +218,50 @@ Fields:
    the corpus caught).
 4. **Update this doc.** Add a row to the "Fixtures shipped today"
    table.
+
+## Known runtime gaps surfaced by the Wave-15 widening
+
+Widening the corpus from 4 × 20 to 10 × 40 immediately surfaced several
+runtime gaps that are legitimate follow-ups (the corpus doing its job).
+Each is filed here so a follow-up can pick them up without re-deriving:
+
+- **`Replace(Regex)` normalizer unsupported.** The `deberta-v3-base`
+  and `mdeberta-v3-base` `tokenizer.json` blobs (produced by
+  `save_pretrained` because Microsoft does not publish a
+  `tokenizer.json` on the hub) start with a `Normalizer::Sequence`
+  whose first entry is `Replace` with a regex pattern. The loader
+  rejects with `UnsupportedNormalizer { type_name: "Replace(Regex)" }`
+  and both fixtures fail to load at all.
+- **Registered `[CLS]` / `[SEP]` / `[MASK]` surface forms.** Cases
+  `cls-surface-form-raw`, `mask-surface-form-raw`, and
+  `bos-eos-surface-form-raw` place literal special-token strings in
+  the input. Every WordPiece and Unigram checkpoint's reference
+  tokenizer treats them as the registered special ids (`101`, `102`,
+  `103`, `0`, `2` for the BERT/XLM-R families) rather than as raw
+  text; the runtime splits them piece-by-piece.
+- **`BertNormalizer` strips no zero-width chars.** Case
+  `invisible-chars` embeds U+200B (ZWSP), U+200C (ZWNJ), U+200D (ZWJ),
+  and U+00AD (soft hyphen). The reference `bert-base-uncased` /
+  `distilbert-base-uncased` / `bert-base-multilingual-cased`
+  tokenizers strip these before WordPiece; the runtime lets them
+  through, producing UNK tokens.
+- **`bert-base-uncased` / `distilbert-base-uncased` Devanagari
+  coverage.** Cases `hindi-devanagari` and `multilingual-single-input`
+  hit real WordPiece entries in the reference (`1327`, `29867`,
+  `29874`, `29859`, ...) but the runtime emits `100` (UNK). Likely a
+  BertNormalizer accent-stripping interaction with combining marks
+  in NFD-decomposed Devanagari.
+- **`Sequence(WhitespaceSplit + Metaspace)` pre-tokenizer.** The raw
+  `xlm-roberta-base` `tokenizer.json` wraps `Metaspace` in a
+  two-child `Sequence` alongside `WhitespaceSplit`. The loader
+  rejects with `AmbiguousSequencePreTokenizer { child_count: 2 }`.
+  The local vocab is patched to drop the `WhitespaceSplit` so the
+  tokenizer loads at all — see `scratchpad/patch_vocabs.py` — but
+  this changes the semantics on multi-whitespace inputs, so the
+  `single-space`, `python-code`, `many-newlines`, `whitespace-heavy`,
+  and `long-code-paragraph` cases now surface the runtime gap where
+  each whitespace character becomes its own `▁` token instead of
+  being collapsed.
 
 ## Hand-computed fallback
 
@@ -190,7 +286,7 @@ promise.
 This corpus is not a replacement for the ~1000-per-model parity
 harness the Phase 5 / Phase 6 gates specify (see
 [`tokenizers.md` §11](./tokenizers.md#11-phased-implementation-plan)).
-It is the *bootstrap* signal: 80 triples are enough to catch every
+It is the *bootstrap* signal: 400 triples are enough to catch every
 "the loader stopped materialising post-processors" or "the merge table
 started dropping the last byte pair" regression, without needing the
 larger harness's cross-crate fetch machinery to exist first. The full
