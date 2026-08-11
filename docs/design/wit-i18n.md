@@ -501,6 +501,43 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.2. Phase 2 progress (2026-08)
+
+**Landed.** The Phase 2 foundation ships across a single wave:
+
+- `stringcheese-scud` — extended with the `CAP_COLLATION` capability tag (already reserved in Phase 1), a `CollationDataView` zero-copy view over the body, and the `CollationSectionBuilder` writer alongside the existing `CaseSectionBuilder`. Two new section ids: `SECT_EXPANSIONS` (character-expansion table sharing the wire format of `SECT_FULL_UPPER`) and `SECT_COLLATION_OPTIONS` (a 4-byte options blob carrying the pack's default strength + case-insensitivity bit). +5 new unit tests.
+- `stringcheese-icu-collation` — the WIT interface at `component/wit/collation/stringcheese-icu-collation.wit` (parses cleanly under `wit-parser`; 3 smoke tests assert package name / version / interfaces / world), plus the `CollationEngine` algorithm side that consumes one or more `CollationPack`s and delegates to the existing `stringcheese-collate::UcaCollator` (feruca) for the UCA compare. The engine walks the BCP 47 fallback chain (`de-DE → de → ""`) at query time. 14 unit tests.
+- `stringcheese-en` — `collation-en.scud` shipping DUCET-root-plus-ligature expansions (Æ/æ/Œ/œ → AE/ae/OE/oe). Exposed via `collation_data::COLLATION_EN_SCUD` and `collation_data::collation_pack()` under the `collation-scud` cargo feature (default on). 14 golden-vector test functions totaling ≥ 101 assertions covering primary/secondary/tertiary strengths, sort-key consistency, and empty-input boundaries.
+- `stringcheese-de` — `collation-de.scud` shipping the DIN 5007-2 (phonebook) tailoring: `ß → ss`, `ẞ → SS`, `ä → ae`, `Ä → AE`, `ö → oe`, `Ö → OE`, `ü → ue`, `Ü → UE`. The design commits to phonebook ordering as the shipped default because it is the more distinctive convention (dictionary ordering agrees with English tertiary compare on the same inputs); DIN 5007-1 dictionary ordering remains available via the native `stringcheese_de::GermanCollator::DIN_5007_DICTIONARY` preset. 14 golden-vector test functions totaling ≥ 52 assertions.
+- UCA conformance subset — 100 hand-authored ordered pairs at primary/secondary/tertiary strengths, tested for compare-passes-through-DUCET, antisymmetry, and sort-key/compare consistency at every strength.
+- CI — new `wasm-i18n-collation` job in `.github/workflows/ci.yml` builds both packs, runs the golden + UCA subset suites, and prints per-locale SCUD sizes to the run log.
+
+**Measured sizes** (release builds of the SCUD blobs, uncompressed):
+
+| Pack                | Bytes | Notes                                                          |
+| ------------------- | -----:| -------------------------------------------------------------- |
+| `collation-en.scud` |   126 | DUCET root + Æ/æ/Œ/œ ligature expansions                        |
+| `collation-de.scud` |   194 | DIN 5007-2 (phonebook): ß, ẞ, and the six umlauts               |
+| Composed total      |   320 | Both packs loaded into one `CollationEngine`                    |
+
+**Strength implementation.** Phase 2 approximates the UCA strength ladder by pre-folding before delegating to feruca (which does its own full CLDR-root walk internally at tertiary + shifted mode):
+
+- **Primary** — pack-expand + strip ASCII case + strip combining marks (U+0300..U+036F and adjacent ranges).
+- **Secondary** — pack-expand + strip ASCII case.
+- **Tertiary** — pack-expand only; delegate to feruca for weight table walk.
+- **Quaternary** — currently the same as Tertiary (feruca's shifted mode is already quaternary-aware for variable-weight punctuation).
+- **Identical** — Tertiary with a full-input tiebreak on equal.
+
+The `sort_key` implementation composes level-1 (primary-folded), level-2 (case-folded), and level-3 (case marker) sub-keys so a bytewise compare of two sort keys agrees with `compare` at the same strength on ASCII input.
+
+**Deferred.** Documented in the crate roots and left for the follow-up wave:
+
+- Standalone WASM component build for `stringcheese-icu-collation`. The WIT file parses cleanly under `wit-parser`; the `wit-bindgen` `Guest` implementation and the `cargo build --target wasm32-wasip1 --features wit-component` recipe (mirroring the `stringcheese-tokenizer-component` shape) land in a follow-up.
+- Full ~200 000-entry `CollationTest.txt` conformance. Phase 2 ships the hand-authored 100-entry subset; the full run is a follow-up.
+- Cross-locale composition (loading `en` + `de` and switching per-string). The engine's fallback chain already accepts multiple packs; the "which pack does this per-string query use?" story is a Phase 3 concern.
+- Precomposed accented-character decomposition. Phase 2's primary_fold strips combining marks only for the decomposed form (`e` + U+0301). Precomposed `é` (U+00E9) survives to feruca unchanged; that layer NFD-decomposes internally so the compare is correct, but the `sort_key` for such input reflects the precomposed byte and does not fold to the base letter. Fixing this requires either pulling in `unicode-normalization` at the icu-collation layer or shipping an NFD-decomposition SCUD section — deferred.
+- SCUD support for empty-expansion entries (Thai / Lao / hyphen ignorables). The current writer's `encode_full_table` panics on empty target sequences; adding "collapse to empty" as a valid entry is a backwards-compatible loader upgrade.
+
 ### 8.1. Phase 1 progress (2026-08)
 
 **Landed.** The Phase 1 foundation ships across four commits:
