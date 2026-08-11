@@ -9,7 +9,7 @@ invoke `encode` / `decode` / `count` / `get-capabilities` without
 linking Rust.
 
 The WIT source lives at
-[`component/wit/stringcheese-tokenizer.wit`](../../component/wit/stringcheese-tokenizer.wit);
+[`component/wit/tokenizer/stringcheese-tokenizer.wit`](../../component/wit/tokenizer/stringcheese-tokenizer.wit);
 the design commentary is in [`docs/design/tokenizers.md` §
 8](../../docs/design/tokenizers.md) and the Phase-7 acceptance
 criterion in [`docs/design/tokenizers.md` §
@@ -18,7 +18,7 @@ criterion in [`docs/design/tokenizers.md` §
 ## Position in the tokenizer subsystem
 
 Phase 7 of the tokenizer subsystem's phased plan. The design commits
-to a `component/wit/stringcheese-tokenizer.wit` that parses cleanly
+to a `component/wit/tokenizer/stringcheese-tokenizer.wit` that parses cleanly
 under `wit-parser`, `wit-bindgen` producing a clean Rust host
 binding, and a **reference** `tokenizer-provider` component that
 echoes correct encodings across the boundary under `wasmtime`. This

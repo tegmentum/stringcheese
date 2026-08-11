@@ -4,7 +4,7 @@
 //! the StringCheese tokenizer subsystem. It wraps a
 //! [`stringcheese_tokenizer_hf::BpeTokenizer`] behind the shared
 //! `tegmentum:tokenizer@0.1.0` WIT contract (see
-//! [`component/wit/stringcheese-tokenizer.wit`](../../../component/wit/stringcheese-tokenizer.wit))
+//! [`component/wit/tokenizer/stringcheese-tokenizer.wit`](../../../component/wit/tokenizer/stringcheese-tokenizer.wit))
 //! so that any component-model-capable host — `Wasmtime`, `jco`,
 //! `WasmCloud`, `Spin` — can invoke `encode` / `decode` / `count` /
 //! `get-capabilities` without linking Rust.
@@ -13,7 +13,7 @@
 //!
 //! Phase 7 of the tokenizer subsystem design
 //! (`docs/design/tokenizers.md` § 11). The design commits to a
-//! `component/wit/stringcheese-tokenizer.wit` that parses cleanly under
+//! `component/wit/tokenizer/stringcheese-tokenizer.wit` that parses cleanly under
 //! `wit-parser`, `wit-bindgen` producing a clean Rust host binding, and
 //! a **reference** `tokenizer-provider` component that echoes correct
 //! encodings across the boundary under `wasmtime`. This crate is that
@@ -122,10 +122,10 @@ pub use reference::{
 mod tests {
     /// The WIT source that ships with the repo, embedded so the test
     /// asserts the on-disk file parses cleanly under `wit-parser`.
-    /// Phase 7's acceptance criterion ("`component/wit/stringcheese-tokenizer.wit`
+    /// Phase 7's acceptance criterion ("`component/wit/tokenizer/stringcheese-tokenizer.wit`
     /// parses under `wit-parser`") lands as a plain host unit test —
     /// no wasm toolchain needed to run the gate.
-    const WIT_SOURCE: &str = include_str!("../../../component/wit/stringcheese-tokenizer.wit");
+    const WIT_SOURCE: &str = include_str!("../../../component/wit/tokenizer/stringcheese-tokenizer.wit");
 
     #[test]
     fn wit_file_parses_under_wit_parser() {
@@ -135,7 +135,7 @@ mod tests {
                 std::path::Path::new("stringcheese-tokenizer.wit"),
                 WIT_SOURCE,
             )
-            .expect("component/wit/stringcheese-tokenizer.wit must parse under wit-parser");
+            .expect("component/wit/tokenizer/stringcheese-tokenizer.wit must parse under wit-parser");
         // The parser returns a `PackageId`. Assert the parsed package
         // carries the name we expect — a rename in the WIT file
         // without updating the loader downstream would silently
