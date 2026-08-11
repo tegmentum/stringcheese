@@ -308,32 +308,32 @@ Each is filed here so a follow-up can pick them up without re-deriving:
   gate is the only blocker. All 20 fixture ids are recorded so the
   next-agent landing can flip the test from panic-on-load to (up to)
   20/20 with no fixture churn.
-- **Phi-3-mini surfaces four Llama-family gaps under a distinct
-  vocabulary.** `conformance_phi_3_mini_4k_instruct` runs 16/20 cases
-  to parity and surfaces 4 legitimate mismatches, each pointing at a
-  distinct follow-up:
-  - `empty` — reference emits `[]`, we emit `[29871]` (a bare `▁`
-    from the `Prepend` normalizer). Same Llama-family edge case that
-    `gen_llama2.py`'s comment excluded from the Llama-2 fixture; the
-    reference tokenizer suppresses the injected `▁` on pure-empty
-    inputs. Phi-3's shipped `TemplateProcessing` post-processor is a
-    pass-through (unlike Llama-2's which prepends `<s>`), so the
-    behaviour is visible without a BOS masking it.
-  - `python-code` — reference preserves both `\n` bytes as `<0x0A>`
-    tokens (id 13); we drop them. The Phi-3 config has no explicit
-    pre-tokenizer and a `Sequence[Prepend(▁), Replace(' '→'▁')]`
-    normalizer that touches spaces only, so `\n` should reach BPE and
-    take the byte-fallback path — the runtime appears to be eating
-    `\n` earlier in the pipeline.
-  - `bos-eos-surface-form-raw` — reference recognises `<s>hi</s>` as
-    `[BOS, hi, EOS]` (`[1, 7251, 2]`); we treat the strings as literal
-    text and byte-fallback the angle brackets. Same
-    "registered-special-surface-form" gap the WordPiece / Unigram
-    families already surface.
-  - `chat-end-surface-form-raw` — reference emits `[32007]`; we emit
-    `[29871, 32007]`. The added token `<|end|>` is recognised, but the
-    `Prepend` normalizer's leading `▁` is not suppressed before an
-    added-token match. Cosmetic but observable.
+- **Phi-3-mini's four Llama-family gaps** are all fixed as of the
+  latest landing — `conformance_phi_3_mini_4k_instruct` runs 20/20
+  cases to parity. Two commits closed the four fixture cases:
+  - `python-code`: `BpeTokenizer::encode_region_bpe_inner` now
+    short-circuits `pre_tokenize` when byte-fallback is enabled and no
+    pre-tokenizer pattern is configured, passing the whole region to
+    the merge loop as a single word. The previous whitespace-split
+    fallback silently dropped `\n` (and every other non-space
+    whitespace) before byte-fallback could route those bytes to the
+    reserved `<0xXX>` tokens. Also relevant to the Llama-2, Mistral,
+    and Gemma checkpoints, whose fixtures happen not to contain a
+    newline case but would surface the same bug.
+  - `empty`, `bos-eos-surface-form-raw`, `chat-end-surface-form-raw`:
+    `BpeTokenizer::encode_pieces_with_policy` now extracts registered
+    special-token surfaces from the RAW input first, then applies the
+    configured normalizer to each between-specials region
+    independently. Mirrors HF's `added_vocabulary::extract_and_normalize`
+    ordering that the WordPiece and Unigram runtimes already ship.
+    Consequences: empty raw input yields no regions to normalize (so
+    the `Prepend` marker is not emitted), and specials embedded in the
+    input are matched before the normalizer prepends `▁` in front of
+    them (so `<s>hi</s>` encodes to `[1, 7251, 2]` and `<|end|>` to
+    `[32007]`, matching upstream). Unit tests
+    `phi3_shape_*` in `bpe.rs` lock the four fixture behaviours in
+    place against a hand-crafted Phi-3-shape vocab so the parity
+    coverage does not depend on the real `tokenizer.json` on disk.
 
 ## Hand-computed fallback
 
