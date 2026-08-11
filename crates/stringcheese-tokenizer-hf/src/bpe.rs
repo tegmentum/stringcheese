@@ -930,9 +930,21 @@ impl BpeTokenizer {
         text: &str,
         add_special_tokens: bool,
     ) -> Result<Encoding<TokenId>, TokenizerError> {
-        let normalized = self.normalize_text(text);
-        let text_ref: &str = normalized.as_ref();
-        let pieces = self.encode_pieces(text_ref)?;
+        // Special-token extraction runs on the RAW input; the
+        // normalizer is applied per between-specials region inside
+        // `encode_pieces_with_policy`. This mirrors HF's
+        // `added_vocabulary::extract_and_normalize` ordering — without
+        // extract-before-normalize a Llama-family
+        // `Sequence[Prepend("▁"), Replace(" " → "▁")]` normalizer would
+        // prepend `▁` to `"<s>hi</s>"` before the specials matcher had
+        // a chance to see the raw surface, so the leading `▁` would
+        // BPE-encode into a spurious id 29871 before `<s>` was matched.
+        // Also fixes the empty-input edge case: a raw empty input has
+        // no regions to normalize, so the `Prepend` normalizer's
+        // injected `▁` is not emitted (matching upstream transformers).
+        // Mirrors [`crate::wordpiece::WordPieceTokenizer::encode_ids_raw`]
+        // and [`crate::hf::UnigramTokenizer::encode`].
+        let pieces = self.encode_pieces(text)?;
         let mut enc = Encoding::new();
         enc.ids.reserve(pieces.len());
         enc.offsets.reserve(pieces.len());
@@ -981,10 +993,13 @@ impl BpeTokenizer {
         allowed_special: &BTreeSet<&str>,
         disallowed_special: &DisallowedSpecials<'_>,
     ) -> Result<Encoding<TokenId>, TokenizerError> {
-        let normalized = self.normalize_text(text);
-        let text_ref: &str = normalized.as_ref();
+        // Specials-extraction runs on the RAW input — see the doc
+        // comment on `encode_with_special` for the ordering rationale.
+        // The policy filter still runs against the effective specials
+        // list; `encode_pieces_with_policy` normalizes per
+        // between-specials region internally.
         let pieces = self.encode_pieces_with_policy(
-            text_ref,
+            text,
             Some((allowed_special, disallowed_special)),
             Self::merge_loop_nlogn,
         )?;
@@ -1068,6 +1083,33 @@ impl BpeTokenizer {
     /// is `None`, every registered special is treated as special (the
     /// historical behaviour); when `Some((allowed, disallowed))`, the
     /// tiktoken-style rules described on [`DisallowedSpecials`] apply.
+    ///
+    /// # Normalization ordering
+    ///
+    /// `text` is the RAW caller input. Special-token literals are
+    /// extracted from the raw bytes first (longest-match, ties broken
+    /// lexically), and only the between-specials regions are handed to
+    /// the configured [`crate::normalizer::Normalizer`]. Doing it in
+    /// this order matches HF's `added_vocabulary::extract_and_normalize`
+    /// pipeline byte-for-byte:
+    ///
+    /// * a Llama-family `Sequence[Prepend("▁"), Replace(" " → "▁")]`
+    ///   normalizer does not prepend a stray `▁` before a registered
+    ///   special surface (fixes `<s>hi</s>` → `[1, 7251, 2]` and
+    ///   `<|end|>` → `[32007]`);
+    /// * an all-empty raw input has no regions to normalize at all,
+    ///   so the `Prepend` marker is never injected and the encoded
+    ///   output is empty (fixes `""` → `[]`);
+    /// * DeBERTa-v3-style `Strip { strip_right: true }` trims each
+    ///   region's trailing whitespace *before* the pre-tokenizer fires
+    ///   on it, so surrounding whitespace does not stray across the
+    ///   specials boundary.
+    ///
+    /// Callers that already normalized the text (or that never wire
+    /// a normalizer) see identical semantics — the per-region
+    /// normalization is a no-op when [`Self::normalizer`] is `None`,
+    /// and normalization is idempotent for every runtime-supported
+    /// normalizer variant on already-normalized input.
     fn encode_pieces_with_policy(
         &self,
         text: &str,
@@ -1125,7 +1167,8 @@ impl BpeTokenizer {
 
         let mut out = Vec::new();
         // Walk the input, extracting special-token literal matches. The
-        // regions between matches are handed to the BPE loop.
+        // regions between matches are handed to the BPE loop with the
+        // normalizer applied *per region* (see the doc-comment above).
         let mut cursor = 0usize;
         while cursor < bytes.len() {
             // Try to match a special token at `cursor`.
@@ -1138,15 +1181,13 @@ impl BpeTokenizer {
                 }
             }
             if let Some((_surface, id, len)) = matched {
-                // Emit any accumulated pre-cursor region first: this
-                // shouldn't happen because we always flush before we
-                // reach the special-match position. (Kept as a defence.)
                 out.push((id, cursor..cursor + len, true));
                 cursor += len;
                 continue;
             }
             // No special match here: consume up to the next special
-            // occurrence (or end-of-input) and BPE-encode that region.
+            // occurrence (or end-of-input), normalize that raw region
+            // in isolation, then BPE-encode the normalized region.
             let mut next_special = bytes.len();
             for (surface, _id) in &effective_specials {
                 let sb = surface.as_bytes();
@@ -1157,8 +1198,17 @@ impl BpeTokenizer {
                     }
                 }
             }
-            let region = &text[cursor..next_special];
-            self.encode_region_bpe(region, cursor, &mut out, merge_fn)?;
+            let raw_region = &text[cursor..next_special];
+            // Per-region normalization. When no normalizer is configured
+            // this borrows the raw region unchanged (see
+            // `normalize_text`) and adds no cost. Offsets reported on
+            // the emitted pieces track the normalized-region byte
+            // layout, keyed off `cursor` — matching how the pre-
+            // normalization pipeline already reported offsets into
+            // transformed bytes (e.g. Metaspace's `▁` substitution).
+            let normalized_region = self.normalize_text(raw_region);
+            let region_ref: &str = normalized_region.as_ref();
+            self.encode_region_bpe(region_ref, cursor, &mut out, merge_fn)?;
             cursor = next_special;
         }
         Ok(out)
@@ -1259,6 +1309,23 @@ impl BpeTokenizer {
     ) -> Result<(), TokenizerError> {
         if region.is_empty() {
             return Ok(());
+        }
+
+        // SentencePiece-family fast path: when byte-fallback is enabled
+        // *and* no explicit pre-tokenizer pattern is configured, pass
+        // the whole region as a single word. The default whitespace-
+        // split fallback in `pre_tokenize` would drop `\n` and other
+        // non-space whitespace, but byte-fallback checkpoints
+        // (Llama-2, Mistral-7B-v0.1, Phi-3-mini-4k-instruct, Gemma-2b)
+        // must preserve those bytes and route them through the reserved
+        // `<0xXX>` tokens. Real SentencePiece semantics: the whole
+        // region is one word, byte-fallback fans out any character
+        // whose surface is not in the vocab. This branch does not fire
+        // when a `PreTokenizerSequence` (Metaspace) is configured —
+        // that path is handled in `encode_region_bpe` above and
+        // supplies its own per-piece splitting.
+        if self.pre_tokenizer_pattern.is_none() && self.byte_fallback.is_some() {
+            return self.encode_word_bpe(region, 0, region_offset, out, merge_fn);
         }
 
         // Pre-tokenize into "words" (or one word for the whole region).
@@ -1753,10 +1820,11 @@ impl Tokenizer for BpeTokenizer {
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
         // `count` mirrors `encode`'s full pipeline (normalize +
         // post-process included) so `count(text) == encode(text)?.len()`
-        // for every configuration. The normaliser allocates a `String`
-        // when set — the same cost `encode` pays.
-        let normalized = self.normalize_text(text);
-        let base = self.encode_pieces(normalized.as_ref())?.len();
+        // for every configuration. Specials extraction runs on the RAW
+        // input and normalization is applied per between-specials
+        // region inside `encode_pieces` — see the doc-comment on
+        // `encode_pieces_with_policy` for the ordering rationale.
+        let base = self.encode_pieces(text)?.len();
         // Post-processor may inject or drop tokens.
         Ok(match &self.post_processor {
             crate::post_processor::PostProcessor::None
@@ -2443,6 +2511,127 @@ mod tests {
         // <s>, ▁hi, </s>.
         assert_eq!(enc.ids, vec![1, 301, 2]);
         assert_eq!(enc.special_mask, vec![true, false, true]);
+    }
+
+    // ---------------------------------------------------------------
+    // Llama-family "Prepend(▁) + Replace(' '→'▁')" normalizer +
+    // specials-around-normalizer interaction. These regression tests
+    // cover the Phi-3-mini failing cases (empty, `<s>hi</s>`,
+    // `<|end|>`) without needing the real 32k tokenizer.json on disk.
+    // ---------------------------------------------------------------
+
+    /// Assemble the Phi-3 shape by hand: character-BPE with a byte
+    /// alphabet at 0..256, a `Metaspace`-marked `▁` at 256, and merges
+    /// composing `▁hi` end-to-end. Specials `<s>`, `</s>`, `<|end|>`
+    /// are registered with the same ids the real Phi-3 uses (1, 2,
+    /// 32007). Byte-fallback is enabled so the seed-per-char path
+    /// engages. A `Sequence[Prepend("▁"), Replace(" " → "▁")]`
+    /// normalizer is attached — the same one the real Phi-3
+    /// tokenizer.json ships. Returns the tokenizer.
+    #[cfg(feature = "hf-normalizer")]
+    fn build_phi3_shape_tokenizer() -> BpeTokenizer {
+        let (mut vocab, _) = byte_vocab_with_extras(&[]);
+        let space_utf8 = "\u{2581}".as_bytes();
+        vocab.insert(256, space_utf8.to_vec()).unwrap();
+        vocab.insert(300, "\u{2581}h".as_bytes().to_vec()).unwrap();
+        // Real Phi-3 vocab has ▁hi at id 7251 — use that so the
+        // fixture-derived ids are directly assertable.
+        vocab
+            .insert(7251, "\u{2581}hi".as_bytes().to_vec())
+            .unwrap();
+        // The bare `▁` mark also sits at 29871 in the real Phi-3
+        // vocab. We insert a *separate* copy at 29871 too so the
+        // "leading ▁ leaked out" bug (were it still live) would
+        // surface as id 29871 rather than 256. Keeps this test's
+        // "no leaked marker" assertions comparable to the fixture ids.
+        vocab.insert(29871, alloc::vec![0xE2, 0x96, 0x81]).ok();
+
+        let mut merges = BpeMergeTable::new();
+        merges.insert(space_utf8.to_vec(), b"h".to_vec(), 0);
+        merges.insert("\u{2581}h".as_bytes().to_vec(), b"i".to_vec(), 1);
+
+        let mut specials: BTreeMap<String, TokenId> = BTreeMap::new();
+        specials.insert(String::from("<s>"), 1);
+        specials.insert(String::from("</s>"), 2);
+        specials.insert(String::from("<|end|>"), 32007);
+
+        let byte_fallback: [TokenId; 256] = core::array::from_fn(|b| u32::try_from(b).unwrap());
+        let normalizer = crate::normalizer::Normalizer::Sequence(alloc::vec![
+            crate::normalizer::Normalizer::Prepend {
+                prepend: String::from("\u{2581}"),
+            },
+            crate::normalizer::Normalizer::Replace {
+                pattern: String::from(" "),
+                content: String::from("\u{2581}"),
+            },
+        ]);
+        BpeTokenizer::from_parts(merges, vocab)
+            .with_special_tokens(specials)
+            .with_byte_fallback(byte_fallback)
+            .with_normalizer(normalizer)
+    }
+
+    #[cfg(feature = "hf-normalizer")]
+    #[test]
+    fn phi3_shape_empty_input_encodes_to_empty() {
+        // Regression for the phi-3-mini fixture's `empty` case:
+        // reference emits `[]`, we used to emit `[29871]` (the bare
+        // `▁` from the Prepend normalizer). With per-region
+        // normalization on the RAW input, an empty input yields no
+        // regions to normalize, so no marker is injected.
+        let tok = build_phi3_shape_tokenizer();
+        let enc = tok.encode("").unwrap();
+        assert!(
+            enc.ids.is_empty(),
+            "empty input must produce no ids, got {:?}",
+            enc.ids
+        );
+    }
+
+    #[cfg(feature = "hf-normalizer")]
+    #[test]
+    fn phi3_shape_bos_eos_surface_form_is_recognised_without_leading_marker() {
+        // Regression for `bos-eos-surface-form-raw`: `<s>hi</s>` must
+        // encode to [<s>, ▁hi, </s>] with NO leading `▁` mark leaking
+        // out of the normalizer. Before the specials-from-raw fix,
+        // the Prepend ran first and produced `▁<s>hi</s>`; the `▁`
+        // then BPE-encoded into a stray leading id 29871.
+        let tok = build_phi3_shape_tokenizer();
+        let enc = tok.encode("<s>hi</s>").unwrap();
+        assert_eq!(enc.ids, vec![1, 7251, 2]);
+        assert_eq!(enc.special_mask, vec![true, false, true]);
+    }
+
+    #[cfg(feature = "hf-normalizer")]
+    #[test]
+    fn phi3_shape_added_special_at_start_has_no_leading_marker() {
+        // Regression for `chat-end-surface-form-raw`: `<|end|>` alone
+        // must encode to [32007] with no leading `▁` marker. Before
+        // the fix, the Prepend ran on the raw input and produced
+        // `▁<|end|>`; the leading `▁` BPE-encoded into id 29871
+        // before the special-token matcher had a chance to see the
+        // raw `<|end|>` surface.
+        let tok = build_phi3_shape_tokenizer();
+        let enc = tok.encode("<|end|>").unwrap();
+        assert_eq!(enc.ids, vec![32007]);
+    }
+
+    #[cfg(feature = "hf-normalizer")]
+    #[test]
+    fn phi3_shape_special_between_words_normalizes_each_region_independently() {
+        // Sanity check the per-region normalization: a special
+        // between two regions must have each region prepended
+        // independently. For `hi<s>hi`, the pre-cursor `hi` region
+        // normalises to `▁hi` (id 7251), then `<s>` (id 1), then the
+        // post-cursor `hi` region ALSO normalises to `▁hi` (id 7251)
+        // — matching how HF's added_vocabulary+extract_and_normalize
+        // pipeline runs. This is the same behaviour Metaspace's
+        // `PrependScheme::First` skips (offset > 0), but Prepend the
+        // *normalizer* is unconditional and each region is offset 0
+        // relative to itself.
+        let tok = build_phi3_shape_tokenizer();
+        let enc = tok.encode("hi<s>hi").unwrap();
+        assert_eq!(enc.ids, vec![7251, 1, 7251]);
     }
 
     #[test]
@@ -3181,6 +3370,39 @@ mod tests {
             .collect();
         let decoded = tok.decode(&ids).unwrap();
         assert_eq!(decoded, "😀hi");
+    }
+
+    #[test]
+    fn byte_fallback_no_pre_tokenizer_preserves_newline_bytes() {
+        // Regression: Phi-3-mini / Llama-2 / Mistral / Gemma ship BPE
+        // + byte-fallback with NO explicit pre-tokenizer. Before the
+        // Wave-15 landing that added the SentencePiece-family fast
+        // path, `pre_tokenize` fell through to whitespace-splitting on
+        // the `pattern = None` branch and silently dropped `\n` and
+        // other non-space whitespace before byte-fallback could route
+        // them to the reserved `<0xXX>` tokens. This test locks the
+        // fix in place: with byte-fallback on and no pre-tokenizer,
+        // every byte in the input must appear in the output — the
+        // `\n` (`0x0A`) must land as its byte-fallback id, not be
+        // silently eaten.
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        // Input contains a newline between two `hi`s. Expect: hi_id,
+        // <0x0A>, hi_id — the whitespace-split fallback would have
+        // produced [hi_id, hi_id] (dropping the newline).
+        let enc = tok.encode("hi\nhi").unwrap();
+        assert_eq!(enc.ids, vec![hi_id, byte_ids[0x0A], hi_id]);
+    }
+
+    #[test]
+    fn byte_fallback_no_pre_tokenizer_preserves_space_bytes() {
+        // Same shape as the newline test but for the ASCII space
+        // (`0x20`). Without the SentencePiece-family fast path, a
+        // space would be dropped by the whitespace-split fallback in
+        // `pre_tokenize`. With byte-fallback on, byte 0x20 must be
+        // preserved as the reserved `<0x20>` id.
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        let enc = tok.encode("hi hi").unwrap();
+        assert_eq!(enc.ids, vec![hi_id, byte_ids[0x20], hi_id]);
     }
 
     #[test]
