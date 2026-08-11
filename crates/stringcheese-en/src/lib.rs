@@ -153,6 +153,8 @@ pub use generated::CAPABILITIES;
 pub mod case_data;
 #[cfg(all(feature = "alloc", feature = "icu-collator"))]
 pub mod cldr_collator;
+#[cfg(feature = "collation-scud")]
+pub mod collation_data;
 #[cfg(feature = "alloc")]
 pub mod collator;
 #[cfg(feature = "alloc")]
