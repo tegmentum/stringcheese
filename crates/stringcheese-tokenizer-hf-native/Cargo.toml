@@ -26,6 +26,28 @@ keywords = ["tokenizer", "huggingface", "nlp", "bpe", "wordpiece"]
 # opt-in commitment.
 [features]
 default = []
+# Opt into the conformance suite in `tests/conformance.rs` that
+# exercises the adapter against real upstream `tokenizer.json` files
+# for the same 15 fixture checkpoints the sibling
+# `stringcheese-tokenizer-hf` crate validates against (`gpt2`,
+# `cl100k_base`, `bert-base-uncased`, `xlm-roberta-base`,
+# `distilbert-base-uncased`, `roberta-base`,
+# `bert-base-multilingual-cased`, `bart-base`, `deberta-v3-base`,
+# `mdeberta-v3-base`, `unigram-byte-fallback-synth`,
+# `bpe-byte-fallback-synth`, `llama-2-7b-hf`, `mistral-7b-v0.1`,
+# `qwen2-7b`). Enabling the feature turns off the per-test
+# `#[ignore]` gate; the runner then requires a real `tokenizer.json`
+# (HF-shape) for each checkpoint to be materialised on disk under
+# one of the two lookup roots documented in `tests/conformance.rs`.
+# The feature name is deliberately shared with the sibling and the
+# parallel tiktoken-parity work so a single flag activates every
+# vocab-backed test across the crates. This crate delegates to
+# upstream `tokenizers-rs` verbatim, so byte-identical parity here
+# is a stability signal, not a runtime correctness signal — a
+# fixture failure would surface a divergence between the sibling
+# crate's fixture author (usually `transformers.AutoTokenizer`) and
+# tokenizers-rs itself.
+parity-real-vocab = []
 
 [dependencies]
 stringcheese-tokenizer = { workspace = true, features = ["std"] }
@@ -60,6 +82,13 @@ tokenizers = { version = "0.20", default-features = false, features = ["onig", "
 # above: the whole crate is empty on wasm targets, so the dev-deps
 # only make sense on host.
 proptest = "1"
+# `serde_json` for the conformance fixture loader in
+# `tests/conformance.rs`, which parses the sibling crate's shared
+# fixture JSON blobs. Only exercised when `parity-real-vocab` is
+# enabled (the runner is `#[cfg]`-gated on it), but declaring it as
+# a plain dev-dep keeps `cargo test --all-features` unambiguous.
+# Matches the sibling crate's declaration.
+serde_json = { version = "1", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
