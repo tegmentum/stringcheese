@@ -3104,30 +3104,37 @@ impl UnigramTokenizer {
     /// and this error type does not attempt to map back to a
     /// caller-visible offset in the original input.
     pub fn encode(&self, input: &str) -> Result<Vec<usize>, UnigramEncodeError> {
-        // Step 1: normalize.
-        let normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer {
-            Some(n) => alloc::borrow::Cow::Owned(crate::normalizer::normalize(input, n)),
-            None => alloc::borrow::Cow::Borrowed(input),
-        };
-        let text: &str = normalized.as_ref();
-
         if self.special_tokens.is_empty() {
-            // Fast path — no specials to pre-extract. Skip allocating a
-            // specials list on the common no-specials call site.
-            return self.encode_regions(text);
+            // Fast path — no specials to pre-extract. Normalize the
+            // whole input in one shot; there is no between-specials
+            // boundary that would ask for per-region normalization.
+            let normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer {
+                Some(n) => alloc::borrow::Cow::Owned(crate::normalizer::normalize(input, n)),
+                None => alloc::borrow::Cow::Borrowed(input),
+            };
+            return self.encode_regions(normalized.as_ref());
         }
 
-        // Pre-extract registered special-token surfaces from the
-        // normalized text. Regions between (and around) matches flow
-        // through the normal pre-tokenize + Viterbi pipeline via
-        // [`Self::encode_regions`]. Mirrors
-        // [`BpeTokenizer::encode_pieces_with_policy`] /
+        // Slow path: pre-extract registered special-token surfaces
+        // from the RAW input first, then normalize (and pre-tokenize)
+        // each between-specials region independently. This matches
+        // HF's `added_vocabulary::extract_and_normalize` ordering: the
+        // added-tokens split runs against the raw string so a special
+        // surface like `[CLS]` is not lowercased away by a BERT
+        // normalizer's `lowercase: true` before the specials matcher
+        // sees it, and DeBERTa-v3's `Strip { strip_right: true }`
+        // trims each region's trailing whitespace BEFORE Metaspace
+        // fires — so a between-specials region such as `" hello "`
+        // normalises to `" hello"` and Metaspace with `always` emits
+        // `["▁hello"]` rather than `["▁hello", "▁"]`.
+        //
+        // Mirrors [`BpeTokenizer::encode_pieces_with_policy`] /
         // [`crate::wordpiece::WordPieceTokenizer::encode_ids_raw`].
         let sorted_specials = sorted_unigram_special_tokens(&self.special_tokens);
         let mut ids = Vec::new();
         let mut cursor = 0usize;
-        while cursor < text.len() {
-            let remaining = &text[cursor..];
+        while cursor < input.len() {
+            let remaining = &input[cursor..];
             // Try to match a special at the current cursor.
             let mut matched: Option<(usize, usize)> = None;
             for (surface, id) in &sorted_specials {
@@ -3153,7 +3160,15 @@ impl UnigramTokenizer {
             }
             let region = &remaining[..next_rel];
             if !region.is_empty() {
-                let region_ids = self.encode_regions(region)?;
+                // Per-region normalize, then pre-tokenize + Viterbi.
+                // The normalizer is applied to the region in
+                // isolation — matching HF's per-segment normalization
+                // shape.
+                let region_normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer {
+                    Some(n) => alloc::borrow::Cow::Owned(crate::normalizer::normalize(region, n)),
+                    None => alloc::borrow::Cow::Borrowed(region),
+                };
+                let region_ids = self.encode_regions(region_normalized.as_ref())?;
                 ids.extend(region_ids);
             }
             cursor += next_rel;
@@ -3378,18 +3393,37 @@ impl UnigramTokenizer {
 
         // Backtrack from n to 0, collecting emitted ids in reverse
         // order. `Single` contributes one id; `Bytes` contributes its
-        // `len` ids in reverse. A final `reverse()` restores forward
-        // order.
+        // `len` ids in reverse. Consecutive `unk_id` transitions are
+        // fused into a single UNK emission — this is SentencePiece's
+        // `fuse_unk = true` default (also HF's Unigram default), which
+        // makes an input like `"\u{200d}\u{1f52c}"` (ZWJ + microscope,
+        // neither in vocab) surface as one `[UNK]` id rather than two.
+        // Byte-fallback runs are not fused (they emit real bytes that
+        // the decoder later reassembles).
+        //
+        // A final `reverse()` restores forward order.
         let mut ids = Vec::new();
         let mut pos = n;
+        let mut prev_was_unk = false;
         while pos > 0 {
             let (prev, trans) = &best_prev[pos];
             match trans {
-                UnigramTransition::Single(id) => ids.push(*id),
+                UnigramTransition::Single(id) => {
+                    let is_unk = self.unk_id == Some(*id);
+                    if is_unk && prev_was_unk {
+                        // Fuse: skip pushing a second consecutive UNK.
+                    } else {
+                        ids.push(*id);
+                    }
+                    prev_was_unk = is_unk;
+                }
                 UnigramTransition::Bytes { buf, len } => {
                     for k in (0..*len).rev() {
                         ids.push(buf[k]);
                     }
+                    // Byte-fallback bytes are not UNKs; a following
+                    // UNK must not fuse with them.
+                    prev_was_unk = false;
                 }
             }
             pos = *prev;
@@ -7349,6 +7383,103 @@ mod tests {
         assert_eq!(ids.first(), Some(&0));
         assert_eq!(ids.last(), Some(&2));
         assert!(ids.contains(&3), "expected `▁hello` (id 3) in {ids:?}");
+    }
+
+    #[test]
+    fn unigram_between_specials_region_metaspace_does_not_double_prepend() {
+        // DeBERTa-v3-shape regression: pre-extract specials, then the
+        // between-specials region `" hello "` normalises to `" hello"`
+        // via `Strip { strip_right: true }` and Metaspace `always`
+        // emits `["▁hello"]` — a single id, not `["▁", "▁hello", "▁"]`.
+        // Before the specials-then-normalize + Metaspace-Always fix,
+        // this pinned as `[<special>, "▁", "▁hello", "▁", <special>]`
+        // and broke DeBERTa-v3 cases[32] / [33].
+        let json = r#"{
+            "added_tokens": [
+                {"id": 0, "content": "[CLS]", "special": true},
+                {"id": 1, "content": "[SEP]", "special": true}
+            ],
+            "normalizer": {
+                "type": "Sequence",
+                "normalizers": [
+                    {"type": "Replace", "pattern": {"Regex": "\\s{2,}|[\\n\\r\\t]"}, "content": " "},
+                    {"type": "NFC"},
+                    {"type": "Strip", "strip_left": false, "strip_right": true}
+                ]
+            },
+            "pre_tokenizer": {
+                "type": "Metaspace",
+                "replacement": "▁",
+                "prepend_scheme": "always",
+                "split": true
+            },
+            "model": {
+                "type": "Unigram",
+                "unk_id": 2,
+                "vocab": [
+                    ["[CLS]",  0.0],
+                    ["[SEP]",  0.0],
+                    ["<unk>", -100.0],
+                    ["▁hello", -1.0],
+                    ["▁",      -50.0]
+                ]
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_unigram_tokenizer(&config).unwrap();
+        // `[CLS] hello [SEP]` -> [[CLS], ▁hello, [SEP]] = [0, 3, 1].
+        // The stray `▁` (id 4) MUST NOT appear in the encoded output —
+        // that would mean Metaspace-Always double-prepended on the
+        // region, or the normalizer's `strip_right` failed to fire on
+        // the between-specials region.
+        let ids = tok.encode("[CLS] hello [SEP]").unwrap();
+        assert_eq!(
+            ids,
+            alloc::vec![0, 3, 1],
+            "expected [CLS, ▁hello, SEP] but got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn wordpiece_between_specials_region_normalizer_runs_per_region() {
+        // BERT-uncased-shape regression: the specials `[CLS]` / `[SEP]`
+        // must be extracted from the RAW input before a lowercasing
+        // `BertNormalizer` folds them to `[cls]` / `[sep]`. This test
+        // uses a hand-crafted config that would previously (whole-input
+        // normalize -> specials on the normalized text) have failed to
+        // match `[CLS]` because the normalizer had already produced
+        // `[cls]`, leaving the specials matcher blind.
+        let json = r#"{
+            "added_tokens": [
+                {"id": 0, "content": "[CLS]", "special": true},
+                {"id": 1, "content": "[SEP]", "special": true},
+                {"id": 2, "content": "[UNK]", "special": true}
+            ],
+            "normalizer": {"type": "Lowercase"},
+            "pre_tokenizer": {"type": "BertPreTokenizer"},
+            "model": {
+                "type": "WordPiece",
+                "unk_token": "[UNK]",
+                "vocab": {
+                    "[UNK]": 2,
+                    "hello": 3
+                }
+            }
+        }"#;
+        let config = parse_tokenizer_json(json).unwrap();
+        let tok = to_wordpiece_tokenizer(&config).unwrap();
+        // `[CLS] Hello [SEP]` -> [CLS, hello, SEP] = [0, 3, 1].
+        // The `Hello` region is normalised to `hello` per-region, so
+        // WordPiece finds it in the vocab. Before the fix, whole-input
+        // lowercasing produced `[cls] hello [sep]`, the specials
+        // matcher missed `[cls]`/`[sep]` (the vocab has neither), and
+        // every bracketed piece decomposed to UNKs.
+        let ids = tok.encode("[CLS] Hello [SEP]");
+        assert_eq!(
+            ids,
+            alloc::vec![0, 3, 1],
+            "expected [CLS, hello, SEP] but got {ids:?}"
+        );
     }
 
     #[test]
