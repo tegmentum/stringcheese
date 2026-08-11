@@ -738,6 +738,139 @@ jobs:
             -- --nocapture
 
   # ------------------------------------------------------------------
+  # Real-vocab cl100k WIT component (optional, non-blocking).
+  #
+  # Sibling of `wasm-tokenizer-component` above. Fetches OpenAI's
+  # real cl100k_base plaintext blob via SHA-256-verified download,
+  # points the crate's build.rs at it, builds the wasm component
+  # with the real bytes embedded, and runs a host-side smoke test
+  # asserting encode("Hello, world!") matches upstream tiktoken's
+  # canonical id sequence [9906, 11, 1917, 0].
+  #
+  # The crate lives outside the top-level workspace (see the root
+  # `Cargo.toml`'s `exclude` list) so its opt-in `parity-real-vocab`
+  # feature never leaks into `cargo test --workspace --all-features`
+  # and its build.rs's cache-fetch dependency stays off the default
+  # CI hot path.
+  #
+  # `continue-on-error: true` — CDN outages / hash rotations should
+  # not wedge PRs; the same posture the `tiktoken-parity` job takes.
+  # Promote to blocking once the job has been stable for a few
+  # weeks of runs.
+  # ------------------------------------------------------------------
+  wasm-tokenizer-component-cl100k:
+    name: tokenizer WIT component / real cl100k (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      WASMTIME_VERSION: "26.0.0"
+      WASM_TOOLS_VERSION: "1.219.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          # The crate lives in its own workspace root — include its
+          # `target/` in the cache alongside the main workspace's so
+          # rebuilds are incremental.
+          workspaces: |
+            .
+            crates/stringcheese-tokenizer-component-cl100k
+          key: wasm-tokenizer-component-cl100k-stable
+
+      - name: Cache cl100k vocab blob
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/stringcheese-tokenizer-tiktoken
+          # Bust the cache only when the hash constant in the
+          # crate's build.rs changes — CDN rotations then re-verify
+          # on the next run.
+          key: cl100k-vocab-${{ hashFiles('crates/stringcheese-tokenizer-component-cl100k/build.rs') }}
+
+      - name: Install wasm-tools (${{ env.WASM_TOOLS_VERSION }})
+        run: cargo install --locked --version "${WASM_TOOLS_VERSION}" wasm-tools
+
+      - name: Download WASI preview1 reactor adapter
+        run: |
+          set -euo pipefail
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasi_snapshot_preview1.reactor.wasm"
+          mkdir -p "${RUNNER_TEMP}"
+          curl -fL --retry 3 --retry-delay 5 \
+            -o "${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" "$url"
+          echo "STRINGCHEESE_WASI_ADAPTER=${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" >> "$GITHUB_ENV"
+
+      - name: Fetch cl100k plaintext (SHA-256 verified)
+        # Uses the sibling conformance crate as the single downloader
+        # so the SHA-256 pin lives in exactly one place
+        # (`stringcheese-tokenizer-tiktoken-conformance/src/variant.rs`).
+        # The parity harness populates `~/.cache/stringcheese-tokenizer-tiktoken/`
+        # which the cl100k component's `build.rs` reads from
+        # automatically.
+        run: |
+          cargo test \
+            --manifest-path crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.toml \
+            --features parity-real-vocab \
+            --locked \
+            --test parity \
+            -- --nocapture || \
+            echo "conformance harness returned nonzero; proceeding — build.rs re-verifies SHA-256 before embedding"
+
+      - name: Build the cl100k tokenizer component (wasm32-wasip1)
+        run: |
+          cargo build \
+            --manifest-path crates/stringcheese-tokenizer-component-cl100k/Cargo.toml \
+            --target wasm32-wasip1 \
+            --features wit-component,parity-real-vocab \
+            --release \
+            --locked
+          ls -la crates/stringcheese-tokenizer-component-cl100k/target/wasm32-wasip1/release/stringcheese_tokenizer_component_cl100k.wasm
+
+      - name: Componentize + report size
+        run: |
+          set -euo pipefail
+          module=crates/stringcheese-tokenizer-component-cl100k/target/wasm32-wasip1/release/stringcheese_tokenizer_component_cl100k.wasm
+          component="${RUNNER_TEMP}/stringcheese_tokenizer_component_cl100k.wasm"
+          wasm-tools component new "$module" \
+            --adapt "${STRINGCHEESE_WASI_ADAPTER}" \
+            -o "$component"
+          raw=$(stat -c '%s' "$component" 2>/dev/null || stat -f '%z' "$component")
+          echo "component .wasm size (raw):     ${raw} bytes"
+          # `wasm-opt` does not support wasm components yet
+          # (https://github.com/WebAssembly/binaryen/issues/6728) so
+          # opt the module BEFORE componentizing to get an
+          # apples-to-apples size number.
+          module_opt="${RUNNER_TEMP}/cl100k_module_opt.wasm"
+          component_opt="${RUNNER_TEMP}/cl100k_component_opt.wasm"
+          if command -v wasm-opt >/dev/null; then
+            wasm-opt -Oz "$module" -o "$module_opt" --enable-bulk-memory
+            wasm-tools component new "$module_opt" \
+              --adapt "${STRINGCHEESE_WASI_ADAPTER}" \
+              -o "$component_opt"
+            opt=$(stat -c '%s' "$component_opt" 2>/dev/null || stat -f '%z' "$component_opt")
+            echo "component .wasm size (wasm-opt -Oz): ${opt} bytes"
+          fi
+
+      - name: Run host-side real-vocab smoke test
+        # Assertion: encode("Hello, world!") == [9906, 11, 1917, 0].
+        # That's the id sequence tiktoken-rs 0.6+ (and every published
+        # cl100k_base since 2023) produces; a regression to the
+        # merge-builder or pre-tokenizer surfaces as a hard failure.
+        run: |
+          cargo test \
+            --manifest-path crates/stringcheese-tokenizer-component-cl100k/Cargo.toml \
+            --features parity-real-vocab \
+            --locked \
+            --test real_vocab_smoke \
+            -- --nocapture
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

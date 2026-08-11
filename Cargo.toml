@@ -91,6 +91,18 @@ exclude = [
     # `cargo test --workspace --all-features`. See the crate's
     # README for the rationale and the CI wiring.
     "crates/stringcheese-tokenizer-tiktoken-conformance",
+    # Real-vocab cl100k WIT component — sibling of
+    # `stringcheese-tokenizer-component` that layers OpenAI's real
+    # `mergeable_ranks` blob into the same WIT shape. Excluded for
+    # the same reason as the conformance crate: its
+    # `parity-real-vocab` feature embeds bytes (via a build.rs cache
+    # read) that the session-standing constraint in CLAUDE.md forbids
+    # committing. Keeping the crate out of the workspace keeps the
+    # main CI's `--workspace --all-features` build offline and free
+    # of any real-vocab dependency. The dedicated
+    # `wasm-tokenizer-component-cl100k` CI job invokes it explicitly
+    # after pre-populating the vocab cache.
+    "crates/stringcheese-tokenizer-component-cl100k",
 ]
 
 [workspace.package]
