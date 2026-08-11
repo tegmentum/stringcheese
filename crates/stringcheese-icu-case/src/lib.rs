@@ -30,18 +30,25 @@
 //!   titlecasing.
 //! * `fold(input, mode)` — locale-independent case folding.
 //!
-//! A [`CaseEngine`] implements every export on the Rust side; a
-//! future `wit-component`-gated `Guest` implementation (matching the
-//! `stringcheese-tokenizer-component` pattern) will bridge the two
-//! sides so this crate can ship as a standalone WASM component.
+//! A [`CaseEngine`] implements every export on the Rust side. The
+//! WIT `Guest` implementations that turn this crate into a
+//! standalone `stringcheese:icu-case@0.1.0` WASM component live in
+//! the sibling [`stringcheese-icu-case-component`] crate — the
+//! pattern established by `stringcheese-tokenizer-component`. That
+//! crate embeds the reference `case-en.scud` and `case-tr.scud`
+//! packs so the componentised binary is drivable end-to-end without
+//! a separate pack component.
+//!
+//! [`stringcheese-icu-case-component`]: https://docs.rs/stringcheese-icu-case-component
 //!
 //! # Phase 1 deferrals
 //!
-//! * **Standalone WASM component build.** The WIT interface is in
-//!   place and parses cleanly under `wit-parser` (see the smoke test
-//!   in `tests/wit_parse.rs`); the `wit-bindgen` `Guest`
-//!   implementation and the `cargo build --target wasm32-wasip1
-//!   --features wit-component` recipe land in a follow-up wave.
+//! * **Standalone WASM component build.** Landed in the follow-up
+//!   crate [`stringcheese-icu-case-component`], which wraps this
+//!   crate's `CaseEngine` behind the WIT `case` world under a
+//!   `wit-component` cargo feature and ships a `wasmtime` in-process
+//!   smoke test. This crate remains algorithm-only; the WIT-facing
+//!   `Guest` implementations live in the component wrapper.
 //! * **Full CLDR title-casing.** The Phase 1 [`to_title`](CaseEngine::to_title)
 //!   implementation lowercases the tail and uppercases the leading
 //!   scalar per word — the ASCII common case. Dutch `ij` titlecasing

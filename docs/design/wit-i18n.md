@@ -523,9 +523,12 @@ Each phase is independently releasable; a caller who needs only case mapping nev
 
 - Outer stream compression (Brotli, Zstd). SCUD flag bits 0 and 1 are reserved; the loader currently rejects a compressed body with `ScudError::UnsupportedCompression` and shipped packs write the raw layout. A decompression pass is a backwards-compatible loader upgrade.
 - Structural compression primitives (`RangeDelta`, `AdaptivePages`, `PackedIntegers`, `SequencePool`, `StringPool`, `LoudsTrie`, `FiniteStateTable`). Phase 1 uses plain sorted `(u32, u32)` tables — enough for the Latin + Turkish subset without pulling in an FST library. The ~2.5 KiB total is well under the design's per-locale budget.
-- Standalone WASM component build for `stringcheese-icu-case`. The WIT file parses cleanly under `wit-parser`; the `wit-bindgen` `Guest` implementation and the `cargo build --target wasm32-wasip1 --features wit-component` recipe (mirroring the `stringcheese-tokenizer-component` shape) land in a follow-up.
 - Final-sigma tailoring for Greek. `stringcheese_scud::ContextKind::FinalSigma` is reserved in the SCUD format; the algorithm wires it in when the Greek pack ships case data.
 - Full CLDR title-casing (Dutch `ij` digraph, UAX #29 word-break integration). Phase 1 `to_title` handles the ASCII common case; the full logic lands alongside the `stringcheese-icu-break` capability crate.
+
+**Landed after Phase 1 close.** Post-close follow-up commits fill in the deferred deliverables that did not gate the phase:
+
+- Standalone WASM component build for `stringcheese-icu-case`. The `stringcheese-icu-case-component` sibling crate wraps the `CaseEngine` behind the `stringcheese:icu-case@0.1.0` WIT `case` world, mirroring the `stringcheese-tokenizer-component` template's shape (dual `cdylib` + `rlib`, `wit-component` feature gate on `wit-bindgen-rt`, pre-generated `src/bindings.rs` from `wit-bindgen rust --runtime-path wit_bindgen_rt`, in-process `wasmtime::component::bindgen!` smoke tests). The shipped `.wasm` embeds the `case-en.scud` and `case-tr.scud` packs so the componentised binary is drivable end-to-end without a separate pack component; a new `wasm-i18n-case-component` CI job builds, componentises, reports sizes, and runs the wasmtime smoke test. Reference sizes measured locally (aarch64 macOS, `--release`, wasmtime 26 / wasm-tools 1.254): raw module 83 562 B, componentised 112 305 B; with `wasm-opt -Oz` applied pre-componentise: 57 426 B / 86 169 B respectively — under the design's 40 KB pure-algorithm floor once the two locale packs are stripped, and comfortably within the reference component's ~100 KB budget with them embedded.
 
 ---
 

@@ -2723,6 +2723,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-icu-case-component"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-en",
+ "stringcheese-icu-case",
+ "stringcheese-tr",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen-rt",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
 name = "stringcheese-id"
 version = "0.1.0"
 dependencies = [
