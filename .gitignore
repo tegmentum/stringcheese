@@ -13,6 +13,11 @@ target/
 # `--locked`) has a reproducible dependency graph.
 crates/*/Cargo.lock
 !crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.lock
+# `stringcheese-tokenizer-hf-bench` is excluded from the workspace
+# for the same reason (oracle deps `tokenizers-rs` + `tiktoken-rs`
+# never enter the workspace `Cargo.lock`). Its own lockfile must be
+# committed so its `--locked` CI job has a reproducible graph.
+!crates/stringcheese-tokenizer-hf-bench/Cargo.lock
 
 # Real HF-shape tokenizer.json blobs materialised into the
 # `stringcheese-tokenizer-hf` conformance runner's local lookup root.

@@ -91,6 +91,16 @@ exclude = [
     # `cargo test --workspace --all-features`. See the crate's
     # README for the rationale and the CI wiring.
     "crates/stringcheese-tokenizer-tiktoken-conformance",
+    # Comparative tokenizer bench — same rationale as the parity
+    # harness above: its opt-in `parity-real-vocab` feature pulls in
+    # `tokenizers-rs` + `tiktoken-rs` as oracles (~2 min of fresh
+    # compile between them and a large transitive tree in
+    # `Cargo.lock`), and neither belongs on the default CI hot path.
+    # Excluded so `cargo test --workspace --all-features --locked`
+    # stays lean; the tokenizer-hf-bench CI job runs this crate
+    # explicitly. See the crate's README for the rationale and the
+    # CI wiring.
+    "crates/stringcheese-tokenizer-hf-bench",
 ]
 
 [workspace.package]

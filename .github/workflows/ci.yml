@@ -621,6 +621,80 @@ jobs:
             -- --nocapture
 
   # ------------------------------------------------------------------
+  # Tokenizer-HF comparative bench (optional, non-blocking).
+  #
+  # Builds and quick-runs the `tokenizer_hf` comparative bench that
+  # pits `stringcheese-tokenizer-hf` against upstream `tokenizers-rs`
+  # (Hugging Face) and `tiktoken-rs` (`OpenAI`) on real vocabularies.
+  # The bench harness lives in
+  # `crates/stringcheese-tokenizer-hf-bench/`, which is DELIBERATELY
+  # EXCLUDED from the top-level workspace so its oracle deps
+  # (`tokenizers-rs`, `tiktoken-rs`, plus their transitive trees)
+  # never enter the workspace `Cargo.lock` and never inflate
+  # `cargo test --workspace --all-features` compile time.
+  #
+  # This job compiles the bench in release mode with `--features
+  # parity-real-vocab` (proving the oracle deps still link) and
+  # invokes it via criterion's `--test` mode so every bench iteration
+  # runs exactly once for a fast smoke check. When vocabs are not
+  # provisioned the bench soft-skips per-group via `eprintln!` (see
+  # the bench file's module docs for the two-root lookup convention
+  # and `TIKTOKEN_PARITY_DATA_DIR` / `STRINGCHEESE_REAL_VOCABS_DIR`
+  # env vars).
+  #
+  # `continue-on-error: true` matches the tiktoken-parity job's
+  # posture — this is a compile-and-smoke check, not a gating perf
+  # signal.
+  # ------------------------------------------------------------------
+  tokenizer-hf-bench:
+    name: tokenizer-hf bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          # The bench crate lives in its own workspace root (empty
+          # `[workspace]` at the top of its Cargo.toml — see the
+          # crate's README for the rationale). Include its `target/`
+          # in the cache alongside the main workspace's.
+          workspaces: |
+            .
+            crates/stringcheese-tokenizer-hf-bench
+          key: tokenizer-hf-bench-stable
+
+      - name: Reuse tiktoken vocab cache
+        # Shares the same `~/.cache/stringcheese-tokenizer-tiktoken`
+        # cache the tiktoken-parity job populates. When the parity
+        # job has already run on this ref, the `cl100k_base.tiktoken`
+        # blob is present and the bench's cl100k group produces
+        # numbers; otherwise it soft-skips.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/stringcheese-tokenizer-tiktoken
+          key: tiktoken-vocabs-${{ hashFiles('crates/stringcheese-tokenizer-tiktoken-conformance/src/variant.rs') }}
+
+      - name: Smoke-run the bench (criterion --test)
+        # `criterion --test` runs every bench iteration exactly once
+        # so this proves the whole pipeline links and executes
+        # end-to-end without the multi-minute measurement budget of a
+        # real bench run.
+        run: |
+          cargo bench \
+            --manifest-path crates/stringcheese-tokenizer-hf-bench/Cargo.toml \
+            --features parity-real-vocab \
+            --bench tokenizer_hf \
+            --locked \
+            -- --test --nocapture
+
+  # ------------------------------------------------------------------
   # Tokenizer WIT component smoke test.
   #
   # Phase 7 of the tokenizer subsystem design
