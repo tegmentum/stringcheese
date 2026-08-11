@@ -19,24 +19,12 @@ std = []
 # model. Kept off by default; each `alloc_report_*` binary opts in via
 # `required-features = ["alloc-tracking"]`.
 alloc-tracking = ["dep:dhat"]
-# Opt into the tokenizer_hf comparative bench (see
-# `benches/tokenizer_hf.rs`). Pulls in upstream `tokenizers` and
-# `tiktoken-rs` as oracles plus the `stringcheese-tokenizer-tiktoken`
-# builder for constructing the cl100k stringcheese side from the raw
-# `mergeable_ranks` plaintext. Feature name deliberately mirrors the
-# hf and tiktoken-conformance crates' own `parity-real-vocab` so a
-# single flag activates every real-vocab-backed harness in-tree. The
-# bench itself soft-skips at runtime when no `tokenizer.json` /
-# tiktoken plaintext blob is on disk, so enabling the feature never
-# fails the build even on a naked checkout — it just doesn't produce
-# numbers.
-parity-real-vocab = [
-    "stringcheese-tokenizer-hf/hf-tokenizer",
-    "stringcheese-tokenizer-hf/parity-real-vocab",
-    "dep:tokenizers",
-    "dep:tiktoken-rs",
-    "dep:stringcheese-tokenizer-tiktoken",
-]
+# NOTE: The comparative `tokenizer_hf` bench and its
+# `parity-real-vocab` feature moved to the workspace-EXCLUDED crate
+# `crates/stringcheese-tokenizer-hf-bench/` so the oracle deps
+# (`tokenizers-rs`, `tiktoken-rs`) never enter this workspace's
+# `Cargo.lock` and never inflate the `--all-features` CI compile
+# time. See that crate's README for the run recipe.
 
 [dependencies]
 stringcheese-core = { workspace = true, features = ["std"] }
@@ -74,31 +62,12 @@ stringcheese-tokenizer = { workspace = true, features = ["std"] }
 # criterion benches never inherit its global allocator.
 dhat = { version = "0.3", optional = true }
 
-# Optional oracles for the `tokenizer_hf` comparative bench. All three
-# are gated on `parity-real-vocab` so the default build never pulls
-# them in — see the feature declaration above for the rationale.
-#
-# * `tokenizers` — Hugging Face's own Rust tokenizer library. Used as
-#   the reference for the gpt2 and llama-2-7b bench groups; both load
-#   the same on-disk `tokenizer.json`.
-# * `tiktoken-rs` — the reference for the cl100k_base bench group;
-#   ships the real `mergeable_ranks` blob embedded.
-# * `stringcheese-tokenizer-tiktoken` — provides
-#   `builder::build_scud_from_tiktoken` for parsing the plaintext blob
-#   the bench uses to construct its cl100k stringcheese side.
-#   `default-features = false` avoids linking any of the embedded SCUD
-#   packs (we materialise the tokenizer at bench time from a
-#   contributor-provisioned real blob, never from the crate's built-in
-#   synthetic packs).
-# `fancy-regex` is mandatory: `tokenizers` refuses to compile without
-# a regex backend (`onig` — C-linked, or `fancy-regex` — pure Rust).
-# We pick `fancy-regex` because it is the same backend
-# `stringcheese-tokenizer-hf` uses, keeps the bench cross-platform,
-# and avoids adding a system-dependency to CI. All other default
-# features (`progressbar`, `esaxx_fast`, `http`) stay off.
-tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }
-tiktoken-rs = { version = "0.6", optional = true }
-stringcheese-tokenizer-tiktoken = { workspace = true, default-features = false, optional = true }
+# NOTE: `tokenizers` and `tiktoken-rs` (the oracles for the
+# comparative `tokenizer_hf` bench) moved to
+# `crates/stringcheese-tokenizer-hf-bench/` — see that crate's
+# Cargo.toml. Keeping them out of this workspace member's dep list
+# means the workspace `Cargo.lock` no longer resolves their large
+# transitive trees.
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
@@ -218,17 +187,11 @@ harness = false
 name = "bpe"
 harness = false
 
-# Comparative encode throughput vs the two reference tokenizer
-# libraries in the Rust ecosystem: Hugging Face `tokenizers-rs` on
-# gpt2 + llama-2-7b, and `tiktoken-rs` on cl100k_base. Gated on the
-# `parity-real-vocab` feature because it requires real vocabularies
-# to be materialised on disk (see the bench file's module docs for
-# the two-root lookup convention). See the crate README's
-# "tokenizer_hf" section for how to run.
-[[bench]]
-name = "tokenizer_hf"
-harness = false
-required-features = ["parity-real-vocab"]
+# NOTE: The comparative `tokenizer_hf` bench moved to the
+# workspace-excluded crate
+# `crates/stringcheese-tokenizer-hf-bench/` — see that crate's
+# README. Removing it here keeps the workspace `Cargo.lock` free of
+# `tokenizers-rs` + `tiktoken-rs` and their transitive deps.
 
 # Allocation-report binaries. Each one is gated on the `alloc-tracking`
 # feature so that a default build never sees dhat's global allocator; the

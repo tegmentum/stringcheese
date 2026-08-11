@@ -1,0 +1,118 @@
+# Declare this crate as its own workspace root — the parent workspace
+# `exclude`s this directory, but Cargo still checks for an enclosing
+# workspace via directory walk and errors if one is found without the
+# package being a member. An empty `[workspace]` here severs that
+# lookup and lets `cargo` operate on this crate standalone.
+[workspace]
+
+[package]
+name = "stringcheese-tokenizer-hf-bench"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/stringcheese"
+description = "Comparative encode-throughput bench for stringcheese-tokenizer-hf vs upstream tokenizers-rs and tiktoken-rs. Excluded from the main workspace so its opt-in real-vocab oracle deps never leak into `--all-features` CI runs."
+publish = false
+
+# NOTE: This package is deliberately EXCLUDED from the top-level
+# workspace (see the root `Cargo.toml`'s `exclude` list). Cargo's
+# `--all-features` flag turns on every feature of every workspace
+# member unconditionally, and this crate's `parity-real-vocab` feature
+# pulls in the multi-MB `tokenizers-rs` and `tiktoken-rs` oracle
+# stacks. Neither belongs on the default CI hot path — the workspace's
+# `cargo test --workspace --all-features --locked` needs to stay
+# lightweight, and dragging tokenizers + tiktoken-rs (plus their
+# transitive deps) into the main `Cargo.lock` added ~2 minutes of
+# fresh compile to `--all-features` jobs. Excluding the crate keeps
+# the main workspace's lock lean; the tokenizer-hf comparative bench
+# job runs this crate explicitly with `cargo bench --manifest-path
+# crates/stringcheese-tokenizer-hf-bench/Cargo.toml --features
+# parity-real-vocab --bench tokenizer_hf`.
+#
+# Mirrors the split shape used by
+# `stringcheese-tokenizer-tiktoken-conformance` for the same reason.
+
+[features]
+# Off by default. When enabled the crate:
+#   * Pulls in Hugging Face's `tokenizers` crate (BPE / WordPiece /
+#     Unigram reference) with `fancy-regex` as the mandatory regex
+#     backend.
+#   * Pulls in `tiktoken-rs` for the `cl100k_base` reference lane
+#     (ships the real `mergeable_ranks` blob embedded).
+#   * Turns on `stringcheese-tokenizer-hf`'s `hf-tokenizer` and
+#     `parity-real-vocab` features so the bench can materialise real
+#     HF `tokenizer.json` files.
+# The default build is essentially empty — it exists so the crate
+# still `cargo check`s cleanly offline.
+default = []
+parity-real-vocab = [
+    "stringcheese-tokenizer-hf/hf-tokenizer",
+    "stringcheese-tokenizer-hf/parity-real-vocab",
+    "dep:tokenizers",
+    "dep:tiktoken-rs",
+]
+
+[dependencies]
+# Path-based (not workspace = true) because this crate lives outside
+# the workspace so it can gate its feature independently. Every dep
+# below matches the shape the bench used inside `stringcheese-bench`
+# before the move — the bench file itself is byte-identical.
+stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features = false, features = ["std"] }
+stringcheese-tokenizer-hf = { path = "../stringcheese-tokenizer-hf", default-features = false, features = ["std"] }
+# Provides `builder::build_scud_from_tiktoken` for parsing the
+# tiktoken plaintext blob into vocab + merge entries the bench feeds
+# into `stringcheese-tokenizer-hf`'s cl100k lane. `default-features =
+# false` avoids linking any of the embedded SCUD packs — we
+# materialise the tokenizer at bench time from a contributor-
+# provisioned real blob, never from the crate's built-in synthetic
+# packs.
+stringcheese-tokenizer-tiktoken = { path = "../stringcheese-tokenizer-tiktoken", default-features = false }
+
+# Optional oracles. Both gated behind `parity-real-vocab` so the
+# default build never pulls them in.
+#
+# * `tokenizers` — Hugging Face's own Rust tokenizer library. Used as
+#   the reference for the gpt2 and llama-2-7b bench groups; both load
+#   the same on-disk `tokenizer.json`. `fancy-regex` is mandatory:
+#   `tokenizers` refuses to compile without a regex backend (`onig`
+#   is the C-linked alternative). We pick `fancy-regex` because it is
+#   the same backend `stringcheese-tokenizer-hf` uses, keeps the
+#   bench cross-platform, and avoids adding a system-dependency to
+#   CI. All other default features (`progressbar`, `esaxx_fast`,
+#   `http`) stay off.
+# * `tiktoken-rs` — the reference for the cl100k_base bench group;
+#   ships the real `mergeable_ranks` blob embedded. Version bounds:
+#   0.6 is the first release that exposes o200k_base (kept in sync
+#   with the tiktoken-conformance crate).
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"], optional = true }
+tiktoken-rs = { version = "0.6", optional = true }
+
+[[bench]]
+name = "tokenizer_hf"
+harness = false
+required-features = ["parity-real-vocab"]
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+[profile.release]
+# Match the workspace's own release profile so bench numbers taken
+# here are directly comparable to the numbers cited in the bench file's
+# baseline table (which were measured under the workspace profile
+# before the split).
+lto = "thin"
+codegen-units = 1
+
+[lints]
+# Match the workspace's own settings even though the crate is
+# excluded — reviewers should not have to reason about a different
+# lint policy for one crate.
+rust.missing_docs = "warn"
+rust.unsafe_op_in_unsafe_fn = "deny"
+clippy.pedantic = { level = "warn", priority = -1 }
+clippy.module_name_repetitions = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.must_use_candidate = "allow"
+clippy.collapsible_if = "allow"
