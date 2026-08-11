@@ -1,0 +1,32 @@
+[package]
+name = "stringcheese-scud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "StringCheese Unicode Data (SCUD) file-format loader — the shared per-locale data-pack substrate for the stringcheese-icu-* WIT capability crates. Parses the SCUD header (magic, format version, CLDR version, capability tag, locale), then hands out zero-copy per-capability views into the file body. Phase 1 of the WIT-i18n subsystem (docs/design/wit-i18n.md § 4)."
+categories = ["text-processing", "internationalization", "encoding"]
+keywords = ["scud", "cldr", "unicode", "i18n", "wit"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+# Adds `ScudFile::open(path)` for on-disk loading; the `include_bytes!`
+# entrypoint (`from_static`) is always available.
+std = ["alloc"]
+# When enabled, the crate exposes owned-loader helpers built on `Vec<u8>`.
+# The zero-copy `from_static(&'static [u8])` path is available under
+# `no_std` without either feature enabled.
+alloc = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

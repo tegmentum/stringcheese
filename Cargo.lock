@@ -2360,6 +2360,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-scud"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "stringcheese-segment"
 version = "0.1.0"
 dependencies = [
