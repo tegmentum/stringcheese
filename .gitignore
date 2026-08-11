@@ -18,6 +18,11 @@ crates/*/Cargo.lock
 # never enter the workspace `Cargo.lock`). Its own lockfile must be
 # committed so its `--locked` CI job has a reproducible graph.
 !crates/stringcheese-tokenizer-hf-bench/Cargo.lock
+# `stringcheese-tokenizer-component-cl100k` is excluded from the
+# workspace so its parity-real-vocab build.rs cache-fetch never
+# enters `--workspace --all-features`. Its own lockfile must be
+# committed so its `--locked` CI job has a reproducible graph.
+!crates/stringcheese-tokenizer-component-cl100k/Cargo.lock
 
 # Real HF-shape tokenizer.json blobs materialised into the
 # `stringcheese-tokenizer-hf` conformance runner's local lookup root.
