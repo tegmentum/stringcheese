@@ -59,5 +59,29 @@ wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true 
 # on host `cargo test` before the component build ever runs.
 wit-parser = "0.230"
 
+# `wasmtime` drives the in-process component runtime the smoke tests
+# in `tests/component_smoke.rs` invoke each of the four WIT exports
+# through. The dep is dev-only (never on the runtime crate graph),
+# feature-pinned to just the bits the tests need: `runtime` +
+# `cranelift` for a JIT-backed executor, `component-model` for the
+# Component-Model APIs (bindgen! macro, `Component`, `Linker`) that
+# replace the pre-Phase-8 shell-out to `wasmtime run --invoke`
+# (wasmtime 20+ removed --invoke for components). The `async`, `cache`,
+# `pooling-allocator`, `parallel-compilation` (rayon), `coredump`,
+# `debug-builtins`, `profiling`, `gc`, `threads`, `wat`, `addr2line`,
+# `demangle` defaults are dropped — none of them are load-bearing for
+# a synchronous "load .wasm, call four functions, assert on the
+# returned typed values" test.
+wasmtime = { version = "26", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+
+# Companion crate that ships the WASI preview2 host implementations
+# behind `add_to_linker_sync`. The reference tokenizer component does
+# no I/O of its own, but the wasip1 -> wasip2 adapter applied at
+# componentize time introduces a `wasi:*@0.2.x` import surface that
+# the linker must satisfy before `instantiate` will succeed. Version
+# pinned in lockstep with `wasmtime` (both share the 26.x wasi:@0.2.1
+# baseline the CI's downloaded reactor adapter emits).
+wasmtime-wasi = { version = "26", default-features = false }
+
 [lints]
 workspace = true
