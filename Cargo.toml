@@ -79,6 +79,7 @@ members = [
     "crates/stringcheese-ka",
     "crates/stringcheese-tokenizer",
     "crates/stringcheese-tokenizer-hf",
+    "crates/stringcheese-tokenizer-hf-native",
     "crates/stringcheese-tokenizer-tiktoken",
 ]
 exclude = [
@@ -195,6 +196,7 @@ stringcheese-hy = { version = "0.1.0", path = "crates/stringcheese-hy", default-
 stringcheese-ka = { version = "0.1.0", path = "crates/stringcheese-ka", default-features = false }
 stringcheese-tokenizer = { version = "0.1.0", path = "crates/stringcheese-tokenizer", default-features = false }
 stringcheese-tokenizer-hf = { version = "0.1.0", path = "crates/stringcheese-tokenizer-hf", default-features = false }
+stringcheese-tokenizer-hf-native = { version = "0.1.0", path = "crates/stringcheese-tokenizer-hf-native", default-features = false }
 stringcheese-tokenizer-tiktoken = { version = "0.1.0", path = "crates/stringcheese-tokenizer-tiktoken", default-features = false }
 
 [profile.release]

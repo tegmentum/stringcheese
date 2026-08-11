@@ -1,0 +1,65 @@
+[package]
+name = "stringcheese-tokenizer-hf-native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native-only adapter that delegates to Hugging Face's own tokenizers-rs crate for byte-identical parity with upstream tokenizer.json semantics. Escape hatch for the wasm-friendly `stringcheese-tokenizer-hf` runtime."
+categories = ["algorithms", "text-processing"]
+keywords = ["tokenizer", "huggingface", "nlp", "bpe", "wordpiece"]
+
+# ---------------------------------------------------------------------
+# Feature policy
+# ---------------------------------------------------------------------
+#
+# The crate has one build shape: native, using upstream `tokenizers` at
+# whatever host-only feature set gives us byte-identical HF parity. The
+# `hf-native` feature name in the top-level design doc referred to
+# opting-in via a *facade* crate (see `stringcheese-tokenizer` / the
+# umbrella `stringcheese`) rather than a feature on this crate itself;
+# an unconditional dep on tokenizers-rs would still be host-only because
+# tokenizers-rs itself pulls `onig` (a C library) and `esaxx-rs` (a C++
+# header) on its default feature set. Hence there is nothing here to
+# gate on: adding the crate as a dependency already carries the native
+# opt-in commitment.
+[features]
+default = []
+
+[dependencies]
+stringcheese-tokenizer = { workspace = true, features = ["std"] }
+
+# ---------------------------------------------------------------------
+# Native-only dependency on Hugging Face's own tokenizers-rs.
+#
+# Target-gated on `cfg(not(target_family = "wasm"))` so a wasm build of
+# any consumer never resolves the dependency. tokenizers-rs pulls in
+# `onig` (C library, PCRE-shaped regex engine — the engine HF uses for
+# their pre-tokenizer patterns) and `esaxx-rs` (C++ header-only suffix
+# automaton for Unigram training) on its default feature set. Both are
+# host-only C/C++ code; neither can be cross-compiled to
+# `wasm32-unknown-unknown` without a bespoke toolchain, and neither
+# belongs on the wasm hot path anyway. The crate as a whole is compiled
+# to an empty module on wasm targets by a `#![cfg(not(target_family =
+# "wasm"))]` gate at the top of `src/lib.rs` — see the module doc.
+#
+# We stay on the tokenizers-rs default feature set (minus
+# `progressbar`, which pulls `indicatif` for CLI progress bars we do
+# not want as a library dependency) so callers get byte-identical
+# parity with the reference upstream tool without having to know which
+# subset of tokenizers-rs's features governs which pipeline shape.
+# ---------------------------------------------------------------------
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokenizers = { version = "0.20", default-features = false, features = ["onig", "esaxx_fast"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+# Property tests exercise the byte-identical delegation contract over
+# a small corpus of diverse inputs. Target-gated to match the
+# `[target.'cfg(not(target_family = "wasm"))'.dependencies]` block
+# above: the whole crate is empty on wasm targets, so the dev-deps
+# only make sense on host.
+proptest = "1"
+
+[lints]
+workspace = true

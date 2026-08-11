@@ -373,12 +373,28 @@ jobs:
         # filesystem view. It belongs in `[build-dependencies]` and
         # never runs in a wasm consumer's process, so excluding its
         # test suite from the wasm-runtime job is aligned with intent.
+        #
+        # `stringcheese-tokenizer-hf-native` is excluded because it is
+        # native-only by construction: its sole raison d'être is to
+        # delegate to Hugging Face's `tokenizers-rs` crate for
+        # byte-identical parity with the reference tool, and
+        # tokenizers-rs pulls in `onig` (C library) and `esaxx-rs`
+        # (C++ header-only suffix automaton) on its default feature
+        # set. Neither cross-compiles to `wasm32-unknown-unknown`
+        # without a bespoke toolchain and neither belongs on the wasm
+        # hot path. The crate carries a `#![cfg(not(target_family =
+        # "wasm"))]` gate at the top of `src/lib.rs` so it compiles
+        # to an empty module on wasm targets; the exclusion here
+        # keeps `cargo test --target wasm32-wasip1` from having to
+        # link the empty binary against a tokenizers-rs dep tree it
+        # never uses.
         run: |
           cargo test \
             --workspace \
             --exclude stringcheese-bench \
             --exclude stringcheese-detect \
             --exclude stringcheese-lang-gen \
+            --exclude stringcheese-tokenizer-hf-native \
             --all-features \
             --locked \
             --target wasm32-wasip1
