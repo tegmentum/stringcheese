@@ -360,6 +360,9 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "llama_2_7b.json",
     "mistral_7b_v01.json",
     "qwen2_7b.json",
+    "phi_3_mini_4k_instruct.json",
+    "gemma_2b.json",
+    "t5_base.json",
 ];
 
 #[test]
@@ -567,4 +570,31 @@ fn conformance_mistral_7b_v01() {
 )]
 fn conformance_qwen2_7b() {
     run_fixture("qwen2_7b.json", "qwen2-7b");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_phi_3_mini_4k_instruct() {
+    run_fixture("phi_3_mini_4k_instruct.json", "phi-3-mini-4k-instruct");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_gemma_2b() {
+    run_fixture("gemma_2b.json", "gemma-2b");
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_t5_base() {
+    run_fixture("t5_base.json", "t5-base");
 }
