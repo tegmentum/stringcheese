@@ -82,6 +82,8 @@ members = [
     "crates/stringcheese-tokenizer-hf-native",
     "crates/stringcheese-tokenizer-tiktoken",
     "crates/stringcheese-tokenizer-component",
+    "crates/stringcheese-scud",
+    "crates/stringcheese-icu-case",
 ]
 exclude = [
     "fuzz",
@@ -200,6 +202,8 @@ stringcheese-tokenizer-hf = { version = "0.1.0", path = "crates/stringcheese-tok
 stringcheese-tokenizer-hf-native = { version = "0.1.0", path = "crates/stringcheese-tokenizer-hf-native", default-features = false }
 stringcheese-tokenizer-tiktoken = { version = "0.1.0", path = "crates/stringcheese-tokenizer-tiktoken", default-features = false }
 stringcheese-tokenizer-component = { version = "0.1.0", path = "crates/stringcheese-tokenizer-component", default-features = false }
+stringcheese-scud = { version = "0.1.0", path = "crates/stringcheese-scud", default-features = false }
+stringcheese-icu-case = { version = "0.1.0", path = "crates/stringcheese-icu-case", default-features = false }
 
 [profile.release]
 lto = "thin"

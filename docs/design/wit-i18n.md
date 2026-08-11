@@ -501,6 +501,32 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.1. Phase 1 progress (2026-08)
+
+**Landed.** The Phase 1 foundation ships across four commits:
+
+- `stringcheese-scud` — the SCUD file-format loader (wire format v1.0). Parses the header (magic / version / flags / capability tag / CLDR + locale annotations) and hands out per-capability views; the first capability, `CaseDataView`, covers simple + full lower/upper/fold plus contextual (locale-override, final-sigma) tables. Ships `ScudWriter` for build-time SCUD generation. 12 unit tests + 1 doctest.
+- `stringcheese-icu-case` — the WIT interface at `component/wit/stringcheese-icu-case.wit` (parses cleanly under `wit-parser`; 3 smoke tests assert package name / version / interfaces / world), plus the `CaseEngine` algorithm side that consumes one or more `CasePack`s and walks the CLDR fallback chain (`pt-BR → pt → ""`) at query time. 13 unit tests.
+- `stringcheese-en` case-scud pack — a hand-verified, CLDR-44.1-derived `case-en.scud` blob (~2.3 KiB) covering ASCII, Latin-1 supplement, common Latin Extended-A, German ß full expansion (→ "SS" / "ss"), capital sharp S, and Œ/Æ ligatures. Exposed via `case_data::CASE_EN_SCUD` and `case_data::case_pack()` under the `case-scud` cargo feature (default on). 12 golden-vector test functions totaling ≥ 195 assertions.
+- `stringcheese-tr` case-scud pack — a `case-tr.scud` blob (~200 B) carrying Turkish's dotted / dotless-I contextual overrides (`I → ı`, `i → İ`) plus symmetric simple pairs and the Turkish alphabet letters. Cross-locale composition exercised in `tests/case_cross_locale.rs`: an `[en_pack, tr_pack]` engine yields different output for the same input under `"en"` vs `"tr"`. 10 golden-vector test functions + 8 composition tests.
+- CI — new `wasm-i18n-case` job in `.github/workflows/ci.yml` builds both packs, runs the golden + composition suites, and prints per-locale SCUD sizes to the run log.
+
+**Measured sizes** (release builds of the SCUD blobs, uncompressed):
+
+| Pack           | Bytes | Notes                                                          |
+| -------------- | -----:| -------------------------------------------------------------- |
+| `case-en.scud` | 2 277 | ASCII + Latin-1 + Latin-A + ß + ligatures                       |
+| `case-tr.scud` |   201 | Turkish contextual overrides + alphabet + belt-and-braces ß     |
+| Composed total | 2 478 | Both packs loaded into one `CaseEngine`                         |
+
+**Deferred.** Documented in the crate roots and left for the follow-up wave:
+
+- Outer stream compression (Brotli, Zstd). SCUD flag bits 0 and 1 are reserved; the loader currently rejects a compressed body with `ScudError::UnsupportedCompression` and shipped packs write the raw layout. A decompression pass is a backwards-compatible loader upgrade.
+- Structural compression primitives (`RangeDelta`, `AdaptivePages`, `PackedIntegers`, `SequencePool`, `StringPool`, `LoudsTrie`, `FiniteStateTable`). Phase 1 uses plain sorted `(u32, u32)` tables — enough for the Latin + Turkish subset without pulling in an FST library. The ~2.5 KiB total is well under the design's per-locale budget.
+- Standalone WASM component build for `stringcheese-icu-case`. The WIT file parses cleanly under `wit-parser`; the `wit-bindgen` `Guest` implementation and the `cargo build --target wasm32-wasip1 --features wit-component` recipe (mirroring the `stringcheese-tokenizer-component` shape) land in a follow-up.
+- Final-sigma tailoring for Greek. `stringcheese_scud::ContextKind::FinalSigma` is reserved in the SCUD format; the algorithm wires it in when the Greek pack ships case data.
+- Full CLDR title-casing (Dutch `ij` digraph, UAX #29 word-break integration). Phase 1 `to_title` handles the ASCII common case; the full logic lands alongside the `stringcheese-icu-break` capability crate.
+
 ---
 
 ## 9. Alternatives considered

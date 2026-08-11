@@ -1,0 +1,119 @@
+// StringCheese ICU alternative — case-mapping capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the case-mapping surface: locale-sensitive
+// to-lower, to-upper, to-title, and locale-independent case folding.
+// See `docs/design/wit-i18n.md` § 2.1 for the design commentary.
+//
+// The interface follows the tegmentum:tokenizer@0.1.0 shape (see
+// ../wit/tokenizer/stringcheese-tokenizer.wit): a small set of
+// interfaces, a `capabilities` interface for introspection, and a
+// `world` binding them together.
+//
+// The algorithm side of the case-mapping capability (the wasm
+// component that exports this world) contains no locale data — it
+// consumes case-data from a language-pack component. See § 3.2 of
+// the design doc for the composition story.
+
+package stringcheese:icu-case@0.1.0;
+
+/// Shared types. Split into its own interface so the `mapping` and
+/// `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "pt-BR", "zh-Hant-HK", "az-Cyrl-AZ".
+    /// The empty string denotes the CLDR root locale — no tailoring.
+    type locale = string;
+
+    /// Errors surfaced by the case-mapping interface. Case mapping is
+    /// total on valid Unicode input; failure modes are structural.
+    variant case-error {
+        /// The locale tag was not a well-formed BCP 47 tag. Payload
+        /// is the offending string.
+        invalid-locale(string),
+        /// No pack was loaded for the requested locale and no
+        /// fallback in the CLDR chain resolved. Payload is the tag
+        /// that could not be resolved.
+        locale-unavailable(string),
+        /// The caller asked for a title-casing mode this component
+        /// does not implement. Payload is the mode name.
+        unsupported-title-mode(string),
+    }
+
+    /// How aggressively to fold case. See UAX #21 § 1.3.
+    enum fold-mode {
+        /// Common + Simple — 1:1 code-point mapping only. `ß` folds
+        /// to `ß`; the caller is responsible for expansion at query
+        /// time if needed.
+        simple,
+        /// Common + Full — may expand (`ß → ss`).
+        full,
+        /// Full + Turkic tailorings — folds `I → ı` and `İ → i` in
+        /// a locale-neutral context.
+        full-turkic,
+    }
+
+    /// Which boundary rule `to-title` uses to identify the "start of
+    /// a title word".
+    enum title-boundary {
+        /// UAX #29 grapheme breaks: stateless, imperfect but cheap.
+        graphemes,
+        /// UAX #29 word breaks: correct for most Latin.
+        words,
+        /// Only sentence-initial words are candidates.
+        sentences,
+    }
+
+    /// Options record for `to-title`.
+    record title-options {
+        /// Which boundary rule to use.
+        boundary: title-boundary,
+        /// When true, lowercase all non-initial characters in each
+        /// title word (`AbC → Abc`). When false, preserve the
+        /// non-initial characters as-is.
+        lowercase-tail: bool,
+    }
+}
+
+/// The core case-mapping surface. Passing locale `""` requests the
+/// CLDR root locale (no tailoring).
+interface mapping {
+    use types.{locale, case-error, fold-mode, title-options};
+
+    /// Lowercase `input` under the given locale.
+    to-lower: func(input: string, locale: locale) -> result<string, case-error>;
+
+    /// Uppercase `input` under the given locale.
+    to-upper: func(input: string, locale: locale) -> result<string, case-error>;
+
+    /// Titlecase `input` under the given locale and options.
+    to-title: func(
+        input: string,
+        locale: locale,
+        options: title-options,
+    ) -> result<string, case-error>;
+
+    /// Locale-*independent* case folding for case-insensitive matching.
+    /// Deterministic across packs.
+    fold: func(input: string, mode: fold-mode) -> string;
+}
+
+/// Introspection: which tailorings does the linked component actually
+/// cover? Callers use this to warn end-users that their locale falls
+/// back to root behaviour.
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a pack (rather
+    /// than falling through to root).
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every case-mapping component exports.
+world case {
+    export types;
+    export mapping;
+    export capabilities;
+}

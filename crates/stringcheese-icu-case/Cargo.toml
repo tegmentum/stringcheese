@@ -1,0 +1,38 @@
+[package]
+name = "stringcheese-icu-case"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Case-mapping capability of the StringCheese ICU alternative. Wraps a locale-agnostic case-mapping engine over one or more `stringcheese-scud` case-data packs and exposes it through the `stringcheese:icu-case@0.1.0` WIT world. Phase 1 of the WIT-i18n subsystem (docs/design/wit-i18n.md § 8)."
+categories = ["text-processing", "internationalization"]
+keywords = ["case-mapping", "icu", "unicode", "cldr", "i18n"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-scud/std"]
+# When enabled, the crate exposes the full case-engine API (case
+# mapping produces owned `String` output). Without this feature the
+# crate compiles down to the pack-descriptor types alone.
+alloc = ["stringcheese-scud/alloc"]
+
+[dependencies]
+stringcheese-scud = { workspace = true }
+
+[dev-dependencies]
+# `wit-parser` provides a strong "the WIT file parses cleanly" gate
+# that does not need the wasm toolchain to be installed. The unit
+# test in `tests/wit_parse.rs` reads the shipped WIT source and
+# asserts the parser accepts it, so a change that breaks parseability
+# surfaces on host `cargo test` before any wasm build runs. Matches
+# the `stringcheese-tokenizer-component` crate's approach.
+wit-parser = "0.230"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

@@ -2020,9 +2020,11 @@ dependencies = [
  "icu_locid",
  "icu_provider",
  "proptest",
+ "stringcheese-icu-case",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -2114,6 +2116,15 @@ dependencies = [
  "proptest",
  "stringcheese-lang",
  "stringcheese-phonetic",
+]
+
+[[package]]
+name = "stringcheese-icu-case"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-scud",
+ "wit-parser",
 ]
 
 [[package]]
@@ -2360,6 +2371,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-scud"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "stringcheese-segment"
 version = "0.1.0"
 dependencies = [
@@ -2493,8 +2511,11 @@ name = "stringcheese-tr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-en",
+ "stringcheese-icu-case",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]

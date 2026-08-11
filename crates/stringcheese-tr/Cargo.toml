@@ -9,6 +9,7 @@ repository.workspace = true
 description = "Turkish language pack for the StringCheese toolkit: ~180-word stopword list, Snowball Turkish (Eryiğit & Adalı 2004) stemmer with vowel-harmony-aware suffix stripping, Turkic-case-aware simple tokenizer (dotted/dotless-I), and a light PHONEX-Turkish phonetic hookup. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["turkish", "stemmer", "snowball", "stopwords", "vowel-harmony"]
+build = "build.rs"
 
 [features]
 default = ["std"]
@@ -22,12 +23,40 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the case-tr.scud pack (WIT-i18n Phase 1 case-mapping data for
+# Turkish). Adds a `case_data` module exposing `CASE_TR_SCUD:
+# &'static [u8]` and a helper constructing a
+# `stringcheese_icu_case::CasePack`. The pack carries the Turkish
+# dotted / dotless-I contextual mappings (I → ı, i → İ) that are the
+# whole point of the second locale in Phase 1 — cross-locale
+# composition (English + Turkish) proves that per-locale packs win
+# over the fallback chain. See docs/design/wit-i18n.md § 6.
+#
+# The `stringcheese-icu-case/alloc` toggle matches the shape used by
+# `stringcheese-en`; without it the CasePack helper is stripped by
+# the workspace's default-features=false posture.
+case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+stringcheese-icu-case = { workspace = true, optional = true }
+
+[build-dependencies]
+# Build-time codegen for the case-tr.scud pack. Same shape as
+# `stringcheese-en/build.rs` — the SCUD writer runs at build time
+# and drops out of the shipped binary; only the encoded blob rides
+# along.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
+
+# WIT-i18n cross-locale composition test: exercises an
+# `[en_pack, tr_pack]` CaseEngine to prove per-locale packs override
+# the fallback chain. Only in dev-deps — the shipped `stringcheese-tr`
+# rlib never depends on `stringcheese-en`.
+stringcheese-en = { workspace = true, features = ["case-scud"] }
+stringcheese-icu-case = { workspace = true, features = ["alloc"] }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is

@@ -32,6 +32,19 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the case-en.scud pack (the WIT-i18n Phase 1 case-mapping data
+# for English). Adds a `case_data` module exposing `CASE_EN_SCUD:
+# &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_case::CasePack`. Enabled by default — the pack is
+# small (~1 KiB) and the whole point of the `case-scud` feature gate
+# is to let embedded callers opt out on ROM-constrained targets.
+#
+# The `stringcheese-icu-case/alloc` toggle is included because the
+# workspace declares `default-features = false` on the workspace dep
+# (matches every other stringcheese-* crate) — without an explicit
+# opt-in, the `CasePack` constructor helper would sit behind a
+# feature the `case-scud` caller has no obvious way to enable.
+case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
 # Enables the CLDR-tailored English collator backed by ICU4X's
 # implementation of the Unicode Collation Algorithm. Adds roughly
 # 40 KB of baked collation data plus the ICU4X collator, normalizer,
@@ -63,6 +76,12 @@ icu_locid = { version = "1.5", optional = true }
 # `Language::collator` trait's `Sync` bound. Only pulled in with
 # `icu-collator`.
 icu_provider = { version = "1.5", optional = true, default-features = false, features = ["sync"] }
+# WIT-i18n case-mapping capability crate. Optional; only pulled in
+# when the `case-scud` feature is enabled — pulls a small
+# `CasePack` constructor helper into the crate's public surface so
+# downstream users can hand the SCUD blob to a `CaseEngine` without
+# reaching for `stringcheese-icu-case` directly.
+stringcheese-icu-case = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the pack's data-driven surface (stopwords,
@@ -70,6 +89,13 @@ icu_provider = { version = "1.5", optional = true, default-features = false, fea
 # never reaches the shipped binary — see
 # `docs/design/language-architecture.md` § 1 for the rationale.
 stringcheese-lang-gen = { workspace = true }
+# Build-time codegen for the case-en.scud pack. Emits the SCUD blob
+# into `$OUT_DIR/case-en.scud`; the crate's `case_data` module
+# `include_bytes!`-es it back at compile time. `stringcheese-scud`
+# is a build-dep (not a runtime dep) because the writer is only used
+# during codegen — the shipped binary contains only the encoded
+# blob, not the writer machinery.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
 
