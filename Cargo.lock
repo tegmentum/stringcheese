@@ -2511,8 +2511,11 @@ name = "stringcheese-tr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-en",
+ "stringcheese-icu-case",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]

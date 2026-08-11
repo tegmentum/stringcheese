@@ -132,6 +132,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "case-scud")]
+pub mod case_data;
 #[cfg(feature = "alloc")]
 pub mod case_fold;
 #[cfg(feature = "alloc")]
