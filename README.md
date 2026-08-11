@@ -19,15 +19,61 @@ after-the-fact bolt-ons.
 Version 0.1 is under active development. Every subsystem in
 `docs/design/scope-and-decomposition.md`'s implementation-staging
 list ships as a dedicated crate today (see the workspace table
-below). Concrete algorithm coverage continues to fill in across
-minor releases — the current release surface is best treated as
+below), and each carries its own tests, benchmarks, and — where
+relevant — an oracle-backed conformance corpus. Notable
+subsystems shipping today:
+
+- **Comparison kernels** (`stringcheese-compare`) — Levenshtein,
+  Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, set similarity,
+  substring search — with SIMD backends (AVX2 / SSE2 / NEON /
+  wasm-simd128) for Levenshtein (Myers), Jaro (wide-block),
+  Damerau (Hyyrö), and Hamming.
+- **Alignment** (`stringcheese-align`) — Needleman-Wunsch,
+  Smith-Waterman, linear + affine gaps.
+- **Content-defined chunking** (`stringcheese-cdc`) — FastCDC,
+  Rabin, Gear, Buzhash, polynomial rolling hashes, each with a
+  vectorised SIMD backend.
+- **HF-parity tokenizers** (`stringcheese-tokenizer-hf`) —
+  BPE / WordPiece / Unigram / WordLevel across the normalizer,
+  pre-tokenizer, post-processor, and decoder chain, byte-for-byte
+  against upstream `transformers` on the shipped conformance
+  corpus.
+- **Tiered language detection** (`stringcheese-detect`,
+  `-detect-script`, `-detect-whatlang`, `-detect-lingua`) — script
+  classifier → per-script whatlang shard → per-language lingua
+  shard, all speaking one WIT contract.
+- **45+ language packs** — stopwords, stemmers, tokenizers, and
+  phonetic hookups per language; see the workspace table below.
+- **Phonetic keys** (`stringcheese-phonetic`) — Soundex, NYSIIS,
+  Double Metaphone, Slavic-Metaphone, with language-pack hookups
+  for locale-tuned encoders (Kölner, PHONEX-family per Romance /
+  Slavic / Semitic / Turkic / East-Asian).
+- **Fingerprints and sketches** — MinHash (one-permutation),
+  SimHash (64/128-bit + weighted features + banded LSH),
+  Winnowing.
+- **Diff, pattern, segment, unicode, normalize, textsplit,
+  collate, translit, escape, ident, stats, ngram, minhash,
+  index** — see the workspace table for each.
+
+Concrete algorithm coverage continues to fill in across minor
+releases — the current release surface is best treated as
 usable-but-evolving, and cross-crate integration tests catch API
 shape issues as new pieces land.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full project
-vision and [`docs/design/scope-and-decomposition.md`](docs/design/scope-and-decomposition.md)
+vision, [`docs/design/scope-and-decomposition.md`](docs/design/scope-and-decomposition.md)
 for the subsystem decomposition and the wrap-vs-reimplement
-policy that guides each crate.
+policy that guides each crate, and
+[`docs/design/tokenizer-conformance.md`](docs/design/tokenizer-conformance.md)
+for the HF-parity conformance corpus.
+
+## MSRV and edition
+
+- **Rust edition:** 2024
+- **MSRV:** 1.88
+- CI matrix runs the pedantic clippy set as `-D warnings`, plus
+  a `no_std` + `alloc`-only matrix and a `wasm32-unknown-unknown`
+  + `wasm32-wasip1` matrix across every session crate.
 
 ## Design principles
 
@@ -107,9 +153,9 @@ dependency so a build that doesn't need them pays nothing.
 
 | Crate                                | Purpose                                                                        |
 |--------------------------------------|--------------------------------------------------------------------------------|
-| `stringcheese-tokenizer`             | Tokenizer/segmenter trait + built-in segmenters (whitespace, delimiter, identifier, grapheme, n-gram) |
-| `stringcheese-tokenizer-bpe`         | Byte-Pair-Encoding tokenizer (opt-in)                                          |
-| `stringcheese-tokenizer-tiktoken`    | tiktoken-compatible pre-configured tokenizer (opt-in)                          |
+| `stringcheese-tokenizer`             | `Tokenizer` / `Segmenter` / `Encoding` traits, built-in segmenters (whitespace, delimiter, identifier, grapheme, n-gram, byte, char), plus the shared `truncation` and `padding` modules |
+| `stringcheese-tokenizer-hf`          | Full Hugging Face `tokenizer.json` loader — BPE / WordPiece / Unigram / WordLevel, HF's normalizer / pre-tokenizer / post-processor / decoder chain, `encode_batch`, `encode_pair`, byte-for-byte parity against upstream `transformers` on the shipped conformance corpus |
+| `stringcheese-tokenizer-tiktoken`    | OpenAI tiktoken model pack — `cl100k_base` / `p50k_base` / `r50k_base` / `o200k_base` behind per-variant Cargo features, on top of `stringcheese-tokenizer-hf` |
 
 **Language detection**
 
@@ -122,12 +168,80 @@ dependency so a build that doesn't need them pays nothing.
 
 **Language packs**
 
-Per-language crates (`stringcheese-en`, `stringcheese-de`,
-`stringcheese-ja`, …) ship stopwords, stemmers, tokenisers, and
-phonetic hookups for each supported language. Opt-in per pack.
+45+ per-language crates (`stringcheese-en`, `stringcheese-de`,
+`stringcheese-ja`, `stringcheese-zh`, `stringcheese-ko`,
+`stringcheese-ar`, `stringcheese-fa`, `stringcheese-he`,
+`stringcheese-hi`, `stringcheese-ta`, `stringcheese-th`,
+`stringcheese-ka`, `stringcheese-am`, …) ship stopwords,
+stemmers, tokenisers, and phonetic hookups for each supported
+language. Opt-in per pack — each is a separate crate so a build
+that only needs one language does not pay for the others.
+
+Packs self-register into a static `linkme`-backed registry
+(`stringcheese_lang::registry`). Callers who pick a language at
+runtime (user locale, config file, `Accept-Language` header)
+reach for `registry::language(code)`; callers who name the pack
+at compile time keep using the pack's `ENGLISH` / `GERMAN` /
+`FRENCH` constant. Registry lookup walks the BCP-47 subtag-strip
+fallback (`"pt-BR"` → `"pt"`, `"sr-Cyrl-RS"` → `"sr"`); a strict
+`language_exact` variant is available where the fallback is
+unwanted.
+
 See `stringcheese-lang` and `stringcheese-lang-gen` for the
 plugin traits and the build-time generator that emits per-pack
 capability descriptors.
+
+## Feature flags
+
+The facade crate re-exports every subsystem behind feature flags
+so a caller only compiles what they use. Commonly reached-for
+flags:
+
+- `compare` / `align` / `phonetic` / `unicode` / `cdc` / `index`
+  — enable the corresponding subsystem's re-exports.
+- `simd` — turn on the vectorised backends across `compare` and
+  `cdc`. Off by default so a plain scalar build is deterministic.
+- `parallel` — Rayon-backed batch APIs where the subsystem has
+  them.
+- `no_std` + `alloc` — the core crates compile without `std`;
+  the wasm-runtime CI job exercises this.
+- `wasm-runtime` — enable the wasm-compatible feature subset for
+  `wasm32-unknown-unknown` / `wasm32-wasip1` targets.
+
+Subsystem crates each carry their own opt-in features — for
+example `stringcheese-tokenizer-tiktoken` gates each vocabulary
+behind its own feature (`cl100k`, `o200k`, `p50k`, `r50k`) so a
+caller only pays for the packs they need.
+
+## Correctness
+
+Every subsystem ships with its own oracle-backed conformance
+suite:
+
+- **Tokenizer HF-parity.** 13 shipped `tokenizer.json` fixtures
+  (`gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`,
+  `bert-base-uncased`, `distilbert-base-uncased`,
+  `bert-base-multilingual-cased`, `xlm-roberta-base`,
+  `deberta-v3-base`, `mdeberta-v3-base`, `llama-2-7b-hf`,
+  `mistral-7b-v0.1`, `cl100k_base`) exercise byte-level BPE,
+  tiktoken BPE, WordPiece + `BertNormalizer`, SentencePiece
+  Unigram, and character-BPE + SentencePiece `byte_fallback` —
+  all reference-computed against upstream `transformers`. See
+  [`docs/design/tokenizer-conformance.md`](docs/design/tokenizer-conformance.md).
+- **tiktoken real-vocab parity.** The workspace-excluded
+  `stringcheese-tokenizer-tiktoken-conformance` crate fetches
+  OpenAI's `mergeable_ranks` blobs by SHA-256 and diffs against
+  `tiktoken-rs` under `--features parity-real-vocab`. Current
+  parity: **`cl100k_base` 200/200**, **`o200k_base` 200/200**.
+- **Property-based + exhaustive small-domain oracles.** Every
+  edit-distance and similarity kernel is checked against an
+  exhaustive oracle over short inputs and against
+  metric-axiom / bound / symmetry / triangle-inequality
+  properties. Regressions land in `proptest-regressions/` under
+  each crate.
+- **Differential testing.** `cargo fuzz` targets cross-check the
+  optimised SIMD backends against the scalar oracle and cross-check
+  our kernels against `strsim` / `rapidfuzz`.
 
 ## License
 
