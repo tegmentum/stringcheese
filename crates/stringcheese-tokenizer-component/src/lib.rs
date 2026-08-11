@@ -125,7 +125,8 @@ mod tests {
     /// Phase 7's acceptance criterion ("`component/wit/tokenizer/stringcheese-tokenizer.wit`
     /// parses under `wit-parser`") lands as a plain host unit test —
     /// no wasm toolchain needed to run the gate.
-    const WIT_SOURCE: &str = include_str!("../../../component/wit/tokenizer/stringcheese-tokenizer.wit");
+    const WIT_SOURCE: &str =
+        include_str!("../../../component/wit/tokenizer/stringcheese-tokenizer.wit");
 
     #[test]
     fn wit_file_parses_under_wit_parser() {
@@ -135,7 +136,9 @@ mod tests {
                 std::path::Path::new("stringcheese-tokenizer.wit"),
                 WIT_SOURCE,
             )
-            .expect("component/wit/tokenizer/stringcheese-tokenizer.wit must parse under wit-parser");
+            .expect(
+                "component/wit/tokenizer/stringcheese-tokenizer.wit must parse under wit-parser",
+            );
         // The parser returns a `PackageId`. Assert the parsed package
         // carries the name we expect — a rename in the WIT file
         // without updating the loader downstream would silently
