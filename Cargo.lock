@@ -2551,9 +2551,11 @@ name = "stringcheese-de"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-collation",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -2616,6 +2618,7 @@ dependencies = [
  "icu_provider 1.5.0",
  "proptest",
  "stringcheese-icu-case",
+ "stringcheese-icu-collation",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
@@ -2718,6 +2721,16 @@ name = "stringcheese-icu-case"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-collation"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-collate",
  "stringcheese-scud",
  "wit-parser 0.230.0",
 ]

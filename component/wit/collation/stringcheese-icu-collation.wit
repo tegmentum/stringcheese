@@ -1,0 +1,141 @@
+// StringCheese ICU alternative — collation capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the collation surface: Unicode Collation
+// Algorithm ordering with per-locale tailorings (DE phonebook
+// `ä → ae`, both DE variants' `ß → ss`, etc.). See
+// `docs/design/wit-i18n.md` § 2.2 for the design commentary and
+// § 8.2 for Phase 2's delivery notes.
+//
+// The interface follows the stringcheese:icu-case@0.1.0 shape (see
+// ../icu-case/stringcheese-icu-case.wit): a small set of
+// interfaces, a `capabilities` interface for introspection, and a
+// `world` binding them together.
+//
+// The algorithm side of the collation capability (the wasm
+// component that exports this world) contains no locale data —
+// it consumes collation-data from a language-pack component. See
+// § 3.2 of the design doc for the composition story.
+
+package stringcheese:icu-collation@0.1.0;
+
+/// Shared types. Split into its own interface so the `collation`
+/// and `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "de", "pt-BR", "zh-Hant-HK".
+    /// The empty string denotes the CLDR root locale — no
+    /// tailoring (DUCET-only comparison).
+    type locale = string;
+
+    /// Errors surfaced by the collation interface. UCA is total on
+    /// valid Unicode input; failure modes are structural.
+    variant collation-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        /// Payload is the offending string.
+        invalid-locale(string),
+        /// No pack was loaded for the requested locale and no
+        /// fallback in the CLDR chain resolved. Payload is the
+        /// tag that could not be resolved.
+        locale-unavailable(string),
+        /// The caller asked for a strength this component does
+        /// not implement. Payload is the strength name.
+        unsupported-strength(string),
+    }
+
+    /// The UCA strength level at which two strings are compared.
+    /// See UTS #10 § 1.1 for the primary/secondary/tertiary/
+    /// quaternary/identical breakdown.
+    enum collation-strength {
+        /// Base characters only. `a = A = á = ä`.
+        primary,
+        /// Base characters + diacritics. `a = A`, `a < á`.
+        secondary,
+        /// Base characters + diacritics + case. `a < A < á`.
+        tertiary,
+        /// Add variable-weight (punctuation) awareness.
+        quaternary,
+        /// Full code-point tiebreak — bytewise equal iff equal.
+        identical,
+    }
+
+    /// Wire encoding of `core::cmp::Ordering` for the WIT boundary.
+    enum ordering {
+        /// The first operand sorts before the second.
+        less,
+        /// The two operands compare equal at the requested strength.
+        equal,
+        /// The first operand sorts after the second.
+        greater,
+    }
+
+    /// Introspection record returned by
+    /// [`get-capabilities`](capabilities.get-capabilities).
+    record capabilities-record {
+        /// The BCP 47 locale tags this component's linked packs cover.
+        supported-locales: list<locale>,
+        /// The maximum strength the component's algorithm reaches.
+        /// A pack that declines to implement quaternary / identical
+        /// distinctions still returns them; callers use this field
+        /// to warn if they need a deeper strength than the algorithm
+        /// promises.
+        max-strength: collation-strength,
+        /// The CLDR version the shipped packs were generated from.
+        /// Empty when packs disagree or when no pack is loaded.
+        cldr-version: string,
+    }
+}
+
+/// The core collation surface. Passing locale `""` requests the
+/// CLDR root locale (no tailoring, DUCET-only).
+interface collation {
+    use types.{locale, collation-error, collation-strength, ordering};
+
+    /// Compare `a` and `b` under the given locale and strength.
+    ///
+    /// Returns an [`ordering`] value suitable for feeding into a
+    /// `sort-by` predicate. The comparison is total for the
+    /// requested strength — two strings that compare equal at
+    /// primary strength may compare unequal at secondary or
+    /// tertiary.
+    compare: func(
+        a: string,
+        b: string,
+        locale: locale,
+        strength: collation-strength,
+    ) -> result<ordering, collation-error>;
+
+    /// Produce a bytewise-comparable sort key for `text` under the
+    /// given locale and strength.
+    ///
+    /// Two keys compare byte-for-byte in the same order the two
+    /// input strings would compare through [`compare`]. Callers
+    /// use sort keys when they want to sort a set of strings once
+    /// and look them up by comparison many times — a `compare`
+    /// call per lookup pays the tailoring-expansion cost each
+    /// time; a sort-key does it once at key-generation time.
+    sort-key: func(
+        text: string,
+        locale: locale,
+        strength: collation-strength,
+    ) -> result<list<u8>, collation-error>;
+}
+
+/// Introspection: which tailorings does the linked component
+/// actually cover?
+interface capabilities {
+    use types.{capabilities-record, locale};
+
+    /// The introspection record for the loaded packs.
+    get-capabilities: func() -> capabilities-record;
+
+    /// True iff a query in the given locale would use a pack
+    /// (rather than falling through to root DUCET).
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every collation component exports.
+world collation-world {
+    export types;
+    export collation;
+    export capabilities;
+}
