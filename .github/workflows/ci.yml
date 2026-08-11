@@ -738,6 +738,109 @@ jobs:
             -- --nocapture
 
   # ------------------------------------------------------------------
+  # hf-native conformance parity (optional, non-blocking).
+  #
+  # Fetches a curated set of real Hugging Face `tokenizer.json` files
+  # from the public Hugging Face CDN into a per-job cache directory,
+  # points the conformance runner at that directory via
+  # `$STRINGCHEESE_REAL_VOCABS_DIR`, and runs the
+  # `stringcheese-tokenizer-hf-native` fixture suite under
+  # `--features parity-real-vocab`. Each fixture whose vocab was
+  # successfully fetched executes and asserts byte-identical ids
+  # against the reference; every other fixture soft-skips (green).
+  #
+  # Because this crate delegates encode/decode to upstream
+  # `tokenizers-rs` verbatim, a fixture failure surfaces a
+  # discrepancy between the sibling `stringcheese-tokenizer-hf`
+  # crate's recorded reference ids (from
+  # `transformers.AutoTokenizer`, which itself wraps `tokenizers-rs`)
+  # and `tokenizers-rs` directly. That's usually a fixture bug — the
+  # transformers Python wrapper occasionally applies a
+  # `clean_up_tokenization_spaces` step or normalises whitespace in
+  # ways the raw Rust surface does not — rather than a bug in this
+  # crate.
+  #
+  # `continue-on-error: true` — the Hugging Face CDN is not owned by
+  # us; a transient outage or repository rename should not wedge PRs.
+  # ------------------------------------------------------------------
+  hf-native-parity:
+    name: hf-native conformance (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Cache dir the conformance runner reads via
+      # `$STRINGCHEESE_REAL_VOCABS_DIR/<checkpoint>/tokenizer.json`.
+      # A per-job dir under RUNNER_TEMP keeps the fetch scoped to
+      # this job.
+      STRINGCHEESE_REAL_VOCABS_DIR: ${{ github.workspace }}/hf-vocabs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: hf-native-parity-stable
+
+      # Curated set of freely-accessible HF checkpoints (no
+      # `use_auth_token` needed). Deliberately narrower than the full
+      # fixture set: Llama-2 / Mistral require auth or a mirror
+      # (fixtures soft-skip when absent), and DeBERTa / mDeBERTa do
+      # not publish `tokenizer.json` on the hub at all (see
+      # `docs/design/tokenizer-conformance.md`). Fixtures for the
+      # skipped checkpoints show up as `SKIP conformance_...` lines
+      # in the test log rather than failing.
+      #
+      # `continue-on-error` at the step level so an individual CDN
+      # 404 (repository rename, transient outage) leaves the rest of
+      # the fetch loop running.
+      - name: Fetch real HF tokenizer.json blobs
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "${STRINGCHEESE_REAL_VOCABS_DIR}"
+          declare -A vocabs=(
+            [gpt2]="openai-community/gpt2"
+            [bert-base-uncased]="google-bert/bert-base-uncased"
+            [distilbert-base-uncased]="distilbert/distilbert-base-uncased"
+            [roberta-base]="FacebookAI/roberta-base"
+            [xlm-roberta-base]="FacebookAI/xlm-roberta-base"
+            [bart-base]="facebook/bart-base"
+            [bert-base-multilingual-cased]="google-bert/bert-base-multilingual-cased"
+            [qwen2-7b]="Qwen/Qwen2-7B"
+          )
+          for ckpt in "${!vocabs[@]}"; do
+            repo="${vocabs[$ckpt]}"
+            dest="${STRINGCHEESE_REAL_VOCABS_DIR}/${ckpt}"
+            mkdir -p "${dest}"
+            url="https://huggingface.co/${repo}/resolve/main/tokenizer.json"
+            echo "::group::fetch ${ckpt} (${repo})"
+            if curl -fL --retry 3 --retry-delay 5 \
+                -o "${dest}/tokenizer.json" "${url}"; then
+              size=$(stat -c '%s' "${dest}/tokenizer.json" 2>/dev/null \
+                || stat -f '%z' "${dest}/tokenizer.json")
+              echo "OK: ${dest}/tokenizer.json (${size} bytes)"
+            else
+              echo "SKIP: ${ckpt} fetch failed; conformance test will soft-skip"
+              rm -f "${dest}/tokenizer.json"
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Run hf-native conformance suite
+        run: |
+          cargo test \
+            -p stringcheese-tokenizer-hf-native \
+            --features parity-real-vocab \
+            --locked \
+            --test conformance \
+            -- --nocapture
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

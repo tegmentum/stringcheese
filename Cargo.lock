@@ -2474,6 +2474,7 @@ name = "stringcheese-tokenizer-hf-native"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "serde_json",
  "stringcheese-tokenizer",
  "tokenizers 0.20.4",
 ]
