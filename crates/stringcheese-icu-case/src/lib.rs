@@ -69,7 +69,21 @@ use alloc::string::String;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use stringcheese_scud::{CaseDataView, ContextKind, ScudError, ScudFile};
+use stringcheese_scud::{CaseDataView, ScudFile};
+// `ContextKind` is only consulted inside the alloc-gated
+// `CaseEngine::map_*` methods; keep the import gated on the same cfg
+// so a `--no-default-features` build (`std` and `alloc` both off) is
+// warning-free.
+#[cfg(feature = "alloc")]
+use stringcheese_scud::ContextKind;
+
+// Re-export the SCUD-side error surface so downstream language packs
+// depending on `stringcheese-icu-case` do not have to add a direct
+// `stringcheese-scud` dependency just to name the error type. Matches
+// the shape a `stringcheese-en::case_data::case_pack()` helper needs
+// (returning `Result<CasePack<'static>, ScudError>`) without imposing
+// a second crate on the pack's dependency graph.
+pub use stringcheese_scud::ScudError;
 
 /// A loaded case-mapping pack for one BCP 47 locale.
 ///
@@ -464,6 +478,11 @@ pub fn walk_fallback_chain(locale: &str) -> impl Iterator<Item = &str> {
 
 /// True iff `c` is treated as a word boundary by the Phase 1
 /// title-casing rule. Whitespace and ASCII punctuation qualify.
+///
+/// Only consulted from the alloc-gated [`CaseEngine::to_title`]
+/// method; kept behind the same cfg so a no-alloc build stays
+/// warning-free.
+#[cfg(feature = "alloc")]
 fn is_title_boundary(c: char) -> bool {
     c.is_whitespace() || c.is_ascii_punctuation()
 }

@@ -2020,9 +2020,11 @@ dependencies = [
  "icu_locid",
  "icu_provider",
  "proptest",
+ "stringcheese-icu-case",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
