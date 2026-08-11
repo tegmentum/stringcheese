@@ -367,6 +367,16 @@ jobs:
         # crate's own manifest, which doesn't request `wit-component`
         # on any backend, so the link succeeds.
         #
+        # `stringcheese-tokenizer-component` is excluded for the same
+        # reason: its `wit-component` cargo feature enables an
+        # `export!` invocation that clashes with any other WIT
+        # component's exports when feature-unification flips it on
+        # inside a `--workspace --all-features` link. Its own smoke
+        # test lives in the dedicated `wasm-tokenizer-component` CI
+        # job below (which invokes the wasmtime `--invoke` end-to-end
+        # loop against the componentized artifact — a shape the
+        # `wasm32-wasip1` cargo-test harness cannot express on its own).
+        #
         # `stringcheese-lang-gen` is a build-time codegen crate that
         # writes generated Rust to the filesystem — its tests exercise
         # that write path and trap under wasmtime's sandboxed WASI
@@ -379,6 +389,7 @@ jobs:
             --exclude stringcheese-bench \
             --exclude stringcheese-detect \
             --exclude stringcheese-lang-gen \
+            --exclude stringcheese-tokenizer-component \
             --all-features \
             --locked \
             --target wasm32-wasip1
@@ -591,6 +602,123 @@ jobs:
             --manifest-path crates/stringcheese-tokenizer-tiktoken-conformance/Cargo.toml \
             --features parity-real-vocab \
             --locked \
+            -- --nocapture
+
+  # ------------------------------------------------------------------
+  # Tokenizer WIT component smoke test.
+  #
+  # Phase 7 of the tokenizer subsystem design
+  # (`docs/design/tokenizers.md` § 11) commits to a reference
+  # `tokenizer-provider` component built out of the character-BPE
+  # seed in `crates/stringcheese-tokenizer-component/`. This job
+  # exercises the full end-to-end story: build the wasm module under
+  # `wasm32-wasip1 --features wit-component`, componentize it with
+  # `wasm-tools`, then invoke each of the four exports (`encode`,
+  # `decode`, `count`, `get-capabilities`) via `wasmtime run
+  # --invoke` and assert the results match the host-side fixture.
+  #
+  # `WASMTIME_VERSION` is pinned so a wasmtime upgrade that changes
+  # the `--invoke` output shape (wave-format tweaks, WASI adapter
+  # revisions) becomes an explicit rebaseline PR rather than a
+  # silent CI break. `WASM_TOOLS_VERSION` pins the componentize
+  # step for the same reason.
+  #
+  # The WASI preview1 → preview2 adapter that `wasm-tools component
+  # new --adapt` needs is downloaded from the pinned wasmtime
+  # release; the test reads `STRINGCHEESE_WASI_ADAPTER` to locate it.
+  #
+  # `continue-on-error: true` matches the wasm-runtime job's
+  # posture — wasmtime.dev and github.com are not owned by us, and
+  # transient outages should not wedge PRs. Remove after the job
+  # proves stable across a few weeks of runs.
+  # ------------------------------------------------------------------
+  wasm-tokenizer-component:
+    name: tokenizer WIT component (wasmtime smoke)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Pinned versions. Bump deliberately; every version change may
+      # shift the wave-format output shape the smoke-test assertions
+      # depend on.
+      WASMTIME_VERSION: "26.0.0"
+      WASM_TOOLS_VERSION: "1.219.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-tokenizer-component-stable
+
+      - name: Install wasmtime (${{ env.WASMTIME_VERSION }})
+        run: |
+          set -euo pipefail
+          curl https://wasmtime.dev/install.sh -sSf | bash -s -- \
+            --version "v${WASMTIME_VERSION}"
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
+      - name: Install wasm-tools (${{ env.WASM_TOOLS_VERSION }})
+        # `wasm-tools` is a Rust binary; `cargo install` keeps the
+        # version pin explicit and matches the workspace's stance on
+        # `cargo-component` and `twiggy` in the wasm-size job.
+        run: cargo install --locked --version "${WASM_TOOLS_VERSION}" wasm-tools
+
+      - name: Verify tool versions
+        run: |
+          wasmtime --version
+          wasm-tools --version
+          rustup target list --installed
+
+      - name: Download WASI preview1 reactor adapter
+        # The WASI preview1 → preview2 adapter is shipped alongside
+        # the wasmtime release. Pinning to the same `WASMTIME_VERSION`
+        # keeps the adapter and runtime in lockstep — a mismatch
+        # would surface as a componentize-time link error.
+        run: |
+          set -euo pipefail
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasi_snapshot_preview1.reactor.wasm"
+          mkdir -p "${RUNNER_TEMP}"
+          curl -fL --retry 3 --retry-delay 5 \
+            -o "${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" "$url"
+          echo "STRINGCHEESE_WASI_ADAPTER=${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" >> "$GITHUB_ENV"
+
+      - name: Build the tokenizer component (wasm32-wasip1)
+        # Explicit build step (in addition to the test's own cargo
+        # build) so a build-only regression surfaces cleanly on this
+        # CI log instead of getting swallowed inside a test failure.
+        run: |
+          cargo build \
+            -p stringcheese-tokenizer-component \
+            --target wasm32-wasip1 \
+            --features wit-component \
+            --release \
+            --locked
+          ls -la target/wasm32-wasip1/release/stringcheese_tokenizer_component.wasm
+
+      - name: Report component size
+        # Informational only — the wasm-size gate covers the enforced
+        # binary-size regression check for the crates it tracks.
+        run: |
+          size_bytes=$(stat -c '%s' target/wasm32-wasip1/release/stringcheese_tokenizer_component.wasm 2>/dev/null \
+            || stat -f '%z' target/wasm32-wasip1/release/stringcheese_tokenizer_component.wasm)
+          echo "component .wasm size: ${size_bytes} bytes"
+
+      - name: Run wasmtime smoke test
+        # The four smoke tests in `tests/component_smoke.rs` share
+        # the built wasm via a `OnceLock`, so this single test run
+        # exercises every WIT export exactly once.
+        run: |
+          cargo test \
+            -p stringcheese-tokenizer-component \
+            --all-features \
+            --locked \
+            --test component_smoke \
             -- --nocapture
 
   # ------------------------------------------------------------------

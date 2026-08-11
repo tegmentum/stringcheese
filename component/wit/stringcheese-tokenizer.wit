@@ -1,0 +1,150 @@
+// Canonical tokenizer WIT for StringCheese.
+//
+// Every tokenizer component built out of the StringCheese subsystem —
+// the reference `tokenizer-provider` in `crates/stringcheese-tokenizer-component/`
+// today, and the pre-configured tiktoken / HF packs that will follow —
+// implements this world. Backends advertise their vocab size, model
+// type, and byte-fallback capability via `get-capabilities` so callers
+// can dispatch uniformly across a heterogenous component collection.
+//
+// The interface follows the tegmentum:lang-detect@0.2.0 shape (see
+// ../../wit/lang-detect.wit): a single `interface` per world, records
+// for structured returns, `variant` for typed errors, and a capabilities
+// getter that is safe to call once at load and cache.
+//
+// See docs/design/tokenizers.md § 8 for the wire-shape design commentary
+// (why `list<u32>` for the special mask instead of `list<bool>`, why
+// byte offsets rather than character offsets, why `get-capabilities` is
+// exposed as a function rather than a static record).
+
+package tegmentum:tokenizer@0.1.0;
+
+interface tokenizer {
+    /// Vocabulary index. `u32` is large enough for every tokenizer the
+    /// StringCheese subsystem ships (o200k_base's ~200 000 ids being
+    /// the current maximum) and matches the tiktoken / HuggingFace
+    /// convention.
+    type token-id = u32;
+
+    /// Half-open byte range in the pre-normalization input. `start`
+    /// and `end` are both byte offsets; `end` is exclusive. A caller
+    /// who wants to highlight or slice the input by the emitted token
+    /// span uses these coordinates directly.
+    record range {
+        start: u32,
+        end: u32,
+    }
+
+    /// The full output of an `encode` call.
+    ///
+    /// Every non-empty per-token array is guaranteed to have the same
+    /// length as `ids`. A tokenizer that does not track a particular
+    /// axis returns an empty vector for it — the WIT contract is
+    /// "either fully populated or absent", never partial.
+    ///
+    /// * `ids` — the token IDs in emission order.
+    /// * `offsets` — half-open byte range in the input per token. Empty
+    ///   when the tokenizer does not track offsets.
+    /// * `special-mask` — one flag per token; `true` iff the id is one
+    ///   of the tokenizer's registered special tokens. Empty when not
+    ///   tracked.
+    /// * `type-ids` — segment id per token (`0` for the `A` slot of a
+    ///   pair, `1` for `B`; always `0` for a single-side encode).
+    ///   Empty when not tracked.
+    /// * `attention-mask` — `true` for real tokens, `false` for pad
+    ///   tokens (populated by `pad-batch` at the caller side). Empty
+    ///   when not tracked.
+    record encoding {
+        ids: list<token-id>,
+        offsets: list<range>,
+        special-mask: list<bool>,
+        type-ids: list<u32>,
+        attention-mask: list<bool>,
+    }
+
+    /// Typed failure modes. Narrow rather than open so a caller can
+    /// decide at source level how to react to each variant. Mirrors
+    /// the shape of `stringcheese_tokenizer::TokenizerError`.
+    variant tokenizer-error {
+        /// The input contained a byte sequence that is not valid UTF-8,
+        /// or the decode side produced bytes that no longer form valid
+        /// UTF-8.
+        invalid-utf8,
+        /// A surface string (encode) or token id (decode) was not
+        /// present in the vocabulary and no fallback is configured.
+        /// Payload is the offending surface form.
+        unknown-token(string),
+        /// The input contained a special-token surface string that the
+        /// caller's policy rejects. Payload is the offending string.
+        disallowed-special-token(string),
+        /// A merge table, vocabulary, or special-token map is
+        /// internally inconsistent.
+        vocabulary-mismatch,
+        /// A domain-specific failure that does not fit the fixed
+        /// variants. Payload carries a short human-readable message.
+        other(string),
+    }
+
+    /// Static description of the backend's identity and vocabulary.
+    /// Cheap; safe to call once at load time and cache.
+    ///
+    /// The two boolean fields advertise runtime capabilities the caller
+    /// can dispatch on: `has-byte-fallback` says whether OOV inputs
+    /// route through `<0xXX>` reserved tokens (Llama / Mistral shape)
+    /// rather than surfacing an `unknown-token` error; `has-special-tokens`
+    /// says whether the tokenizer has any special-token surface strings
+    /// at all (bare BPE trained without them will not).
+    record capabilities {
+        /// Backend identifier — "bpe" | "wordpiece" | "unigram" | "wordlevel".
+        /// Matches the `model.type` field of a HuggingFace tokenizer.json.
+        model-type: string,
+        /// A stable variant identifier — "cl100k_base", "o200k_base",
+        /// "gpt2", "llama-2-7b", …, or the HF config's declared model
+        /// name for tokenizer.json-loaded packs. Empty when the
+        /// backend has no canonical name.
+        variant-id: string,
+        /// Semver of the backend's model / algorithm corpus.
+        version: string,
+        /// Total number of ids in the vocabulary (including special
+        /// tokens).
+        vocab-size: u32,
+        /// `true` when OOV inputs are routed through 256 reserved
+        /// `<0xXX>` byte-fallback tokens.
+        has-byte-fallback: bool,
+        /// `true` when the tokenizer has one or more special tokens
+        /// registered.
+        has-special-tokens: bool,
+    }
+
+    /// Backend metadata. Callers cache this at load time.
+    // WIT keeps type names and function names in the same namespace,
+    // so the accessor cannot share the `capabilities` name with the
+    // record type. `get-capabilities` is the WIT convention for
+    // "no-arg getter that returns a record of the same-ish name" and
+    // matches the tegmentum:lang-detect precedent verbatim.
+    get-capabilities: func() -> capabilities;
+
+    /// Encode `text` into a full `encoding`. Every populated per-token
+    /// array on the returned value has the same length as `ids`.
+    encode: func(text: string) -> result<encoding, tokenizer-error>;
+
+    /// Decode a sequence of ids back into a string. Given
+    /// `encode(text)?.ids` as input, must return the original text
+    /// modulo the tokenizer's documented lossy exceptions
+    /// (normalization, unknown-byte replacement, truncation).
+    decode: func(ids: list<token-id>) -> result<string, tokenizer-error>;
+
+    /// Count the tokens `encode(text)` would produce, without
+    /// materialising the full encoding. Runtimes with a cheaper count
+    /// fast path (subword tokenizers skipping offset tracking) route
+    /// through it here; the default is `encode(text)?.ids.len()`.
+    count: func(text: string) -> result<u32, tokenizer-error>;
+}
+
+/// The reference tokenizer-provider world. Exports the single
+/// `tokenizer` interface and nothing else — no imports from the host,
+/// no I/O, no clocks. The resulting `.wasm` component is a pure
+/// library.
+world tokenizer-provider {
+    export tokenizer;
+}

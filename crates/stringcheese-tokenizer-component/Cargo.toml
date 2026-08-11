@@ -1,0 +1,63 @@
+[package]
+name = "stringcheese-tokenizer-component"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Reference WebAssembly component packaging for the StringCheese tokenizer subsystem. Wraps a `stringcheese-tokenizer-hf::BpeTokenizer` behind the shared tegmentum:tokenizer@0.1.0 WIT contract, feature-gated so a component-model host can load the tokenizer through the standard `world tokenizer-provider` export while callers of the plain `rlib` avoid any wit-bindgen-rt symbol collisions."
+categories = ["text-processing", "wasm"]
+keywords = ["tokenizer", "bpe", "wasm", "wit", "component-model"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers (unit tests, host-side embedding),
+# `cdylib` for the WIT component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component`.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# `std` is not required for the reference tokenizer construction — the
+# built-in hand-crafted BPE vocab embedded in `src/lib.rs` is
+# `alloc`-only. `std` is enabled by default for parity with the rest of
+# the tokenizer subsystem; a `--no-default-features` build with
+# `--features alloc` compiles the same shape without the standard
+# library.
+default = ["std"]
+std = ["alloc", "stringcheese-tokenizer/std", "stringcheese-tokenizer-hf/std"]
+alloc = ["stringcheese-tokenizer/alloc", "stringcheese-tokenizer-hf/alloc"]
+
+# `wit-component` opts into the WIT `Guest` implementation and the
+# `export!` invocation that turns this crate into a standalone
+# `tegmentum:tokenizer@0.1.0` WASM component. Off by default so the
+# crate can be linked as a plain `rlib` sibling of the other
+# tokenizer crates without every backend emitting the same exported
+# symbols and tripping the linker with duplicate-export errors —
+# matches the pattern used by `stringcheese-detect-{script,whatlang,
+# lingua}` for their tegmentum:lang-detect exports. Enable this only
+# for the standalone-component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component`.
+wit-component = ["std", "dep:wit-bindgen-rt"]
+
+[dependencies]
+stringcheese-tokenizer = { workspace = true }
+stringcheese-tokenizer-hf = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Pulled in only when the `wit-component` feature is enabled — see the
+# feature docs above. `optional = true` keeps it off the dependency
+# tree for non-component wasm consumers (e.g. any downstream that
+# links this crate as a plain `rlib` alongside other tokenizer
+# backends).
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[dev-dependencies]
+# `wit-parser` gives a strong "the WIT file parses cleanly" gate that
+# does not require the wasm toolchain to be present. The unit test in
+# `src/lib.rs` reads the shipped WIT source and asserts the parser
+# accepts it, so a change to the WIT that breaks parseability surfaces
+# on host `cargo test` before the component build ever runs.
+wit-parser = "0.230"
+
+[lints]
+workspace = true
