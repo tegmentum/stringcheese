@@ -120,14 +120,15 @@ fn viterbi_falls_back_to_characters_when_no_longer_piece_exists() {
 fn oov_character_falls_back_to_unk_when_configured() {
     // Same vocab as HELLO_JSON, but encode a string containing
     // characters *not* in the vocab (`"?"`). The tokenizer should
-    // emit the `unk_id` (0) for the unknown char and normal ids for
-    // the rest.
+    // emit the `unk_id` (0) for the unknown chars — fused into a
+    // single UNK because HF's Unigram default is
+    // `fuse_unk = true`: any run of consecutive UNK transitions
+    // surfaces as ONE UNK emission on the output side.
     let tok = hello_tokenizer();
     let ids = tok.encode("hi?").unwrap();
-    // "h" → 1, "i" is not in vocab → 0 (unk), "?" is not in vocab → 0
-    // (unk). Since we tokenize character-by-character on the unk path,
-    // the "i" transition also uses unk (no "i" vocab entry).
-    assert_eq!(ids, vec![1, 0, 0]);
+    // "h" → 1, then "i" and "?" (both not in vocab) fuse into a
+    // single UNK id 0.
+    assert_eq!(ids, vec![1, 0]);
 }
 
 #[test]

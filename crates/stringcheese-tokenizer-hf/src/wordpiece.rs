@@ -504,8 +504,17 @@ impl WordPieceTokenizer {
     /// WordPiece` behaviour that this method has always produced.
     #[must_use]
     pub fn encode(&self, text: &str) -> Vec<TokenId> {
-        let normalized = self.normalize_text(text);
-        let ids = self.encode_ids_raw(normalized.as_ref());
+        // Special-token extraction runs on the RAW input, before the
+        // normalizer sees it. See [`Self::encode_ids_raw`]'s dispatch
+        // for the per-region normalization that the specials-active
+        // path takes; the no-specials path normalises the whole input
+        // here.
+        let ids = if self.special_tokens.is_empty() {
+            let normalized = self.normalize_text(text);
+            self.encode_ids_raw(normalized.as_ref())
+        } else {
+            self.encode_ids_raw(text)
+        };
         // Fast-path the identity post-processor to avoid a needless
         // `Encoding` allocation on the common no-post-processor path.
         if matches!(self.post_processor, PostProcessor::None) {
@@ -528,20 +537,32 @@ impl WordPieceTokenizer {
     }
 
     /// Run the pre-tokenizer + greedy longest-match loop over `text`
-    /// and return the raw ids, without normalization or
-    /// post-processing. Shared by both encode paths.
+    /// and return the raw ids, without post-processing.
     ///
-    /// When [`Self::special_tokens`] is non-empty, registered
-    /// special-token surfaces are pre-extracted from `text` before the
-    /// pre-tokenizer runs (longest match first, ties broken lexically).
-    /// Each occurrence emits its pre-assigned id directly; the
-    /// between-specials chunks feed the pre-tokenizer + greedy loop.
+    /// * **No specials configured:** `text` is expected to be
+    ///   already-normalized (the caller — see [`Self::encode`] and the
+    ///   `Tokenizer::encode` impl — normalizes the whole input up
+    ///   front on this fast path). The pre-tokenizer + greedy loop
+    ///   runs on the whole thing.
+    /// * **Specials configured:** `text` is the RAW caller input.
+    ///   Registered special-token surfaces are pre-extracted here,
+    ///   BEFORE the normalizer sees them (longest match first, ties
+    ///   broken lexically). Each occurrence emits its pre-assigned id
+    ///   directly; each between-specials region is normalized
+    ///   independently and then fed to the pre-tokenizer + greedy
+    ///   loop. This matches HF's `added_vocabulary::extract_and_normalize`
+    ///   ordering: without extract-before-normalize, a BERT
+    ///   `lowercase: true` normalizer would fold `[CLS]` to `[cls]`
+    ///   before the specials matcher had a chance to see the raw
+    ///   surface.
+    ///
     /// Mirrors [`crate::BpeTokenizer`]'s
     /// `encode_pieces_with_policy` shape.
     fn encode_ids_raw(&self, text: &str) -> Vec<TokenId> {
         if self.special_tokens.is_empty() {
             // Fast path — no allocations for the specials list on the
-            // common no-specials case.
+            // common no-specials case. `text` is already normalized
+            // by the caller.
             let mut out = Vec::new();
             for word in self.split_words(text) {
                 self.encode_word_into(&word, &mut out);
@@ -568,8 +589,8 @@ impl WordPieceTokenizer {
                 continue;
             }
             // No special match here — consume up to the next special
-            // occurrence (or end-of-input) and pre-tokenize + WordPiece
-            // the region.
+            // occurrence (or end-of-input), normalize the region in
+            // isolation, then pre-tokenize + WordPiece it.
             let mut next_rel = remaining.len();
             for (surface, _) in &sorted_specials {
                 if let Some(rel) = remaining.find(surface.as_str()) {
@@ -580,7 +601,8 @@ impl WordPieceTokenizer {
             }
             let region = &remaining[..next_rel];
             if !region.is_empty() {
-                for word in self.split_words(region) {
+                let region_normalized = self.normalize_text(region);
+                for word in self.split_words(region_normalized.as_ref()) {
                     self.encode_word_into(&word, &mut out);
                 }
             }
@@ -751,7 +773,8 @@ impl Tokenizer for WordPieceTokenizer {
     type Token = TokenId;
 
     fn encode(&self, text: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
-        // Full pipeline: normalize -> pre-tokenize + WordPiece ->
+        // Full pipeline: (extract specials from RAW input, then
+        // per-region normalize) -> pre-tokenize + WordPiece ->
         // post-process -> truncate. Mirrors the inherent `encode`
         // above; kept as a separate assembly because the `Tokenizer`
         // trait must return an `Encoding<TokenId>` and the
@@ -759,8 +782,12 @@ impl Tokenizer for WordPieceTokenizer {
         // remain empty on the primary encoding (WordPiece does not
         // track offsets); the post-processor's `apply` gracefully
         // preserves empty per-token arrays.
-        let normalized = self.normalize_text(text);
-        let ids = self.encode_ids_raw(normalized.as_ref());
+        let ids = if self.special_tokens.is_empty() {
+            let normalized = self.normalize_text(text);
+            self.encode_ids_raw(normalized.as_ref())
+        } else {
+            self.encode_ids_raw(text)
+        };
         let mut enc: Encoding<TokenId> = Encoding::new();
         enc.ids = ids;
         let mut out = if matches!(self.post_processor, PostProcessor::None) {
@@ -790,12 +817,24 @@ impl Tokenizer for WordPieceTokenizer {
     }
 
     fn encode_pair(&self, a: &str, b: &str) -> Result<Encoding<Self::Token>, TokenizerError> {
-        let normalized_a = self.normalize_text(a);
-        let normalized_b = self.normalize_text(b);
+        // Same specials-first ordering as `encode`: normalize the
+        // whole input up front only when no specials are registered;
+        // otherwise let `encode_ids_raw` extract specials from the
+        // raw input and normalize per region.
         let mut ea: Encoding<TokenId> = Encoding::new();
-        ea.ids = self.encode_ids_raw(normalized_a.as_ref());
+        ea.ids = if self.special_tokens.is_empty() {
+            let na = self.normalize_text(a);
+            self.encode_ids_raw(na.as_ref())
+        } else {
+            self.encode_ids_raw(a)
+        };
         let mut eb: Encoding<TokenId> = Encoding::new();
-        eb.ids = self.encode_ids_raw(normalized_b.as_ref());
+        eb.ids = if self.special_tokens.is_empty() {
+            let nb = self.normalize_text(b);
+            self.encode_ids_raw(nb.as_ref())
+        } else {
+            self.encode_ids_raw(b)
+        };
         if let Some(cfg) = &self.truncation {
             stringcheese_tokenizer::truncation::truncate_pair(&mut ea, &mut eb, cfg);
         }
@@ -809,9 +848,15 @@ impl Tokenizer for WordPieceTokenizer {
     fn count(&self, text: &str) -> Result<usize, TokenizerError> {
         // `count` mirrors `encode`'s full pipeline so
         // `count(text) == encode(text)?.ids.len()` holds for every
-        // configuration. Fast-path the identity post-processor.
-        let normalized = self.normalize_text(text);
-        let base = self.encode_ids_raw(normalized.as_ref()).len();
+        // configuration. Same specials-first ordering as `encode`:
+        // normalize the whole input only when no specials are
+        // registered.
+        let base = if self.special_tokens.is_empty() {
+            let normalized = self.normalize_text(text);
+            self.encode_ids_raw(normalized.as_ref()).len()
+        } else {
+            self.encode_ids_raw(text).len()
+        };
         Ok(match &self.post_processor {
             // ByteLevel is a documented no-op on the encoding
             // (see [`crate::post_processor::PostProcessor::ByteLevel`]);

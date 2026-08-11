@@ -270,15 +270,33 @@ impl Eq for RegexPreTokenizer {}
 /// shape used by Llama, Mistral, T5, and XLM-RoBERTa checkpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrependScheme {
-    /// Always prepend the replacement character to the input, even if
-    /// the input already starts with it.
+    /// Prepend the replacement character to the (transformed) input
+    /// unless it already starts with the replacement. HF's Rust
+    /// `Metaspace` implements `Always` this way: the guard against
+    /// double-prepending is what stops a single ASCII space at the
+    /// start of the input from producing an extra empty-word `▁`
+    /// piece after `MergedWithNext` splitting. Do NOT interpret
+    /// "always" as "unconditionally": that would emit spurious `▁`
+    /// markers around every space-adjacent boundary and break
+    /// conformance with real HF encoders on inputs whose normalizer
+    /// output already begins with `▁`.
     #[default]
     Always,
     /// Never prepend.
     Never,
-    /// Prepend the replacement character only when the input does not
-    /// already start with it. Used by tokenizers that pre-mark
-    /// caller-visible strings with a leading `▁`.
+    /// Prepend the replacement character only when the piece is the
+    /// first piece of the whole input AND does not already start with
+    /// the replacement character. Used by tokenizers that pre-mark
+    /// caller-visible strings with a leading `▁` — e.g. Llama-2.
+    ///
+    /// The "first-piece" check requires knowing the piece's original
+    /// offset in the caller input; [`Metaspace::apply`] cannot tell,
+    /// so it assumes a standalone piece is the first piece. Composers
+    /// that run Metaspace on multiple pieces (a
+    /// [`PreTokenizerSequence`] with an earlier splitting stage, or
+    /// the per-region encode path around pre-extracted specials) that
+    /// want strict HF parity should drive [`Metaspace::apply_piece`]
+    /// with the correct `is_first_piece` flag.
     First,
 }
 
@@ -353,9 +371,21 @@ impl Metaspace {
     ///    [`Self::replacement`].
     /// 2. Depending on [`Self::prepend_scheme`], the replacement
     ///    character may be prepended:
-    ///    * [`PrependScheme::Always`] — always prepend.
+    ///    * [`PrependScheme::Always`] — prepend the replacement
+    ///      character unless the (already-transformed) string starts
+    ///      with it. This mirrors HF's own Rust `Metaspace::pre_tokenize`
+    ///      exactly: "always" is a misnomer for
+    ///      "unless-already-marked". Without this guard, an input like
+    ///      `" hello"` (leading space) would transform to `"▁hello"`,
+    ///      get an extra `▁` prepended to `"▁▁hello"`, and after
+    ///      `MergedWithNext` splitting emit a spurious empty-word `▁`
+    ///      piece — visible on encode as a stray padding token.
     ///    * [`PrependScheme::First`] — prepend only if the (already
     ///      transformed) string does not start with the replacement.
+    ///      Standalone use assumes the input is the first piece of
+    ///      the caller's whole input; composers that split first
+    ///      should route through [`Self::apply_piece`] with the
+    ///      correct `is_first_piece` flag.
     ///    * [`PrependScheme::Never`] — never prepend.
     /// 3. If [`Self::split`] is `true`, the transformed string is
     ///    split on the replacement character with `SentencePiece`'s
@@ -368,15 +398,40 @@ impl Metaspace {
     /// behaviour.
     #[must_use]
     pub fn apply(&self, text: &str) -> Vec<String> {
-        if text.is_empty() {
+        // Standalone `apply` treats the piece as if it were the first
+        // piece of the whole caller input; that is the only sensible
+        // fallback when the caller has no split-piece context to hand
+        // us. Composers that DO have context (a
+        // [`PreTokenizerSequence`] with an earlier splitter, or the
+        // per-region encode loop around pre-extracted specials) drive
+        // [`Self::apply_piece`] directly.
+        self.apply_piece(text, true)
+    }
+
+    /// Apply the pre-tokenizer to a single `piece`, using
+    /// `is_first_piece` to disambiguate the `First` prepend scheme.
+    ///
+    /// See [`Self::apply`] for the base semantics. The
+    /// `is_first_piece` argument is consulted only when
+    /// [`Self::prepend_scheme`] is [`PrependScheme::First`]: HF's
+    /// `Metaspace` prepends on `First` only when the piece originates
+    /// at offset 0 in the caller input. `Always` and `Never` are
+    /// independent of piece position and ignore the flag.
+    ///
+    /// An empty piece returns an empty `Vec` unconditionally — the
+    /// same shape HF's Rust `Metaspace` produces on an empty
+    /// `NormalizedString`.
+    #[must_use]
+    pub fn apply_piece(&self, piece: &str, is_first_piece: bool) -> Vec<String> {
+        if piece.is_empty() {
             return Vec::new();
         }
 
         // Step 1: replace ASCII spaces with the replacement character.
         // The output is at most `text.chars().count() * repl_utf8_len`
         // bytes; a good enough starting capacity is `text.len()`.
-        let mut transformed = String::with_capacity(text.len());
-        for c in text.chars() {
+        let mut transformed = String::with_capacity(piece.len());
+        for c in piece.chars() {
             if c == ' ' {
                 transformed.push(self.replacement);
             } else {
@@ -384,10 +439,16 @@ impl Metaspace {
             }
         }
 
-        // Step 2: optional prepend, per the scheme.
+        // Step 2: optional prepend, per the scheme. The `starts_with`
+        // guard on `Always` matches HF's own Rust source verbatim (see
+        // `tokenizers/src/pre_tokenizers/metaspace.rs::pre_tokenize`):
+        // "always" only prepends when the transformed piece does not
+        // already begin with the replacement character — the practical
+        // shape needed so an input like `" hello"` becomes `["▁hello"]`
+        // rather than `["▁", "▁hello"]`.
         let should_prepend = match self.prepend_scheme {
-            PrependScheme::Always => true,
-            PrependScheme::First => !transformed.starts_with(self.replacement),
+            PrependScheme::Always => !transformed.starts_with(self.replacement),
+            PrependScheme::First => is_first_piece && !transformed.starts_with(self.replacement),
             PrependScheme::Never => false,
         };
         if should_prepend {
@@ -914,6 +975,83 @@ mod tests {
     fn metaspace_no_spaces_still_prepends_when_always() {
         let ms = Metaspace::new();
         assert_eq!(ms.apply("hello"), vec!["\u{2581}hello".to_string()]);
+    }
+
+    #[test]
+    fn metaspace_always_does_not_double_prepend_when_input_already_marked() {
+        // HF-parity: `Always` skips the prepend when the transformed
+        // input already starts with `▁`. Without this guard, `" hello"`
+        // becomes `["▁", "▁hello"]` at encode time — an extra empty-word
+        // padding token that breaks DeBERTa-v3 case[12] and every
+        // between-specials region that begins with a single space
+        // (cases[32] / [33]).
+        //
+        // Python reference:
+        //   >>> from tokenizers.pre_tokenizers import Metaspace
+        //   >>> Metaspace(prepend_scheme="always").pre_tokenize_str(" hello")
+        //   [('▁hello', (0, 6))]
+        let ms = Metaspace::new();
+        assert_eq!(ms.apply(" hello"), vec!["\u{2581}hello".to_string()]);
+        assert_eq!(
+            ms.apply(" hello world"),
+            vec!["\u{2581}hello".to_string(), "\u{2581}world".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_always_double_space_preserves_padding_piece() {
+        // But a run of TWO spaces at the head still produces the
+        // padding piece — the transform yields `"▁▁hello"` and
+        // `MergedWithNext` splits it as `["▁", "▁hello"]`. Confirms
+        // the fix does not over-collapse.
+        //
+        // Python reference:
+        //   >>> Metaspace(prepend_scheme="always").pre_tokenize_str("  hello")
+        //   [('▁', (0, 1)), ('▁hello', (1, 7))]
+        let ms = Metaspace::new();
+        assert_eq!(
+            ms.apply("  hello"),
+            vec!["\u{2581}".to_string(), "\u{2581}hello".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_apply_piece_first_skips_prepend_on_non_first_piece() {
+        // `First` scheme prepends only on the first piece of the
+        // caller input. `apply_piece(_, false)` announces "this is
+        // not the first piece" so the prepend should be skipped even
+        // when the piece does not start with `▁`.
+        let ms = Metaspace {
+            replacement: Metaspace::DEFAULT_REPLACEMENT,
+            prepend_scheme: PrependScheme::First,
+            split: true,
+        };
+        // Non-first: no prepend, but the ASCII-space-to-▁ substitution
+        // still happens, so `"world hello"` becomes `["world", "▁hello"]`.
+        assert_eq!(
+            ms.apply_piece("world hello", false),
+            vec!["world".to_string(), "\u{2581}hello".to_string()]
+        );
+        // First piece: prepend as usual.
+        assert_eq!(
+            ms.apply_piece("world hello", true),
+            vec!["\u{2581}world".to_string(), "\u{2581}hello".to_string()]
+        );
+    }
+
+    #[test]
+    fn metaspace_apply_piece_always_ignores_is_first_flag() {
+        // `Always` prepends independently of piece position — the
+        // `is_first_piece` flag is only consulted for `First`.
+        let ms = Metaspace::new();
+        assert_eq!(
+            ms.apply_piece("hello", false),
+            ms.apply_piece("hello", true)
+        );
+        assert_eq!(
+            ms.apply_piece("\u{2581}hello", false),
+            ms.apply_piece("\u{2581}hello", true)
+        );
     }
 
     #[test]
