@@ -14,7 +14,7 @@
 //!
 //! Phase 1 of the WIT-i18n design (`docs/design/wit-i18n.md` § 8) —
 //! the first capability delivered on top of the shared
-//! [`stringcheese-scud`] loader. The algorithm side of the case
+//! `stringcheese-scud` loader. The algorithm side of the case
 //! interface lives here; the CLDR-derived data lives in
 //! `stringcheese-<lang>` packs and reaches this crate through
 //! [`CasePack::from_scud_bytes`].
@@ -54,7 +54,7 @@
 //!
 //! # Trust model
 //!
-//! Inherited from [`stringcheese-scud`]: SCUD packs are trusted
+//! Inherited from `stringcheese-scud`: SCUD packs are trusted
 //! input. This crate does not defend against maliciously crafted
 //! packs.
 
@@ -329,7 +329,9 @@ impl<'a> CaseEngine<'a> {
 
     /// Look up the first-matching pack for a locale tag.
     fn pack_for(&self, tag: &str) -> Option<&CasePack<'a>> {
-        self.packs.iter().find(|p| p.locale.eq_ignore_ascii_case(tag))
+        self.packs
+            .iter()
+            .find(|p| p.locale.eq_ignore_ascii_case(tag))
     }
 
     /// Iterate every pack whose locale is a prefix of `locale` under
@@ -496,8 +498,8 @@ mod tests {
     use super::*;
     use alloc::vec;
     use stringcheese_scud::{
-        CAP_CASE, CaseSectionBuilder, ScudFile, ScudWriter, SECT_CONTEXT, SECT_FULL_FOLD,
-        SECT_FULL_UPPER, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER,
+        CAP_CASE, CaseSectionBuilder, SECT_CONTEXT, SECT_FULL_FOLD, SECT_FULL_UPPER,
+        SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER, ScudFile, ScudWriter,
     };
 
     fn build_test_en() -> alloc::vec::Vec<u8> {
@@ -617,7 +619,9 @@ mod tests {
         let en_pack = CasePack::from_scud_bytes(&en).unwrap();
         let engine = CaseEngine::new(vec![en_pack]);
         assert_eq!(
-            engine.to_title("hello world", "en", TitleOptions::default()).unwrap(),
+            engine
+                .to_title("hello world", "en", TitleOptions::default())
+                .unwrap(),
             "Hello World"
         );
     }

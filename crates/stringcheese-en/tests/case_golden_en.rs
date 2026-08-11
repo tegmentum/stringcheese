@@ -225,14 +225,7 @@ fn to_lower_is_idempotent() {
 #[test]
 fn fold_full_is_idempotent() {
     let e = engine();
-    for input in [
-        "hello",
-        "Straße",
-        "École",
-        "ABC123",
-        "Œuvre",
-        "Ā-Ż",
-    ] {
+    for input in ["hello", "Straße", "École", "ABC123", "Œuvre", "Ā-Ż"] {
         let once = e.fold(input, FoldMode::Full);
         let twice = e.fold(&once, FoldMode::Full);
         assert_eq!(once, twice, "fold-full not idempotent on {input:?}");

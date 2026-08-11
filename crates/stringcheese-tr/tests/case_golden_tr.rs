@@ -57,13 +57,7 @@ fn simple_dotted_capital_and_dotless_lowercase_roundtrip() {
 #[test]
 fn turkish_special_letters_lower() {
     let e = engine();
-    for (upper, lower) in [
-        ('Ç', 'ç'),
-        ('Ğ', 'ğ'),
-        ('Ö', 'ö'),
-        ('Ş', 'ş'),
-        ('Ü', 'ü'),
-    ] {
+    for (upper, lower) in [('Ç', 'ç'), ('Ğ', 'ğ'), ('Ö', 'ö'), ('Ş', 'ş'), ('Ü', 'ü')] {
         assert_eq!(
             e.to_lower(&upper.to_string(), "tr"),
             lower.to_string(),
@@ -118,13 +112,7 @@ fn latin_ascii_falls_back_via_char() {
 #[test]
 fn turkish_lower_is_idempotent() {
     let e = engine();
-    for input in [
-        "IŞIK",
-        "İSTANBUL",
-        "ÇOCUKLAR",
-        "Öğrenci",
-        "hello",
-    ] {
+    for input in ["IŞIK", "İSTANBUL", "ÇOCUKLAR", "Öğrenci", "hello"] {
         let once = e.to_lower(input, "tr");
         let twice = e.to_lower(&once, "tr");
         assert_eq!(once, twice, "to_lower not idempotent on {input:?}");

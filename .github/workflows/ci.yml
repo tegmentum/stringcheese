@@ -738,6 +738,101 @@ jobs:
             -- --nocapture
 
   # ------------------------------------------------------------------
+  # WIT-i18n Phase 1 case-mapping smoke — SCUD-pack size + golden
+  # vectors + cross-locale composition.
+  #
+  # Phase 1 of the WIT-i18n design (`docs/design/wit-i18n.md` § 8)
+  # commits to shipping the case-en / case-tr SCUD packs alongside
+  # size measurement for CI. This job builds both packs, runs the
+  # golden-vector and cross-locale test suites, and prints per-locale
+  # pack sizes to the run log so a size regression surfaces on the
+  # next PR touching the packs.
+  #
+  # Deliberately host-only (not wasm32-wasip1): the case-mapping
+  # algorithm is data-driven Rust with no wasm-specific machinery,
+  # so a host test run exercises every code path. The standalone
+  # wasm component build (mirroring the tokenizer-component job)
+  # lands when `stringcheese-icu-case` grows a `wit-component`
+  # feature; documented as deferred in the crate root.
+  # ------------------------------------------------------------------
+  wasm-i18n-case:
+    name: WIT-i18n case-mapping (SCUD size + golden)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-case-stable
+
+      - name: Build both packs
+        run: |
+          cargo build \
+            -p stringcheese-scud \
+            -p stringcheese-icu-case \
+            -p stringcheese-en \
+            -p stringcheese-tr \
+            --all-features \
+            --locked
+
+      - name: Run icu-case unit + wit-parser tests
+        run: |
+          cargo test \
+            -p stringcheese-icu-case \
+            --all-features \
+            --locked \
+            -- --nocapture
+
+      - name: Run English golden vectors (>= 100)
+        run: |
+          cargo test \
+            -p stringcheese-en \
+            --features case-scud \
+            --locked \
+            --test case_golden_en \
+            -- --nocapture
+
+      - name: Run Turkish golden vectors (>= 50)
+        run: |
+          cargo test \
+            -p stringcheese-tr \
+            --features case-scud \
+            --locked \
+            --test case_golden_tr \
+            -- --nocapture
+
+      - name: Run cross-locale composition test
+        run: |
+          cargo test \
+            -p stringcheese-tr \
+            --features case-scud \
+            --locked \
+            --test case_cross_locale \
+            -- --nocapture
+
+      - name: Report per-locale SCUD sizes
+        # `print_composed_pack_sizes` in the cross-locale test file
+        # emits both per-locale sizes and the composed total; grep
+        # them out of the test log so they show up standalone on
+        # this job's summary.
+        run: |
+          set -euo pipefail
+          cargo test \
+            -p stringcheese-tr \
+            --features case-scud \
+            --locked \
+            --test case_cross_locale \
+            print_composed_pack_sizes \
+            -- --nocapture \
+            | grep -E "(case-en\.scud|case-tr\.scud|composed engine)" || true
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

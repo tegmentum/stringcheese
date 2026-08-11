@@ -33,7 +33,7 @@
 //!   later flag-driven decompression pass.
 //! * **Section-oriented body** — the body is a sequence of
 //!   `(section-id: [u8;4], length: u32, bytes: [u8; length])` frames
-//!   read via [`SectionReader`] / written via [`SectionWriter`]. A
+//!   read via [`SectionReader`] / written via [`ScudWriter`]. A
 //!   new capability adds a new section id without touching the loader.
 //!
 //! Deferred to later phases (see [`docs/design/wit-i18n.md`](../../docs/design/wit-i18n.md)
@@ -254,9 +254,7 @@ impl fmt::Display for ScudError {
             ),
             Self::HeaderTruncated => f.write_str("SCUD header truncated"),
             Self::BodyTruncated => f.write_str("SCUD body truncated"),
-            Self::UnsupportedCompression => {
-                f.write_str("SCUD body compression not yet supported")
-            }
+            Self::UnsupportedCompression => f.write_str("SCUD body compression not yet supported"),
             Self::InvalidUtf8 => f.write_str("SCUD header contained invalid UTF-8"),
             Self::InvalidHeader => f.write_str("SCUD header field lengths out of range"),
             Self::CapabilityMismatch { expected, got } => write!(
@@ -1132,7 +1130,6 @@ impl ScudWriter {
     }
 }
 
-
 // -----------------------------------------------------------------------
 // Section-builder helpers (case)
 // -----------------------------------------------------------------------
@@ -1372,9 +1369,15 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         let view = file.as_case_data().unwrap();
         let hits: alloc::vec::Vec<(ContextKind, u32)> = view.contextual('I' as u32).collect();
-        assert_eq!(hits, alloc::vec![(ContextKind::LocaleOverrideLower, 0x0131)]);
+        assert_eq!(
+            hits,
+            alloc::vec![(ContextKind::LocaleOverrideLower, 0x0131)]
+        );
         let hits: alloc::vec::Vec<(ContextKind, u32)> = view.contextual('i' as u32).collect();
-        assert_eq!(hits, alloc::vec![(ContextKind::LocaleOverrideUpper, 0x0130)]);
+        assert_eq!(
+            hits,
+            alloc::vec![(ContextKind::LocaleOverrideUpper, 0x0130)]
+        );
     }
 
     #[test]

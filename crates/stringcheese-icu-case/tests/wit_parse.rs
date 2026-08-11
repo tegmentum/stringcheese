@@ -38,10 +38,7 @@ fn wit_file_declares_case_world() {
         )
         .expect("WIT parses");
     assert!(
-        resolve
-            .worlds
-            .iter()
-            .any(|(_, world)| world.name == "case"),
+        resolve.worlds.iter().any(|(_, world)| world.name == "case"),
         "WIT must export the `case` world"
     );
 }
