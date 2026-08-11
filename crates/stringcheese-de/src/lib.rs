@@ -126,6 +126,8 @@ mod generated {
 }
 pub use generated::CAPABILITIES;
 
+#[cfg(feature = "collation-scud")]
+pub mod collation_data;
 #[cfg(feature = "alloc")]
 pub mod collator;
 #[cfg(feature = "alloc")]

@@ -1,10 +1,34 @@
-//! Build-time codegen for the German pack — mirrors the pattern
-//! established by `stringcheese-en/build.rs`. Reads `rules/de.toml`
-//! and emits `$OUT_DIR/generated.rs`; the rest of the crate wires
-//! that generated code into its `Language` trait impl.
+//! Build-time codegen for the German pack.
+//!
+//! Two artifacts emitted into `$OUT_DIR`:
+//!
+//! 1. `generated.rs` — the `stringcheese-lang-gen`-derived
+//!    stopword slice and capability record. Read from
+//!    `rules/de.toml`.
+//! 2. `collation-de.scud` — the CLDR-derived collation-tailoring
+//!    SCUD pack shipped by the crate under the `collation-scud`
+//!    feature. See `docs/design/wit-i18n.md` § 6 and the crate
+//!    root docs for the pack shape.
+//!
+//! Both `stringcheese-lang-gen` and `stringcheese-scud` are
+//! `[build-dependencies]` — they run here at build time and drop
+//! out of the shipped binary. A caller pulling
+//! `stringcheese-de = "0.1"` pays zero cost for either generator's
+//! presence.
 
 use std::env;
+use std::fs;
 use std::path::PathBuf;
+
+use stringcheese_scud::{
+    CAP_COLLATION, CollationSectionBuilder, SECT_COLLATION_OPTIONS, SECT_EXPANSIONS, ScudWriter,
+};
+
+/// CLDR version the shipped tables were compiled against. Bumping
+/// this value is a coordinated release action — the SCUD file
+/// header carries this string so downstream can trace data
+/// provenance.
+const CLDR_VERSION: &str = "44.1";
 
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
@@ -12,6 +36,57 @@ fn main() {
     let out = out_dir.join("generated.rs");
     stringcheese_lang_gen::generate(rules, &out)
         .unwrap_or_else(|e| panic!("stringcheese-lang-gen failed on {rules}: {e}"));
+
+    let collation_path = out_dir.join("collation-de.scud");
+    let collation_bytes = build_collation_de_scud();
+    fs::write(&collation_path, &collation_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", collation_path.display()));
+
     println!("cargo:rerun-if-changed={rules}");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the collation-de SCUD pack in memory.
+///
+/// German collation follows DIN 5007. Two conventions coexist:
+///
+/// * **DIN 5007-1 (dictionary / Duden ordering)** — umlauts fold
+///   to their base letter (`ä = a`, `ö = o`, `ü = u`); `ß = ss`.
+/// * **DIN 5007-2 (phonebook ordering)** — umlauts expand to the
+///   digraph they historically abbreviate (`ä = ae`, `ö = oe`,
+///   `ü = ue`); `ß = ss`.
+///
+/// The shipped pack encodes the **DIN 5007-2 (phonebook)**
+/// tailoring, which is the more distinctive and the one telephone
+/// directories, birth-record indexes, and the German-language
+/// Wikipedia's category ordering use. Dictionary ordering is
+/// available via the native
+/// `stringcheese_de::GermanCollator::DIN_5007_DICTIONARY` preset
+/// (which does not consult the SCUD pack); a future SCUD-supplied
+/// dictionary variant lives in a follow-up pack under a different
+/// locale tag (e.g. `de-x-din5007-1`).
+fn build_collation_de_scud() -> Vec<u8> {
+    let mut c = CollationSectionBuilder::new();
+
+    // ß → ss (both DIN variants agree here).
+    c.push_expansion(0x00DF, &[0x0073, 0x0073]);
+    // Capital sharp S (ẞ, U+1E9E) → SS.
+    c.push_expansion(0x1E9E, &[0x0053, 0x0053]);
+
+    // Umlauts under DIN 5007-2 (phonebook): expand to digraph.
+    c.push_expansion(0x00E4, &[0x0061, 0x0065]); // ä → ae
+    c.push_expansion(0x00C4, &[0x0041, 0x0045]); // Ä → AE
+    c.push_expansion(0x00F6, &[0x006F, 0x0065]); // ö → oe
+    c.push_expansion(0x00D6, &[0x004F, 0x0045]); // Ö → OE
+    c.push_expansion(0x00FC, &[0x0075, 0x0065]); // ü → ue
+    c.push_expansion(0x00DC, &[0x0055, 0x0045]); // Ü → UE
+
+    // Default strength tertiary (case + diacritics + base).
+    c.set_default_strength(2);
+    c.set_case_insensitive(false);
+
+    let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("de"));
+    w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+    w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+    w.finish()
 }

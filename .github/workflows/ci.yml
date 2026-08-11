@@ -889,6 +889,83 @@ jobs:
             | grep -E "(case-en\.scud|case-tr\.scud|composed engine)" || true
 
   # ------------------------------------------------------------------
+  # WIT-i18n Phase 2 collation smoke — SCUD-pack size + golden
+  # vectors (en, de) + UCA conformance subset.
+  # ------------------------------------------------------------------
+  wasm-i18n-collation:
+    name: WIT-i18n collation (SCUD size + golden + UCA subset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-collation-stable
+
+      - name: Build the icu-collation crate + both packs
+        run: |
+          cargo build \
+            -p stringcheese-scud \
+            -p stringcheese-icu-collation \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            --all-features \
+            --locked
+
+      - name: Run icu-collation unit + wit-parser tests
+        run: |
+          cargo test \
+            -p stringcheese-icu-collation \
+            --all-features \
+            --locked \
+            -- --nocapture
+
+      - name: Run UCA conformance subset (>= 100 vectors)
+        run: |
+          cargo test \
+            -p stringcheese-icu-collation \
+            --all-features \
+            --locked \
+            --test uca_conformance_subset \
+            -- --nocapture
+
+      - name: Run English collation golden vectors (>= 100)
+        run: |
+          cargo test \
+            -p stringcheese-en \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_en \
+            -- --nocapture
+
+      - name: Run German collation golden vectors (>= 50)
+        run: |
+          cargo test \
+            -p stringcheese-de \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_de \
+            -- --nocapture
+
+      - name: Report per-locale collation SCUD sizes
+        run: |
+          set -euo pipefail
+          # Force the build.rs to run so the SCUD blobs are on disk.
+          cargo build \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            --features stringcheese-en/collation-scud,stringcheese-de/collation-scud \
+            --locked >/dev/null
+          find target -name 'collation-en.scud' -exec ls -l {} \; | head -1
+          find target -name 'collation-de.scud' -exec ls -l {} \; | head -1
+
+  # ------------------------------------------------------------------
   # hf-native conformance parity (optional, non-blocking).
   # ------------------------------------------------------------------
   hf-native-parity:

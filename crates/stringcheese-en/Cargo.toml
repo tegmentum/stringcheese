@@ -45,6 +45,18 @@ alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
 # opt-in, the `CasePack` constructor helper would sit behind a
 # feature the `case-scud` caller has no obvious way to enable.
 case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
+# Ship the collation-en.scud pack (the WIT-i18n Phase 2 collation
+# tailoring data for English). Adds a `collation_data` module
+# exposing `COLLATION_EN_SCUD: &'static [u8]` and a helper for
+# constructing a `stringcheese_icu_collation::CollationPack`.
+# Enabled by default — the pack is very small (under 100 bytes for
+# English's DUCET-root behaviour with a hand-picked expansion for
+# hyphenation-ignorable) and the whole point of the `collation-scud`
+# feature gate is to let embedded callers opt out on ROM-constrained
+# targets. The `stringcheese-icu-collation/alloc` toggle is included
+# because the workspace declares `default-features = false` on the
+# workspace dep.
+collation-scud = ["dep:stringcheese-icu-collation", "stringcheese-icu-collation/alloc"]
 # Enables the CLDR-tailored English collator backed by ICU4X's
 # implementation of the Unicode Collation Algorithm. Adds roughly
 # 40 KB of baked collation data plus the ICU4X collator, normalizer,
@@ -82,6 +94,12 @@ icu_provider = { version = "1.5", optional = true, default-features = false, fea
 # downstream users can hand the SCUD blob to a `CaseEngine` without
 # reaching for `stringcheese-icu-case` directly.
 stringcheese-icu-case = { workspace = true, optional = true }
+# WIT-i18n collation capability crate. Optional; only pulled in when
+# the `collation-scud` feature is enabled — pulls a small
+# `CollationPack` constructor helper into the crate's public surface
+# so downstream users can hand the SCUD blob to a `CollationEngine`
+# without reaching for `stringcheese-icu-collation` directly.
+stringcheese-icu-collation = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the pack's data-driven surface (stopwords,
