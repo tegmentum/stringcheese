@@ -1,0 +1,122 @@
+# Declare this crate as its own workspace root. The top-level
+# workspace `exclude`s this directory (see the root `Cargo.toml`'s
+# `exclude` list) so its opt-in `parity-real-vocab` feature never
+# leaks into `cargo test --workspace --all-features` — the same
+# posture the sibling `stringcheese-tokenizer-tiktoken-conformance`
+# crate takes. An empty `[workspace]` here severs Cargo's directory
+# walk so the crate operates standalone.
+[workspace]
+
+[package]
+name = "stringcheese-tokenizer-component-cl100k"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/stringcheese"
+description = "Real-vocab cl100k_base packaging of the tegmentum:tokenizer@0.1.0 WIT component. Sibling of stringcheese-tokenizer-component: layers OpenAI's real cl100k mergeable_ranks blob (SHA-256 verified, never committed) into the same WIT tokenizer-provider shape."
+publish = false
+build = "build.rs"
+
+# NOTE: This package is deliberately EXCLUDED from the top-level
+# workspace (see the root `Cargo.toml`'s `exclude` list). Cargo's
+# `--all-features` flag turns on every feature of every workspace
+# member unconditionally, and this crate's `parity-real-vocab` feature
+# needs to stay opt-in — it embeds a real OpenAI `mergeable_ranks`
+# blob into the compiled artifact via `build.rs`, and the
+# session-standing constraint in `CLAUDE.md` forbids committing those
+# bytes into the repository. Keeping the crate outside the workspace
+# means the vocab is only ever pulled at build time (from an external
+# cache / env var) — the repo tree never carries it.
+
+[lib]
+# Dual-target: `rlib` for Rust callers (unit tests, host-side
+# embedding), `cdylib` for the WIT component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component,parity-real-vocab`.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Default build is a stub. The tokenizer surface is present but every
+# encode / decode / count call returns a "parity-real-vocab feature
+# required" error. This keeps `cargo check` and `cargo doc` cheap
+# offline and gives callers a compile-time-visible shape they can
+# wire against before flipping the feature on.
+default = []
+
+# Turn on the real vocab path. When enabled:
+#   * `build.rs` locates the plaintext `cl100k_base.tiktoken` blob (via
+#     `$STRINGCHEESE_CL100K_TIKTOKEN` or the standard
+#     `~/.cache/stringcheese-tokenizer-tiktoken/` cache path that the
+#     sibling `stringcheese-tokenizer-tiktoken-conformance` harness
+#     populates), verifies its SHA-256 against the pinned hash, and
+#     writes it into `$OUT_DIR/cl100k_base.tiktoken` for embedding.
+#   * The runtime library constructs a real `BpeTokenizer` from those
+#     bytes via `stringcheese_tokenizer_tiktoken::builder::build_scud_from_tiktoken`.
+#   * The build fails cleanly (not silently stub) when the blob is
+#     missing — the error message names the env var and the cache
+#     path to unblock.
+# No `dep:` activations here — `build.rs` uses `sha2` unconditionally
+# (small pure-Rust crate), and the source resolution is a plain
+# filesystem read.
+parity-real-vocab = []
+
+# `wit-component` opts into the WIT `Guest` implementation and the
+# `export!` invocation that turns this crate into a standalone
+# `tegmentum:tokenizer@0.1.0` WASM component. Off by default so the
+# crate can be linked as a plain `rlib` sibling of the reference
+# `stringcheese-tokenizer-component` without every backend emitting
+# the same exported symbols and tripping the linker with
+# duplicate-export errors — matches the pattern used by the parent
+# crate and by `stringcheese-detect-{script,whatlang,lingua}`.
+#
+# Requires `parity-real-vocab` — a stub component wraps a stub
+# tokenizer that errors on every call, which is not a useful
+# artifact to compose against.
+wit-component = ["parity-real-vocab", "dep:wit-bindgen-rt"]
+
+[dependencies]
+# Path-based (not workspace = true) because this crate lives outside
+# the workspace so it can gate its feature independently.
+stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features = false, features = ["std"] }
+stringcheese-tokenizer-hf = { path = "../stringcheese-tokenizer-hf", default-features = false, features = ["std"] }
+# Reuses `builder::build_scud_from_tiktoken` for the tiktoken
+# plaintext → (vocab, merges) transcode. `default-features = false`
+# with no feature list skips embedding the sibling crate's synthetic
+# `cl100k_base` stand-in blob — this crate ships the real bytes at
+# build time instead.
+stringcheese-tokenizer-tiktoken = { path = "../stringcheese-tokenizer-tiktoken", default-features = false }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Pulled in only when the `wit-component` feature is enabled — see the
+# feature docs above. `optional = true` keeps it off the dependency
+# tree for non-component wasm consumers.
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[build-dependencies]
+# SHA-256 verification of the plaintext blob before embedding. Pure
+# Rust, no C shim; safe to build unconditionally on every host and CI
+# runner. The hash is compared against the same
+# `223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7`
+# constant the sibling `stringcheese-tokenizer-tiktoken-conformance`
+# crate pins for `cl100k_base`.
+sha2 = { version = "0.10", default-features = false }
+
+[dev-dependencies]
+# Same host-side WIT-parses gate the parent crate ships: reads the
+# on-disk `component/wit/tokenizer/stringcheese-tokenizer.wit` and
+# asserts `wit-parser` accepts it, so a WIT regression surfaces on a
+# plain `cargo test` without needing the wasm toolchain.
+wit-parser = "0.230"
+
+[lints]
+# Match the workspace's own lint policy even though the crate is
+# excluded — reviewers should not have to reason about a different
+# posture for one crate.
+rust.missing_docs = "warn"
+rust.unsafe_op_in_unsafe_fn = "deny"
+clippy.pedantic = { level = "warn", priority = -1 }
+clippy.module_name_repetitions = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.must_use_candidate = "allow"
+clippy.collapsible_if = "allow"
