@@ -81,20 +81,33 @@ impl BpeMergeTable {
 
     /// Returns the rank of `(left, right)`, or `None` if the pair is
     /// not in the table.
+    ///
+    /// This shape allocates one temporary `Vec<u8>` per lookup to build
+    /// the concatenated key. Callers on the hot merge-loop path should
+    /// prefer [`Self::rank_slice`] with an already-concatenated slice
+    /// (typically a range into the enclosing word's byte buffer) which
+    /// avoids the temporary entirely.
     #[must_use]
     pub fn rank(&self, left: &[u8], right: &[u8]) -> Option<u32> {
-        // hashbrown requires an owned key (or a matching `Borrow` view)
-        // for `get`; since `Vec<u8>: Borrow<[u8]>` does not extend to a
-        // tuple-of-slices, we materialise one concatenated buffer per
-        // lookup. This is half the allocations of the prior BTreeMap
-        // shape (two `Vec<u8>` clones for the tuple) and reduces the
-        // lookup complexity from O(log n) byte-slice comparisons to a
-        // single hash + comparison — the audit called this out as the
-        // dominant per-token cost.
         let mut key = Vec::with_capacity(left.len() + right.len());
         key.extend_from_slice(left);
         key.extend_from_slice(right);
         self.ranks.get(&key).copied()
+    }
+
+    /// Returns the rank of the merge whose concatenated bytes equal
+    /// `key`, or `None` if no such merge exists.
+    ///
+    /// This is the hot-path lookup used by the encode loop: the merge
+    /// loop keeps pieces as `(start, len)` byte ranges into the current
+    /// word, and every candidate merge is the slice
+    /// `word_bytes[left_start..right_start + right_len]`. Passing that
+    /// slice directly to [`hashbrown::HashMap::get`] via `Vec<u8>:
+    /// Borrow<[u8]>` avoids the per-lookup `Vec` allocation the
+    /// [`Self::rank`] convenience shape pays.
+    #[must_use]
+    pub fn rank_slice(&self, key: &[u8]) -> Option<u32> {
+        self.ranks.get(key).copied()
     }
 
     /// Number of merges in the table.
@@ -1308,34 +1321,39 @@ impl BpeTokenizer {
         // Seed pieces: one per byte in the default path, one per
         // *char* in both the byte-level and byte-fallback paths
         // (see comment above).
+        //
+        // Pieces carry only `(start, len)` byte ranges into `word_bytes`
+        // — no owned `Vec<u8>` per piece — so seeding is allocation-free
+        // beyond the enclosing `Vec<PieceRef>` itself. Every rank
+        // lookup and vocab lookup below reads through
+        // `&word_bytes[start..start + len]`, which is a `Borrow<[u8]>`
+        // view into the caller-provided word and never touches the
+        // allocator on the merge-loop hot path. (Pre-Wave-14 this shape
+        // allocated one `Vec<u8>` per byte at seed time and cloned each
+        // piece's bytes into the merge-loop arena on top; the audit
+        // called both out as the dominant per-encode cost.)
         let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
         if seed_per_char {
             let mut byte_cursor: usize = 0;
             for c in word_text.chars() {
                 let len = c.len_utf8();
-                let mut buf = [0u8; 4];
-                let s = c.encode_utf8(&mut buf);
                 pieces.push(PieceRef {
-                    bytes: s.as_bytes().to_vec(),
                     start: byte_cursor,
                     len,
                 });
                 byte_cursor += len;
             }
         } else {
-            for (i, &b) in word_bytes.iter().enumerate() {
-                pieces.push(PieceRef {
-                    bytes: alloc::vec![b],
-                    start: i,
-                    len: 1,
-                });
+            for i in 0..word_bytes.len() {
+                pieces.push(PieceRef { start: i, len: 1 });
             }
         }
 
-        merge_fn(self, &mut pieces);
+        merge_fn(self, word_bytes, &mut pieces);
 
         for p in pieces {
-            if let Some(id) = self.vocab.id(&p.bytes) {
+            let piece_bytes = &word_bytes[p.start..p.start + p.len];
+            if let Some(id) = self.vocab.id(piece_bytes) {
                 let abs_start = region_offset + word_offset_in_region + p.start;
                 let abs_end = abs_start + p.len;
                 out.push((id, abs_start..abs_end, false));
@@ -1347,14 +1365,16 @@ impl BpeTokenizer {
                 // in the input — matching how the caller can slice
                 // `input.as_bytes()[range]` back to recover the
                 // original byte.
-                for (k, &b) in p.bytes.iter().enumerate() {
+                for (k, &b) in piece_bytes.iter().enumerate() {
                     let id = bf[b as usize];
                     let abs_start = region_offset + word_offset_in_region + p.start + k;
                     let abs_end = abs_start + 1;
                     out.push((id, abs_start..abs_end, false));
                 }
             } else {
-                return Err(TokenizerError::UnknownToken(format_bytes_literal(&p.bytes)));
+                return Err(TokenizerError::UnknownToken(format_bytes_literal(
+                    piece_bytes,
+                )));
             }
         }
         Ok(())
@@ -1391,16 +1411,22 @@ impl BpeTokenizer {
     /// over exhaustive short inputs." We keep this callable from the
     /// proptest module so that agreement is checked mechanically.
     #[cfg_attr(not(test), allow(dead_code))]
-    fn merge_loop_naive(&self, pieces: &mut Vec<PieceRef>) {
+    fn merge_loop_naive(&self, word_bytes: &[u8], pieces: &mut Vec<PieceRef>) {
         loop {
             if pieces.len() < 2 {
                 return;
             }
             // Find the adjacent pair with the lowest rank in the merge table.
+            // Since pieces are contiguous ranges into `word_bytes` and merges
+            // only combine adjacent pieces, the concatenation of piece i and
+            // piece i+1 is exactly `word_bytes[i.start..(i+1).start + (i+1).len]`.
             let mut best_idx: Option<usize> = None;
             let mut best_rank: u32 = u32::MAX;
             for i in 0..pieces.len() - 1 {
-                if let Some(r) = self.merges.rank(&pieces[i].bytes, &pieces[i + 1].bytes) {
+                let left = &pieces[i];
+                let right = &pieces[i + 1];
+                let key = &word_bytes[left.start..right.start + right.len];
+                if let Some(r) = self.merges.rank_slice(key) {
                     if r < best_rank {
                         best_rank = r;
                         best_idx = Some(i);
@@ -1410,15 +1436,11 @@ impl BpeTokenizer {
             let Some(i) = best_idx else {
                 return;
             };
-            // Merge pieces[i] and pieces[i+1].
-            let mut merged_bytes = pieces[i].bytes.clone();
-            merged_bytes.extend_from_slice(&pieces[i + 1].bytes);
-            let merged = PieceRef {
-                bytes: merged_bytes,
-                start: pieces[i].start,
-                len: pieces[i].len + pieces[i + 1].len,
-            };
-            pieces[i] = merged;
+            // Merge pieces[i] and pieces[i+1] in place: extend left's
+            // length by right's, then drop right. No byte copying —
+            // the underlying `word_bytes` slice is shared and pieces
+            // are just windows into it.
+            pieces[i].len += pieces[i + 1].len;
             pieces.remove(i + 1);
         }
     }
@@ -1457,7 +1479,7 @@ impl BpeTokenizer {
     /// min-heap: `BinaryHeap` is a max-heap by default, and `Reverse`
     /// inverts the ordering — cheaper than defining a custom `Ord`
     /// with inverted comparisons.
-    fn merge_loop_nlogn(&self, pieces: &mut Vec<PieceRef>) {
+    fn merge_loop_nlogn(&self, word_bytes: &[u8], pieces: &mut Vec<PieceRef>) {
         let n = pieces.len();
         if n < 2 {
             return;
@@ -1467,10 +1489,17 @@ impl BpeTokenizer {
         // node keeps its arena slot forever, so `left_idx` is a stable
         // deterministic key for tie-breaking (it matches the original
         // byte position of the pair's left piece).
+        //
+        // Nodes carry only `(start, len)` byte ranges into the shared
+        // `word_bytes` slice — no per-node `Vec<u8>` clone at build
+        // time and no per-merge `extend_from_slice` copy. Merges only
+        // combine adjacent pieces and the merged piece's byte range is
+        // exactly the union of the two adjacent ranges, so we can
+        // recover the piece's bytes at any point via
+        // `&word_bytes[start..start + len]`.
         let mut nodes: Vec<MergeNode> = Vec::with_capacity(n);
         for (i, p) in pieces.iter().enumerate() {
             nodes.push(MergeNode {
-                bytes: p.bytes.clone(),
                 start: p.start,
                 len: p.len,
                 prev: if i == 0 { None } else { Some(i - 1) },
@@ -1483,7 +1512,10 @@ impl BpeTokenizer {
         // rank in the merge table.
         let mut heap: BinaryHeap<Reverse<HeapEntry>> = BinaryHeap::new();
         for i in 0..n - 1 {
-            if let Some(rank) = self.merges.rank(&nodes[i].bytes, &nodes[i + 1].bytes) {
+            let left = &nodes[i];
+            let right = &nodes[i + 1];
+            let key = &word_bytes[left.start..right.start + right.len];
+            if let Some(rank) = self.merges.rank_slice(key) {
                 heap.push(Reverse(HeapEntry {
                     rank,
                     left_idx: i,
@@ -1505,19 +1537,20 @@ impl BpeTokenizer {
                 continue;
             }
             // The rank stored at push time must still be the rank of
-            // the *current* byte strings — either endpoint's bytes may
-            // have grown since the entry was queued.
-            let Some(current_rank) = self.merges.rank(&nodes[li].bytes, &nodes[ri].bytes) else {
+            // the *current* byte range — either endpoint's length may
+            // have grown since the entry was queued (a prior merge
+            // absorbed a neighbour).
+            let key = &word_bytes[nodes[li].start..nodes[ri].start + nodes[ri].len];
+            let Some(current_rank) = self.merges.rank_slice(key) else {
                 continue;
             };
             if current_rank != entry.rank {
                 continue;
             }
 
-            // Perform the merge: absorb right's bytes into left; splice
-            // right out of the list; mark right dead.
-            let right_bytes = core::mem::take(&mut nodes[ri].bytes);
-            nodes[li].bytes.extend_from_slice(&right_bytes);
+            // Perform the merge: extend left's length by right's,
+            // splice right out of the list, mark right dead. No byte
+            // copying — pieces are windows into the shared word bytes.
             nodes[li].len += nodes[ri].len;
             let new_next = nodes[ri].next;
             nodes[li].next = new_next;
@@ -1527,10 +1560,11 @@ impl BpeTokenizer {
             nodes[ri].alive = false;
 
             // Queue up any newly-adjacent pairs. Left's predecessor may
-            // now form a merge with left's new (extended) bytes; and
+            // now form a merge with left's new (extended) range; and
             // left's new successor may form one on the other side.
             if let Some(pi) = nodes[li].prev {
-                if let Some(rank) = self.merges.rank(&nodes[pi].bytes, &nodes[li].bytes) {
+                let pk = &word_bytes[nodes[pi].start..nodes[li].start + nodes[li].len];
+                if let Some(rank) = self.merges.rank_slice(pk) {
                     heap.push(Reverse(HeapEntry {
                         rank,
                         left_idx: pi,
@@ -1539,7 +1573,8 @@ impl BpeTokenizer {
                 }
             }
             if let Some(ni) = nodes[li].next {
-                if let Some(rank) = self.merges.rank(&nodes[li].bytes, &nodes[ni].bytes) {
+                let nk = &word_bytes[nodes[li].start..nodes[ni].start + nodes[ni].len];
+                if let Some(rank) = self.merges.rank_slice(nk) {
                     heap.push(Reverse(HeapEntry {
                         rank,
                         left_idx: li,
@@ -1557,7 +1592,6 @@ impl BpeTokenizer {
         while let Some(i) = cursor {
             debug_assert!(nodes[i].alive, "walked to a dead node in the merge list");
             pieces.push(PieceRef {
-                bytes: core::mem::take(&mut nodes[i].bytes),
                 start: nodes[i].start,
                 len: nodes[i].len,
             });
@@ -1761,11 +1795,12 @@ impl Tokenizer for BpeTokenizer {
 
 // ---- internal helpers ----
 
-/// A single merge-loop piece: its current byte string, and the byte
-/// range within its enclosing word.
-#[derive(Debug, Clone)]
+/// A single merge-loop piece: a byte range `[start, start + len)` into
+/// the enclosing word's byte buffer. No owned bytes — merges always
+/// combine adjacent pieces, so a piece's current surface is always
+/// `&word_bytes[start..start + len]`.
+#[derive(Debug, Clone, Copy)]
 struct PieceRef {
-    bytes: Vec<u8>,
     start: usize,
     len: usize,
 }
@@ -1776,9 +1811,12 @@ struct PieceRef {
 /// `Vec<MergeNode>` — no raw pointers, no `unsafe`, and slot indices are
 /// stable for the whole run (a merge absorbs the right piece into the
 /// left slot; the right slot is marked `alive = false` but never freed).
+///
+/// Like [`PieceRef`], a node carries only a `(start, len)` byte range
+/// into the shared `word_bytes` slice the merge loop is running over —
+/// no per-node `Vec<u8>` allocation and no per-merge byte copy.
 #[derive(Debug)]
 struct MergeNode {
-    bytes: Vec<u8>,
     start: usize,
     len: usize,
     prev: Option<usize>,
@@ -1817,8 +1855,10 @@ impl PartialOrd for HeapEntry {
 
 /// Function pointer to a per-word merge strategy. Production code uses
 /// [`BpeTokenizer::merge_loop_nlogn`]; the tests substitute the naive
-/// oracle to verify the two strategies agree.
-type MergeLoopFn = fn(&BpeTokenizer, &mut Vec<PieceRef>);
+/// oracle to verify the two strategies agree. Takes the shared word
+/// byte buffer as its second argument so both strategies can look up
+/// rank keys and materialise piece surfaces without per-piece allocation.
+type MergeLoopFn = fn(&BpeTokenizer, &[u8], &mut Vec<PieceRef>);
 
 /// Text plus (byte) offset within its enclosing region.
 ///
@@ -3658,7 +3698,7 @@ mod properties {
     fn encode_ids_with(
         tok: &BpeTokenizer,
         text: &str,
-        f: fn(&BpeTokenizer, &mut Vec<super::PieceRef>),
+        f: fn(&BpeTokenizer, &[u8], &mut Vec<super::PieceRef>),
     ) -> Vec<TokenId> {
         tok.encode_pieces_with(text, f)
             .expect("encode should succeed against a byte-alphabet vocab")

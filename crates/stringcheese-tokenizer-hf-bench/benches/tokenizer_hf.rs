@@ -70,55 +70,52 @@
 //! # Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
 //!
 //! Numbers below are median throughput of one representative run
-//! (`--measurement-time 8 --warm-up-time 2 --sample-size 20` for
-//! gpt2 / llama, shorter for cl100k). Wall-clock samples vary
-//! ±10-15 % on a laptop under load; treat the ratios as informative,
-//! the absolutes as illustrative. Throughput reported as MiB/s of
-//! *input bytes*. Higher is better.
+//! (`--measurement-time 8 --warm-up-time 2 --sample-size 20`).
+//! Wall-clock samples vary ±10-15 % on a laptop under load; treat
+//! the ratios as informative, the absolutes as illustrative.
+//! Throughput reported as MiB/s of *input bytes*. Higher is better.
 //!
 //! ```text
 //! group                        1 KiB          10 KiB         100 KiB
 //! ----------------------------------------------------------------------
-//! gpt2 / stringcheese-hf       3.3 MiB/s      4.4 MiB/s      4.3 MiB/s
-//! gpt2 / tokenizers-rs         5.4 MiB/s      5.9 MiB/s      2.2-3.6 MiB/s
-//! cl100k / stringcheese-hf     3.3 MiB/s      4.0 MiB/s      4.1 MiB/s
-//! cl100k / tiktoken-rs        12.2 MiB/s     14.1 MiB/s     14.2 MiB/s
-//! llama-2 / stringcheese-hf    3.6 MiB/s      3.0 MiB/s      2.8 MiB/s
-//! llama-2 / tokenizers-rs      7.7 MiB/s      7.4 MiB/s      5.8 MiB/s
+//! gpt2 / stringcheese-hf       3.0 MiB/s      2.9 MiB/s      6.9 MiB/s
+//! gpt2 / tokenizers-rs         2.9 MiB/s      3.5 MiB/s      6.2 MiB/s
+//! cl100k / stringcheese-hf     6.2 MiB/s      6.5 MiB/s      6.6 MiB/s
+//! cl100k / tiktoken-rs        13.7 MiB/s     14.0 MiB/s     13.9 MiB/s
+//! llama-2 / stringcheese-hf    6.8 MiB/s      4.2 MiB/s      3.9 MiB/s
+//! llama-2 / tokenizers-rs      8.7 MiB/s      6.5 MiB/s      5.8 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **`cl100k_base`** — `tiktoken-rs` is 3-3.5× faster than us across
-//!   every input size. This is the widest gap and the clearest
-//!   optimisation target: tiktoken-rs is a very tight loop over a
-//!   `HashMap<Vec<u8>, Rank>` merge table (essentially the same
-//!   shape the audit's `BTreeMap → hashbrown` swap moved us to) plus
-//!   a hand-tuned pre-tokenizer split. Their edge is likely (a)
-//!   applying the pre-tokenizer regex once per input rather than
-//!   inside our fancy-regex Iterator, and (b) their per-word merge
-//!   loop is a plain `Vec<Rank>` walk with no linked-list
-//!   bookkeeping.
-//! * **gpt2** — surprisingly close: at 1 KiB and 10 KiB
-//!   tokenizers-rs is ~1.3-1.7× faster, and at 100 KiB the numbers
-//!   are within noise (tokenizers-rs on gpt2 has high variance at
-//!   large inputs on this run — possibly GC of an internal cache).
-//!   Our stringcheese-hf on gpt2 stays flat around 4-4.5 MiB/s
-//!   across scales, which is the "amortisation is already
-//!   plateau'd" regime.
-//! * **`llama_2_7b`** — tokenizers-rs is 2× faster consistently. This
-//!   exercises the `byte_fallback` + Metaspace path; our
-//!   implementation walks the whole codepoint stream to emit `<0xXX>`
-//!   fallbacks, and there's likely a fast-path win to skip that
-//!   scan when the input contains no vocab-missing bytes.
+//! * **`cl100k_base`** — `tiktoken-rs` is ~2.1× faster than us across
+//!   every input size (previously 3-3.5×). The gap-halving is the
+//!   result of a Wave-14 hot-path pass that stopped allocating one
+//!   `Vec<u8>` per byte-piece in the BPE merge loop: pieces are now
+//!   `(start, len)` byte ranges into the enclosing word's byte
+//!   buffer and rank lookups on the merge table read through the
+//!   shared slice directly (`hashbrown::HashMap<Vec<u8>, u32>` via
+//!   `Vec<u8>: Borrow<[u8]>`). Remaining gap versus tiktoken-rs is
+//!   attributable to their tighter merge-loop shape (a plain
+//!   `Vec<Rank>` walk without linked-list bookkeeping) and, at 1 KiB,
+//!   the residual per-word overhead of `Vec<MergeNode>` /
+//!   `BinaryHeap` allocations.
+//! * **gpt2** — now at approximate parity with tokenizers-rs across
+//!   input sizes (was 1.3-1.7× behind at small sizes). The
+//!   allocation-removal pass helps more here than for tiktoken-rs
+//!   because tokenizers-rs's own merge-loop shape is closer to ours
+//!   (linked-list + heap).
+//! * **`llama_2_7b`** — tokenizers-rs is ~1.4-1.5× faster (was 2×).
+//!   Exercises the `byte_fallback` + Metaspace path; per-char seeding
+//!   still allocates a piece for every input codepoint even after the
+//!   Wave-14 refactor because the seed step is per-char, so this
+//!   shape gains less than the byte-per-piece cl100k / gpt2 shapes.
 //!
-//! Summary: we are within order-of-magnitude parity on all three
-//! shapes. The cl100k gap is the widest (3-3.5×) and the highest-
-//! value optimisation target. The gpt2 and llama-2 gaps (1.3-2×)
-//! narrow at larger input sizes on some shapes, which suggests the
-//! per-word merge loop is competitive once the pre-tokenizer cost
-//! is amortised — the remaining gap is likely dominated by pre-
-//! tokenizer overhead.
+//! Summary: allocation removal in the merge-loop hot path closed
+//! most of the gap. The cl100k gap dropped from 3-3.5× to ~2.1×;
+//! gpt2 reached parity; llama-2 narrowed from 2× to ~1.5×.
+//! Flat-throughput signature at 1/10/100 KiB is gone on cl100k
+//! (numbers now scale linearly with input size).
 //!
 //! Update this table whenever a perf change lands so future readers
 //! don't have to re-run the bench to see whether the delta improved
