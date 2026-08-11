@@ -26,6 +26,8 @@ Bench inventory:
 | `textsplit`  | `stringcheese-textsplit` (Recursive / Paragraph / Sentence) | `textsplit/*` |
 | `normalize`  | `stringcheese-normalize` (4 pipelines + 4 primitives) | `normalize/*` |
 | `ident`      | `stringcheese-ident` (case conversion / slugify / sanitize) | `ident/*` |
+| `bpe`        | `stringcheese-tokenizer-hf` (encode throughput / merge-table lookup) | `bpe/*` |
+| `tokenizer_hf` | `stringcheese-tokenizer-hf` vs `tokenizers-rs` (HF) + `tiktoken-rs` (`OpenAI`) on real vocabs | `tokenizer_hf/encode/*` |
 
 Quick smoke test any bench without full statistical measurement:
 
@@ -38,6 +40,54 @@ Filter to one group inside a bench:
 ```
 cargo bench -p stringcheese-bench --bench stats -- ratios
 ```
+
+## Comparative tokenizer bench (`tokenizer_hf`)
+
+Opt-in bench that pits `stringcheese-tokenizer-hf` against upstream
+`tokenizers-rs` (Hugging Face) and `tiktoken-rs` (`OpenAI`) on real
+vocabularies. Three groups — gpt2 (BPE byte-level), cl100k_base
+(tiktoken shape), llama_2_7b (SentencePiece byte_fallback +
+Metaspace) — at 1 KiB, 10 KiB, 100 KiB of deterministic English
+prose. See `benches/tokenizer_hf.rs`'s module docs for the last-
+measured baseline table and the rationale for each group.
+
+Gated behind the `parity-real-vocab` feature so the default build
+never pulls in `tokenizers-rs` / `tiktoken-rs`. The bench itself
+soft-skips per-group at runtime when the vocab is missing (an
+`eprintln!` explains where to drop it), so enabling the feature is
+safe on a naked checkout — no failure, just no numbers.
+
+```
+cargo bench -p stringcheese-bench --features parity-real-vocab \
+  --bench tokenizer_hf
+```
+
+Filter to one group:
+
+```
+cargo bench -p stringcheese-bench --features parity-real-vocab \
+  --bench tokenizer_hf -- gpt2
+```
+
+### Provisioning the vocabs
+
+Real vocab bytes are **never** committed to this repository. The
+bench looks up each checkpoint's `tokenizer.json` (and, for cl100k,
+the tiktoken plaintext blob) via a two-root lookup:
+
+* `tokenizer.json` (gpt2, llama-2-7b-hf):
+  * `$STRINGCHEESE_REAL_VOCABS_DIR/<checkpoint>/tokenizer.json`
+  * `crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/<checkpoint>/tokenizer.json`
+* `cl100k_base.tiktoken` plaintext:
+  * `$TIKTOKEN_PARITY_DATA_DIR/cl100k_base.tiktoken`
+  * `~/.cache/stringcheese-tokenizer-tiktoken/cl100k_base.tiktoken`
+
+The second cl100k root is populated automatically the first time
+the tiktoken-conformance suite runs with its `parity-real-vocab`
+feature (it fetches + SHA-256-verifies the blob from `OpenAI`'s
+CDN). For the HF-shape `tokenizer.json` files, download from
+Hugging Face and drop them at either root — the conformance suite
+uses the same convention.
 
 ## Allocation tracking
 

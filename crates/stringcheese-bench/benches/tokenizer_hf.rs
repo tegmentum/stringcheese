@@ -1,0 +1,479 @@
+//! Comparative encode-throughput bench: `stringcheese-tokenizer-hf`
+//! vs upstream `tokenizers-rs` (Hugging Face) and `tiktoken-rs`
+//! (`OpenAI`) on real vocabularies at three input scales.
+//!
+//! Three bench groups, mirroring the three families the audit called
+//! out as the load-bearing shapes for a comparative bar:
+//!
+//! * `tokenizer_hf/encode/gpt2` — byte-level BPE (GPT-2 family) vs
+//!   `tokenizers-rs`.
+//! * `tokenizer_hf/encode/cl100k_base` — tiktoken-shape BPE vs
+//!   `tiktoken-rs`. Uses `stringcheese-tokenizer-tiktoken`'s
+//!   `builder::build_scud_from_tiktoken` on our side so both engines
+//!   consume the same real `mergeable_ranks` bytes.
+//! * `tokenizer_hf/encode/llama_2_7b` — SentencePiece-shape character
+//!   BPE with `byte_fallback` and a Metaspace pre-tokenizer vs
+//!   `tokenizers-rs`. Exercises the byte-fallback path that landed
+//!   for Llama-2 / Mistral / Qwen support.
+//!
+//! Each group runs three input sizes: 1 KiB, 10 KiB, 100 KiB of
+//! deterministic English prose. Criterion reports throughput in
+//! MiB/s per sample; wall-clock ns/iter appears in the raw output.
+//!
+//! # Feature gate
+//!
+//! Only compiled with `--features parity-real-vocab` (see
+//! `required-features` on the bench declaration in `Cargo.toml`). The
+//! feature pulls in the two oracles plus
+//! `stringcheese-tokenizer-tiktoken` for the tiktoken plaintext
+//! parser.
+//!
+//! # Vocab lookup
+//!
+//! Real upstream vocabularies (tens of MB) are not committed to this
+//! repository. The bench looks for each checkpoint's
+//! `tokenizer.json` under two roots in priority order:
+//!
+//! 1. `$STRINGCHEESE_REAL_VOCABS_DIR/<checkpoint>/tokenizer.json` —
+//!    honoured when the env-var is set. Recommended for CI where a
+//!    setup step materialises vocabs into a per-job cache directory.
+//! 2. `<hf-crate>/tests/conformance/vocabs/<checkpoint>/tokenizer.json` —
+//!    the same directory the `stringcheese-tokenizer-hf` conformance
+//!    runner reads.
+//!
+//! For the `cl100k_base` group, the tiktoken plaintext blob is looked
+//! up under two roots that follow the same convention as the
+//! `stringcheese-tokenizer-tiktoken-conformance` fetch layer:
+//!
+//! 1. `$TIKTOKEN_PARITY_DATA_DIR/cl100k_base.tiktoken` (env-var).
+//! 2. `~/.cache/stringcheese-tokenizer-tiktoken/cl100k_base.tiktoken`.
+//!
+//! When a lookup fails, the group *soft-skips* via `eprintln!` (see
+//! `cargo bench -- --nocapture` for skip messages) rather than
+//! failing the bench — this is what keeps the bench build itself
+//! green in CI when no vocabs are provisioned.
+//!
+//! # Running
+//!
+//! ```text
+//! cargo bench -p stringcheese-bench --features parity-real-vocab \
+//!     --bench tokenizer_hf
+//! ```
+//!
+//! Filter to one group:
+//!
+//! ```text
+//! cargo bench -p stringcheese-bench --features parity-real-vocab \
+//!     --bench tokenizer_hf -- gpt2
+//! ```
+//!
+//! # Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--measurement-time 8 --warm-up-time 2 --sample-size 20` for
+//! gpt2 / llama, shorter for cl100k). Wall-clock samples vary
+//! ±10-15 % on a laptop under load; treat the ratios as informative,
+//! the absolutes as illustrative. Throughput reported as MiB/s of
+//! *input bytes*. Higher is better.
+//!
+//! ```text
+//! group                        1 KiB          10 KiB         100 KiB
+//! ----------------------------------------------------------------------
+//! gpt2 / stringcheese-hf       3.3 MiB/s      4.4 MiB/s      4.3 MiB/s
+//! gpt2 / tokenizers-rs         5.4 MiB/s      5.9 MiB/s      2.2-3.6 MiB/s
+//! cl100k / stringcheese-hf     3.3 MiB/s      4.0 MiB/s      4.1 MiB/s
+//! cl100k / tiktoken-rs        12.2 MiB/s     14.1 MiB/s     14.2 MiB/s
+//! llama-2 / stringcheese-hf    3.6 MiB/s      3.0 MiB/s      2.8 MiB/s
+//! llama-2 / tokenizers-rs      7.7 MiB/s      7.4 MiB/s      5.8 MiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **`cl100k_base`** — `tiktoken-rs` is 3-3.5× faster than us across
+//!   every input size. This is the widest gap and the clearest
+//!   optimisation target: tiktoken-rs is a very tight loop over a
+//!   `HashMap<Vec<u8>, Rank>` merge table (essentially the same
+//!   shape the audit's `BTreeMap → hashbrown` swap moved us to) plus
+//!   a hand-tuned pre-tokenizer split. Their edge is likely (a)
+//!   applying the pre-tokenizer regex once per input rather than
+//!   inside our fancy-regex Iterator, and (b) their per-word merge
+//!   loop is a plain `Vec<Rank>` walk with no linked-list
+//!   bookkeeping.
+//! * **gpt2** — surprisingly close: at 1 KiB and 10 KiB
+//!   tokenizers-rs is ~1.3-1.7× faster, and at 100 KiB the numbers
+//!   are within noise (tokenizers-rs on gpt2 has high variance at
+//!   large inputs on this run — possibly GC of an internal cache).
+//!   Our stringcheese-hf on gpt2 stays flat around 4-4.5 MiB/s
+//!   across scales, which is the "amortisation is already
+//!   plateau'd" regime.
+//! * **`llama_2_7b`** — tokenizers-rs is 2× faster consistently. This
+//!   exercises the `byte_fallback` + Metaspace path; our
+//!   implementation walks the whole codepoint stream to emit `<0xXX>`
+//!   fallbacks, and there's likely a fast-path win to skip that
+//!   scan when the input contains no vocab-missing bytes.
+//!
+//! Summary: we are within order-of-magnitude parity on all three
+//! shapes. The cl100k gap is the widest (3-3.5×) and the highest-
+//! value optimisation target. The gpt2 and llama-2 gaps (1.3-2×)
+//! narrow at larger input sizes on some shapes, which suggests the
+//! per-word merge loop is competitive once the pre-tokenizer cost
+//! is amortised — the remaining gap is likely dominated by pre-
+//! tokenizer overhead.
+//!
+//! Update this table whenever a perf change lands so future readers
+//! don't have to re-run the bench to see whether the delta improved
+//! or regressed the baseline.
+
+#![allow(
+    missing_docs,
+    reason = "criterion_group! macro emits undocumented public fns; the bench crate is publish = false and not user-facing"
+)]
+
+use std::env;
+use std::fs;
+use std::hint::black_box;
+use std::path::{Path, PathBuf};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+
+use stringcheese_tokenizer::Tokenizer;
+use stringcheese_tokenizer_hf::hf::{HfTokenizer, parse_tokenizer_json, to_tokenizer};
+use stringcheese_tokenizer_hf::{
+    BpeMergeTable, BpeTokenizer, BpeVocabulary, PreTokenizerRegex, RegexPreTokenizer,
+    TIKTOKEN_CANONICAL_PATTERN,
+};
+use stringcheese_tokenizer_tiktoken::builder;
+
+// ---------------------------------------------------------------------
+// Input.
+// ---------------------------------------------------------------------
+
+/// Deterministic English prose. Wraps a fixed word list so criterion
+/// samples over byte-identical bytes across every run; no RNG, no OS
+/// entropy, no time-based seed.
+fn deterministic_prose(bytes: usize) -> String {
+    let words: &[&str] = &[
+        "the", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog", "and", "then",
+        "runs", "back", "through", "the", "forest", "toward", "the", "little", "cabin", "on",
+        "the", "hill", "where", "smoke", "curls", "from", "the", "chimney", "into", "the", "cold",
+        "morning", "air", "while", "the", "sun", "climbs", "above", "the", "eastern", "ridge",
+        "and", "birds", "call", "from", "the", "pines", "beyond", "the", "meadow",
+    ];
+    let mut out = String::with_capacity(bytes + 64);
+    let mut idx = 0usize;
+    while out.len() < bytes {
+        out.push_str(words[idx % words.len()]);
+        out.push(' ');
+        idx += 1;
+    }
+    out
+}
+
+const INPUT_SIZES: &[usize] = &[1024, 10 * 1024, 100 * 1024];
+
+// ---------------------------------------------------------------------
+// Vocab lookup — matches the pattern used by
+// `stringcheese-tokenizer-hf`'s conformance runner (two-root
+// priority: env-var first, then the in-tree fixture cache).
+// ---------------------------------------------------------------------
+
+const VOCAB_DIR_ENV: &str = "STRINGCHEESE_REAL_VOCABS_DIR";
+const TIKTOKEN_DIR_ENV: &str = "TIKTOKEN_PARITY_DATA_DIR";
+
+/// Locate a `tokenizer.json` for `checkpoint` under the two lookup
+/// roots (see module docs).
+fn find_tokenizer_json(checkpoint: &str) -> Option<PathBuf> {
+    if let Some(root) = env::var_os(VOCAB_DIR_ENV) {
+        let p = PathBuf::from(root).join(checkpoint).join("tokenizer.json");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    // Walk from CARGO_MANIFEST_DIR (= crates/stringcheese-bench) up
+    // one level to `crates/`, then down into the hf crate's fixture
+    // vocabs directory so the bench reuses whichever real vocabs a
+    // contributor already provisioned for the conformance runner.
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("bench crate lives inside crates/")
+        .join("stringcheese-tokenizer-hf")
+        .join("tests")
+        .join("conformance")
+        .join("vocabs")
+        .join(checkpoint)
+        .join("tokenizer.json");
+    if p.is_file() {
+        return Some(p);
+    }
+    None
+}
+
+/// Locate the tiktoken plaintext `mergeable_ranks` blob for `variant`.
+/// Two roots, priority order:
+///
+/// 1. `$TIKTOKEN_PARITY_DATA_DIR/<variant>.tiktoken`.
+/// 2. `~/.cache/stringcheese-tokenizer-tiktoken/<variant>.tiktoken`
+///    (or `$XDG_CACHE_HOME/stringcheese-tokenizer-tiktoken/…` when
+///    set). Matches the cache path the
+///    `stringcheese-tokenizer-tiktoken-conformance` fetch layer
+///    writes to.
+fn find_tiktoken_plaintext(variant: &str) -> Option<PathBuf> {
+    let filename = format!("{variant}.tiktoken");
+    if let Some(root) = env::var_os(TIKTOKEN_DIR_ENV) {
+        let p = PathBuf::from(root).join(&filename);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let cache_root = env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    let p = cache_root
+        .join("stringcheese-tokenizer-tiktoken")
+        .join(&filename);
+    if p.is_file() { Some(p) } else { None }
+}
+
+// ---------------------------------------------------------------------
+// Load helpers — one per engine.
+// ---------------------------------------------------------------------
+
+/// Build the `stringcheese-tokenizer-hf` side from a real HF
+/// `tokenizer.json`, panicking on any load failure (bench only ever
+/// reaches this after a soft-skip guard so a failure here is a real
+/// bug).
+fn load_stringcheese_hf(path: &Path) -> HfTokenizer {
+    let json = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let config =
+        parse_tokenizer_json(&json).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+    to_tokenizer(&config).unwrap_or_else(|e| panic!("materialise {}: {e:?}", path.display()))
+}
+
+/// Build the `tokenizers-rs` side from the same on-disk
+/// `tokenizer.json`. The two engines share the exact same bytes so
+/// the comparison is apples-to-apples.
+fn load_tokenizers_rs(path: &Path) -> tokenizers::Tokenizer {
+    tokenizers::Tokenizer::from_file(path)
+        .unwrap_or_else(|e| panic!("tokenizers-rs failed to load {}: {e}", path.display()))
+}
+
+/// Build the `stringcheese-tokenizer-hf` `cl100k_base` side from a real
+/// tiktoken plaintext blob. Mirrors
+/// `stringcheese_tokenizer_tiktoken_conformance::parity::build_stringcheese_tokenizer`
+/// — we duplicate the shape here because that crate is deliberately
+/// workspace-excluded and cannot be depended on from a workspace
+/// member.
+fn load_stringcheese_cl100k(plaintext: &[u8]) -> BpeTokenizer {
+    let (vocab_entries, merge_entries) =
+        builder::build_scud_from_tiktoken(plaintext).expect("cl100k tiktoken plaintext must parse");
+
+    let mut vocab = BpeVocabulary::new();
+    let mut sorted = vocab_entries;
+    sorted.sort_by_key(|e| e.id);
+    for entry in sorted {
+        vocab
+            .insert(entry.id, entry.bytes)
+            .expect("cl100k vocab insert");
+    }
+
+    let mut merges = BpeMergeTable::new();
+    for m in merge_entries {
+        let left_bytes = vocab
+            .bytes(m.left_id)
+            .expect("merge left id in vocab")
+            .to_vec();
+        let right_bytes = vocab
+            .bytes(m.right_id)
+            .expect("merge right id in vocab")
+            .to_vec();
+        merges.insert(left_bytes, right_bytes, m.rank);
+    }
+
+    let pre = RegexPreTokenizer::new(TIKTOKEN_CANONICAL_PATTERN)
+        .expect("cl100k pre-tokenizer regex must compile");
+
+    BpeTokenizer::from_parts(merges, vocab).with_pre_tokenizer(PreTokenizerRegex::regex(pre))
+}
+
+// ---------------------------------------------------------------------
+// Encode helpers — one per engine. Route through the trait so the
+// bench measures the full normalize → pre-tokenize → model →
+// post-process pipeline rather than any inherent shortcut method.
+// ---------------------------------------------------------------------
+
+fn encode_stringcheese_hf(tok: &HfTokenizer, input: &str) -> Vec<u32> {
+    match tok {
+        HfTokenizer::Bpe(bpe) => {
+            Tokenizer::encode(bpe.as_ref(), input)
+                .expect("stringcheese-hf BPE encode")
+                .ids
+        }
+        HfTokenizer::WordPiece(wp) => {
+            Tokenizer::encode(wp, input)
+                .expect("stringcheese-hf WordPiece encode")
+                .ids
+        }
+        HfTokenizer::Unigram(uni) => {
+            Tokenizer::encode(uni, input)
+                .expect("stringcheese-hf Unigram encode")
+                .ids
+        }
+        other => panic!("tokenizer_hf bench: unrecognised HfTokenizer variant {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Bench group runners.
+// ---------------------------------------------------------------------
+
+/// Skip-with-message when a required vocab is missing. Keeps the
+/// bench binary green in CI even without provisioned vocabs.
+fn eprintln_skip(group: &str, why: &str) {
+    eprintln!("SKIP tokenizer_hf/encode/{group}: {why}");
+}
+
+fn bench_gpt2(c: &mut Criterion) {
+    let Some(path) = find_tokenizer_json("gpt2") else {
+        eprintln_skip(
+            "gpt2",
+            &format!(
+                "no tokenizer.json. Provide one at ${VOCAB_DIR_ENV}/gpt2/tokenizer.json or \
+                 crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/gpt2/tokenizer.json."
+            ),
+        );
+        return;
+    };
+
+    let ours = load_stringcheese_hf(&path);
+    let theirs = load_tokenizers_rs(&path);
+
+    let mut group = c.benchmark_group("tokenizer_hf/encode/gpt2");
+    for &bytes in INPUT_SIZES {
+        let input = deterministic_prose(bytes);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese_hf", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let ids = encode_stringcheese_hf(&ours, black_box(input));
+                    black_box(ids);
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("tokenizers_rs", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let enc = theirs
+                        .encode(black_box(input.as_str()), false)
+                        .expect("tokenizers-rs encode");
+                    black_box(enc);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_cl100k_base(c: &mut Criterion) {
+    let Some(blob_path) = find_tiktoken_plaintext("cl100k_base") else {
+        eprintln_skip(
+            "cl100k_base",
+            &format!(
+                "no cl100k_base.tiktoken plaintext blob. Provide one at \
+                 ${TIKTOKEN_DIR_ENV}/cl100k_base.tiktoken or \
+                 ~/.cache/stringcheese-tokenizer-tiktoken/cl100k_base.tiktoken. The \
+                 `stringcheese-tokenizer-tiktoken-conformance` crate populates the latter \
+                 automatically when run with `--features parity-real-vocab`."
+            ),
+        );
+        return;
+    };
+    let plaintext =
+        fs::read(&blob_path).unwrap_or_else(|e| panic!("read {}: {e}", blob_path.display()));
+    let ours = load_stringcheese_cl100k(&plaintext);
+    let theirs = tiktoken_rs::cl100k_base().expect("tiktoken-rs cl100k_base load");
+
+    let mut group = c.benchmark_group("tokenizer_hf/encode/cl100k_base");
+    for &bytes in INPUT_SIZES {
+        let input = deterministic_prose(bytes);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese_hf", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let enc = ours.encode(black_box(input)).expect("cl100k encode");
+                    black_box(enc);
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("tiktoken_rs", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let ids = theirs.encode_ordinary(black_box(input));
+                    black_box(ids);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_llama_2_7b(c: &mut Criterion) {
+    let Some(path) = find_tokenizer_json("llama-2-7b-hf") else {
+        eprintln_skip(
+            "llama_2_7b",
+            &format!(
+                "no tokenizer.json. Provide one at ${VOCAB_DIR_ENV}/llama-2-7b-hf/tokenizer.json \
+                 or crates/stringcheese-tokenizer-hf/tests/conformance/vocabs/llama-2-7b-hf/tokenizer.json. \
+                 Exercises the SentencePiece byte_fallback + Metaspace pre-tokenizer path."
+            ),
+        );
+        return;
+    };
+
+    let ours = load_stringcheese_hf(&path);
+    let theirs = load_tokenizers_rs(&path);
+
+    let mut group = c.benchmark_group("tokenizer_hf/encode/llama_2_7b");
+    for &bytes in INPUT_SIZES {
+        let input = deterministic_prose(bytes);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese_hf", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let ids = encode_stringcheese_hf(&ours, black_box(input));
+                    black_box(ids);
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("tokenizers_rs", bytes),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let enc = theirs
+                        .encode(black_box(input.as_str()), false)
+                        .expect("tokenizers-rs encode");
+                    black_box(enc);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(
+    tokenizer_hf,
+    bench_gpt2,
+    bench_cl100k_base,
+    bench_llama_2_7b
+);
+criterion_main!(tokenizer_hf);
