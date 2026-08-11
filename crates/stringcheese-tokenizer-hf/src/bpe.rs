@@ -1261,6 +1261,23 @@ impl BpeTokenizer {
             return Ok(());
         }
 
+        // SentencePiece-family fast path: when byte-fallback is enabled
+        // *and* no explicit pre-tokenizer pattern is configured, pass
+        // the whole region as a single word. The default whitespace-
+        // split fallback in `pre_tokenize` would drop `\n` and other
+        // non-space whitespace, but byte-fallback checkpoints
+        // (Llama-2, Mistral-7B-v0.1, Phi-3-mini-4k-instruct, Gemma-2b)
+        // must preserve those bytes and route them through the reserved
+        // `<0xXX>` tokens. Real SentencePiece semantics: the whole
+        // region is one word, byte-fallback fans out any character
+        // whose surface is not in the vocab. This branch does not fire
+        // when a `PreTokenizerSequence` (Metaspace) is configured —
+        // that path is handled in `encode_region_bpe` above and
+        // supplies its own per-piece splitting.
+        if self.pre_tokenizer_pattern.is_none() && self.byte_fallback.is_some() {
+            return self.encode_word_bpe(region, 0, region_offset, out, merge_fn);
+        }
+
         // Pre-tokenize into "words" (or one word for the whole region).
         // Byte-level pre-tokenization owns its transformed strings, so
         // `pre_tokenize` returns `Cow<str>` values — most paths borrow
@@ -3181,6 +3198,39 @@ mod tests {
             .collect();
         let decoded = tok.decode(&ids).unwrap();
         assert_eq!(decoded, "😀hi");
+    }
+
+    #[test]
+    fn byte_fallback_no_pre_tokenizer_preserves_newline_bytes() {
+        // Regression: Phi-3-mini / Llama-2 / Mistral / Gemma ship BPE
+        // + byte-fallback with NO explicit pre-tokenizer. Before the
+        // Wave-15 landing that added the SentencePiece-family fast
+        // path, `pre_tokenize` fell through to whitespace-splitting on
+        // the `pattern = None` branch and silently dropped `\n` and
+        // other non-space whitespace before byte-fallback could route
+        // them to the reserved `<0xXX>` tokens. This test locks the
+        // fix in place: with byte-fallback on and no pre-tokenizer,
+        // every byte in the input must appear in the output — the
+        // `\n` (`0x0A`) must land as its byte-fallback id, not be
+        // silently eaten.
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        // Input contains a newline between two `hi`s. Expect: hi_id,
+        // <0x0A>, hi_id — the whitespace-split fallback would have
+        // produced [hi_id, hi_id] (dropping the newline).
+        let enc = tok.encode("hi\nhi").unwrap();
+        assert_eq!(enc.ids, vec![hi_id, byte_ids[0x0A], hi_id]);
+    }
+
+    #[test]
+    fn byte_fallback_no_pre_tokenizer_preserves_space_bytes() {
+        // Same shape as the newline test but for the ASCII space
+        // (`0x20`). Without the SentencePiece-family fast path, a
+        // space would be dropped by the whitespace-split fallback in
+        // `pre_tokenize`. With byte-fallback on, byte 0x20 must be
+        // preserved as the reserved `<0x20>` id.
+        let (tok, byte_ids, hi_id) = build_bpe_with_byte_fallback();
+        let enc = tok.encode("hi hi").unwrap();
+        assert_eq!(enc.ids, vec![hi_id, byte_ids[0x20], hi_id]);
     }
 
     #[test]
