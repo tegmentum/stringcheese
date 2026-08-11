@@ -84,6 +84,7 @@ members = [
     "crates/stringcheese-tokenizer-component",
     "crates/stringcheese-scud",
     "crates/stringcheese-icu-case",
+    "crates/stringcheese-icu-case-component",
     "crates/stringcheese-icu-collation",
 ]
 exclude = [
@@ -227,6 +228,7 @@ stringcheese-tokenizer-tiktoken = { version = "0.1.0", path = "crates/stringchee
 stringcheese-tokenizer-component = { version = "0.1.0", path = "crates/stringcheese-tokenizer-component", default-features = false }
 stringcheese-scud = { version = "0.1.0", path = "crates/stringcheese-scud", default-features = false }
 stringcheese-icu-case = { version = "0.1.0", path = "crates/stringcheese-icu-case", default-features = false }
+stringcheese-icu-case-component = { version = "0.1.0", path = "crates/stringcheese-icu-case-component", default-features = false }
 stringcheese-icu-collation = { version = "0.1.0", path = "crates/stringcheese-icu-collation", default-features = false }
 
 [profile.release]

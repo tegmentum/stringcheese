@@ -1,0 +1,86 @@
+[package]
+name = "stringcheese-icu-case-component"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Reference WebAssembly component packaging for the StringCheese ICU-alternative case-mapping capability. Wraps `stringcheese-icu-case`'s `CaseEngine` behind the shared `stringcheese:icu-case@0.1.0` WIT contract, feature-gated so a component-model host can load the case mapper through the standard `world case` export while callers of the plain `rlib` avoid any wit-bindgen-rt symbol collisions. The reference build embeds the `stringcheese-en` and `stringcheese-tr` SCUD packs so the shipped .wasm is drivable end-to-end without a separate pack component."
+categories = ["text-processing", "internationalization", "wasm"]
+keywords = ["case-mapping", "icu", "unicode", "wasm", "component-model"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers (unit tests, host-side
+# embedding), `cdylib` for the WIT component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component`.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# `alloc` is required unconditionally — the WIT `case` world exports
+# functions that return owned `String`s and `Vec<Locale>`s, and the
+# `CaseEngine` the guest wraps is `alloc`-only. `std` is enabled by
+# default for parity with the rest of the WIT-i18n subsystem.
+default = ["std"]
+std = ["stringcheese-icu-case/std", "stringcheese-en/std", "stringcheese-tr/std"]
+
+# `wit-component` opts into the WIT `Guest` implementations and the
+# `export!` invocation that turns this crate into a standalone
+# `stringcheese:icu-case@0.1.0` WASM component. Off by default so the
+# crate can be linked as a plain `rlib` sibling of other WIT
+# components without every backend emitting the same exported symbols
+# and tripping the linker with duplicate-export errors — matches the
+# pattern established by `stringcheese-tokenizer-component` and the
+# `stringcheese-detect-{script,whatlang,lingua}` crates. Enable this
+# only for the standalone-component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component`.
+wit-component = ["std", "dep:wit-bindgen-rt"]
+
+[dependencies]
+# The case-mapping algorithm crate. Provides `CaseEngine`,
+# `CasePack`, `FoldMode`, `TitleBoundary`, and the `CaseError`
+# variants the WIT `case-error` mirrors.
+stringcheese-icu-case = { workspace = true, features = ["alloc"] }
+# English and Turkish SCUD packs. Embedded so the shipped .wasm is
+# drivable end-to-end for the smoke test — `upper("i", "tr")`
+# resolves to `"İ"` because the Turkish contextual override table
+# ships inside the same component. The `case-scud` feature exposes
+# each pack's `case_data::case_pack()` helper.
+stringcheese-en = { workspace = true, features = ["case-scud"] }
+stringcheese-tr = { workspace = true, features = ["case-scud"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Pulled in only when the `wit-component` feature is enabled — see
+# the feature docs above. `optional = true` keeps it off the
+# dependency tree for non-component wasm consumers (e.g. any
+# downstream that links this crate as a plain `rlib` alongside other
+# capability backends). Version + feature set pinned in lockstep
+# with `stringcheese-tokenizer-component` so a workspace-wide
+# wit-bindgen bump lands in one place.
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[dev-dependencies]
+# `wit-parser` gives a strong "the WIT file parses cleanly" gate
+# that does not require the wasm toolchain to be present. The unit
+# test in `src/lib.rs` reads the shipped WIT source and asserts the
+# parser accepts it, mirroring the smoke already living in
+# `stringcheese-icu-case/tests/wit_parse.rs` so a regression that
+# breaks the component wrapper's view of the WIT surfaces here too.
+wit-parser = "0.230"
+
+# `wasmtime` drives the in-process component runtime the smoke tests
+# in `tests/component_smoke.rs` invoke each of the WIT exports
+# through. Feature-pinned to the minimal set the tests need
+# (`runtime` + `cranelift` + `component-model` + `std`) — same
+# trimmed shape as `stringcheese-tokenizer-component`.
+wasmtime = { version = "26", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+
+# Companion crate that ships the WASI preview2 host implementations
+# behind `add_to_linker_sync`. The case component does no I/O of
+# its own, but the wasip1 -> wasip2 adapter applied at
+# componentize time introduces a `wasi:*@0.2.x` import surface
+# that the linker must satisfy before `instantiate` will succeed.
+wasmtime-wasi = { version = "26", default-features = false }
+
+[lints]
+workspace = true
