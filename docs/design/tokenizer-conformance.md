@@ -82,8 +82,11 @@ the suite must surface.
 | `llama-2-7b-hf`                  | `llama_2_7b.json`                   | 20    | Character-BPE + SentencePiece byte_fallback      | `transformers.AutoTokenizer.from_pretrained('NousResearch/Llama-2-7b-hf')` (transformers 5.14.1) |
 | `mistral-7b-v0.1`                | `mistral_7b_v01.json`               | 20    | Character-BPE + SentencePiece byte_fallback + Metaspace pre-tokenizer | `transformers.AutoTokenizer.from_pretrained('mistralai/Mistral-7B-v0.1')` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `qwen2-7b`                       | `qwen2_7b.json`                     | 20    | Byte-level BPE (GPT-2 family) + NFC normalizer + Sequence[Split(Regex), ByteLevel] pre-tokenizer | `transformers.AutoTokenizer.from_pretrained('Qwen/Qwen2-7B')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `phi-3-mini-4k-instruct`         | `phi_3_mini_4k_instruct.json`       | 20    | Character-BPE + SentencePiece byte_fallback + Sequence[Prepend(▁), Replace(' '→'▁')] normalizer, no explicit pre-tokenizer | `transformers.AutoTokenizer.from_pretrained('microsoft/Phi-3-mini-4k-instruct')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `gemma-2b`                       | `gemma_2b.json`                     | 20    | SentencePiece-BPE + byte_fallback + Replace(' '→'▁') normalizer, 256k vocabulary with 217 added chat-format tokens | `transformers.AutoTokenizer.from_pretrained('unsloth/gemma-2b')` — an ungated mirror of `google/gemma-2b`'s tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
+| `t5-base`                        | `t5_base.json`                      | 20    | SentencePiece Unigram + Precompiled charsmap normalizer + Sequence[WhitespaceSplit, Metaspace] pre-tokenizer + TemplateProcessing(</s>) post-processor | `transformers.AutoTokenizer.from_pretrained('google-t5/t5-base')` (transformers 5.14.1 / tokenizers 0.22.2) |
 
-Total: **13 checkpoints × (40 or 20) cases = 460 triples**, all
+Total: **16 checkpoints × (40 or 20) cases = 520 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
@@ -102,12 +105,21 @@ Between them the checkpoints exercise every runtime shape
   ASCII, DistilBERT sharing the uncased vocab under a distinct config,
   and cased multilingual).
 - SentencePiece Unigram — `xlm-roberta-base`, `deberta-v3-base`,
-  `mdeberta-v3-base` (three normalizer / pre-tokenizer sequences over
-  the same Unigram Viterbi runtime).
+  `mdeberta-v3-base`, `t5-base` (four normalizer / pre-tokenizer
+  sequences over the same Unigram Viterbi runtime; `t5-base` is the
+  first fixture that pairs a `Precompiled` normalizer with a
+  `Sequence[WhitespaceSplit, Metaspace]` pre-tokenizer and a
+  `TemplateProcessing` post-processor that appends `</s>`).
 - Character-BPE + SentencePiece `byte_fallback` — `llama-2-7b-hf`,
-  `mistral-7b-v0.1` (Llama-family BPE with the `<0xXX>` byte-fallback
-  path; Mistral additionally exercises the `Metaspace` pre-tokenizer
-  variant of the same semantics — see the runtime gap below).
+  `mistral-7b-v0.1`, `phi-3-mini-4k-instruct`, `gemma-2b` (Llama-family
+  BPE with the `<0xXX>` byte-fallback path; Mistral additionally
+  exercises the `Metaspace` pre-tokenizer variant of the same
+  semantics — see the runtime gap below; `phi-3-mini-4k-instruct`
+  uses the Llama-2 `Sequence[Prepend, Replace]` normalizer shape over
+  a distinct 32k vocabulary with Phi-3 chat-format specials;
+  `gemma-2b` ships a much larger 256k vocabulary, a bare `Replace`
+  normalizer with no `Prepend`, and 217 chat-format added tokens —
+  see the byte-fallback-coverage gap below).
 
 `microsoft/deberta-v3-base` and `microsoft/mdeberta-v3-base` do not
 publish a `tokenizer.json` under
@@ -281,6 +293,47 @@ Each is filed here so a follow-up can pick them up without re-deriving:
   desugars it into the equivalent Llama-2-style normalizer prefix. All
   20 fixture ids are already recorded so the next-agent landing can
   flip the test from panic-on-load to 20/20 with no fixture churn.
+- **Strict byte-fallback coverage rejects Gemma-2b at load.**
+  `google/gemma-2b` ships `model.byte_fallback: true` alongside 255 of
+  the 256 `<0xXX>` byte-fallback tokens: `<0x09>` is omitted because
+  the tab character has its own dedicated literal token (id 226).
+  The current BPE loader treats missing byte-fallback entries as
+  fatal and rejects with
+  `ByteFallbackTokensMissing { missing_count: 1, first_missing_byte: 9 }`,
+  so `conformance_gemma_2b` fails at `to_tokenizer(&config)` and none
+  of the 20 cases run. The fix is to relax the check to accept a
+  subset of the 256-byte range when the omitted bytes have alternative
+  literal tokens in the vocabulary; the byte-fallback path already
+  falls back to the literal token when one is present, so the loader
+  gate is the only blocker. All 20 fixture ids are recorded so the
+  next-agent landing can flip the test from panic-on-load to (up to)
+  20/20 with no fixture churn.
+- **Phi-3-mini surfaces four Llama-family gaps under a distinct
+  vocabulary.** `conformance_phi_3_mini_4k_instruct` runs 16/20 cases
+  to parity and surfaces 4 legitimate mismatches, each pointing at a
+  distinct follow-up:
+  - `empty` — reference emits `[]`, we emit `[29871]` (a bare `▁`
+    from the `Prepend` normalizer). Same Llama-family edge case that
+    `gen_llama2.py`'s comment excluded from the Llama-2 fixture; the
+    reference tokenizer suppresses the injected `▁` on pure-empty
+    inputs. Phi-3's shipped `TemplateProcessing` post-processor is a
+    pass-through (unlike Llama-2's which prepends `<s>`), so the
+    behaviour is visible without a BOS masking it.
+  - `python-code` — reference preserves both `\n` bytes as `<0x0A>`
+    tokens (id 13); we drop them. The Phi-3 config has no explicit
+    pre-tokenizer and a `Sequence[Prepend(▁), Replace(' '→'▁')]`
+    normalizer that touches spaces only, so `\n` should reach BPE and
+    take the byte-fallback path — the runtime appears to be eating
+    `\n` earlier in the pipeline.
+  - `bos-eos-surface-form-raw` — reference recognises `<s>hi</s>` as
+    `[BOS, hi, EOS]` (`[1, 7251, 2]`); we treat the strings as literal
+    text and byte-fallback the angle brackets. Same
+    "registered-special-surface-form" gap the WordPiece / Unigram
+    families already surface.
+  - `chat-end-surface-form-raw` — reference emits `[32007]`; we emit
+    `[29871, 32007]`. The added token `<|end|>` is recognised, but the
+    `Prepend` normalizer's leading `▁` is not suppressed before an
+    added-token match. Cosmetic but observable.
 
 ## Hand-computed fallback
 

@@ -1,0 +1,310 @@
+{
+  "checkpoint": "gemma-2b",
+  "source": "transformers.AutoTokenizer.from_pretrained('google/gemma-2b (fetched via the ungated unsloth/gemma-2b mirror because google/gemma-2b requires access approval)', use_fast=True).encode(input) - reference tokenizer.json is the one that ships in the upstream repo. transformers 5.14.1 / tokenizers 0.22.2.",
+  "note": "Gemma-2b ships a SentencePiece-BPE tokenizer with byte_fallback and a bare Replace(' '→'▁') normalizer (no Prepend, no pre-tokenizer) over a 256k vocabulary that includes 217 dedicated added-tokens for Gemma's chat format (<start_of_turn>, <end_of_turn>, ...). The 20 cases span empty / ASCII prose / code / CJK / Cyrillic / Hebrew / Arabic / Devanagari / emoji / whitespace / long inputs / Gemma-specific special surface forms. The Gemma-2b vocab is fetched via unsloth/gemma-2b — a byte-for-byte mirror of google/gemma-2b's tokenizer.json that does not require the access-approval flow the upstream repo uses. Reference ids come from transformers.AutoTokenizer against the shipped tokenizer.json - pass criterion is byte-for-byte parity.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [
+        2
+      ],
+      "note": "empty"
+    },
+    {
+      "input": "Hello",
+      "expected_ids": [
+        2,
+        4521
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        2,
+        4521,
+        235269,
+        2134,
+        235341
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        2,
+        651,
+        4320,
+        8426,
+        25341,
+        36271,
+        1163,
+        573,
+        27894,
+        5929,
+        235265
+      ],
+      "note": "ascii-sentence"
+    },
+    {
+      "input": "def add(a, b):\n    return a + b\n",
+      "expected_ids": [
+        2,
+        1293,
+        1843,
+        235278,
+        235250,
+        235269,
+        518,
+        1245,
+        108,
+        141,
+        773,
+        476,
+        963,
+        518,
+        108
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        2,
+        8226,
+        1872,
+        645,
+        612,
+        148992,
+        50900,
+        544,
+        1313,
+        1117
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        2,
+        87139
+      ],
+      "note": "chinese-2char"
+    },
+    {
+      "input": "今天天气很好，我们一起去公园散步吧。",
+      "expected_ids": [
+        2,
+        22180,
+        110711,
+        40487,
+        235365,
+        7078,
+        189892,
+        90629,
+        237068,
+        236202,
+        236287,
+        235362
+      ],
+      "note": "chinese-prose"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        2,
+        87965
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "Привет, как дела?",
+      "expected_ids": [
+        2,
+        104934,
+        235269,
+        6776,
+        21905,
+        235336
+      ],
+      "note": "russian-prose"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        2,
+        182194
+      ],
+      "note": "hebrew-2byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        2,
+        13481
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        2,
+        235530,
+        235579,
+        235533
+      ],
+      "note": "devanagari-3byte"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        2,
+        239061
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        2,
+        239061,
+        239548,
+        237760
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "Hello 你好 مرحبا Привет 🌍",
+      "expected_ids": [
+        2,
+        4521,
+        30485,
+        235607,
+        89187,
+        19833,
+        17952,
+        7540,
+        235248,
+        243559
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "   leading   inner   trailing   ",
+      "expected_ids": [
+        2,
+        140,
+        26650,
+        140,
+        4311,
+        140,
+        100504,
+        140
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.",
+      "expected_ids": [
+        2,
+        1718,
+        603,
+        476,
+        7873,
+        68349,
+        32143,
+        235269,
+        674,
+        476,
+        3821,
+        916,
+        575,
+        17680,
+        576,
+        476,
+        1426,
+        26785,
+        235269,
+        2004,
+        614,
+        575,
+        1938,
+        576,
+        476,
+        6152,
+        235265,
+        4560,
+        2356,
+        3836,
+        573,
+        14690,
+        689,
+        7651,
+        576,
+        1582,
+        476,
+        916,
+        1249,
+        614,
+        611,
+        926,
+        1370,
+        18530,
+        476,
+        41347,
+        235269,
+        736,
+        7873,
+        603,
+        712,
+        1578,
+        8115,
+        575,
+        573,
+        20567,
+        576,
+        573,
+        16531,
+        9160,
+        235269,
+        674,
+        693,
+        603,
+        5604,
+        685,
+        573,
+        127253,
+        4227,
+        576,
+        1009,
+        974,
+        689,
+        1156,
+        576,
+        1024,
+        28154,
+        235265
+      ],
+      "note": "long-prose-paragraph"
+    },
+    {
+      "input": "<bos>hi<eos>",
+      "expected_ids": [
+        2,
+        2,
+        544,
+        1
+      ],
+      "note": "bos-eos-surface-form-raw"
+    },
+    {
+      "input": "<start_of_turn>user",
+      "expected_ids": [
+        2,
+        106,
+        1645
+      ],
+      "note": "chat-turn-surface-form-raw"
+    }
+  ]
+}

@@ -1,0 +1,342 @@
+{
+  "checkpoint": "phi-3-mini-4k-instruct",
+  "source": "transformers.AutoTokenizer.from_pretrained('microsoft/Phi-3-mini-4k-instruct', use_fast=True).encode(input) - reference tokenizer.json is the one that ships in the upstream repo. transformers 5.14.1 / tokenizers 0.22.2.",
+  "note": "Phi-3-mini ships a Llama-family character-BPE tokenizer with SentencePiece byte_fallback and a Sequence[Prepend(▁), Replace(' '→'▁')] normalizer (Llama-2-style prefix, no explicit pre-tokenizer). Adds Phi-3 chat-format special tokens (<|end|>, <|user|>, <|assistant|>) on top of the shared BOS/EOS/UNK. The 20 cases span empty / ASCII prose / code / CJK / Cyrillic / Hebrew / Arabic / Devanagari / emoji / whitespace / long inputs / Phi-3-specific special surface forms. Reference ids come from transformers.AutoTokenizer against the shipped tokenizer.json - pass criterion is byte-for-byte parity.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "Hello",
+      "expected_ids": [
+        15043
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        15043,
+        29892,
+        3186,
+        29991
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        450,
+        4996,
+        17354,
+        1701,
+        29916,
+        432,
+        17204,
+        975,
+        278,
+        17366,
+        11203,
+        29889
+      ],
+      "note": "ascii-sentence"
+    },
+    {
+      "input": "def add(a, b):\n    return a + b\n",
+      "expected_ids": [
+        822,
+        788,
+        29898,
+        29874,
+        29892,
+        289,
+        1125,
+        13,
+        1678,
+        736,
+        263,
+        718,
+        289,
+        13
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        7876,
+        1667,
+        580,
+        426,
+        22088,
+        28457,
+        2918,
+        1496,
+        500
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        29871,
+        30919,
+        31076
+      ],
+      "note": "chinese-2char"
+    },
+    {
+      "input": "今天天气很好，我们一起去公园散步吧。",
+      "expected_ids": [
+        29871,
+        31482,
+        30408,
+        30408,
+        233,
+        179,
+        151,
+        232,
+        193,
+        139,
+        31076,
+        30214,
+        30672,
+        31381,
+        30287,
+        31558,
+        31475,
+        30539,
+        232,
+        158,
+        176,
+        233,
+        152,
+        166,
+        233,
+        176,
+        168,
+        232,
+        147,
+        170,
+        30267
+      ],
+      "note": "chinese-prose"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        9433
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "Привет, как дела?",
+      "expected_ids": [
+        7203,
+        7616,
+        29892,
+        5413,
+        24280,
+        29973
+      ],
+      "note": "russian-prose"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        29871,
+        30294,
+        30249,
+        30205,
+        30404
+      ],
+      "note": "hebrew-2byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        29871,
+        30159,
+        30156
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        29871,
+        30424,
+        30485,
+        30489
+      ],
+      "note": "devanagari-3byte"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        29871,
+        243,
+        162,
+        155,
+        131
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        29871,
+        243,
+        162,
+        155,
+        131,
+        243,
+        162,
+        145,
+        140,
+        243,
+        162,
+        156,
+        133
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "Hello 你好 مرحبا Привет 🌍",
+      "expected_ids": [
+        15043,
+        29871,
+        30919,
+        31076,
+        29871,
+        30159,
+        30156,
+        30240,
+        30177,
+        30112,
+        7203,
+        7616,
+        29871,
+        31494
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "   leading   inner   trailing   ",
+      "expected_ids": [
+        1678,
+        8236,
+        259,
+        6426,
+        259,
+        25053,
+        1678
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.",
+      "expected_ids": [
+        739,
+        338,
+        263,
+        8760,
+        4946,
+        635,
+        24084,
+        3192,
+        29892,
+        393,
+        263,
+        2323,
+        767,
+        297,
+        17715,
+        310,
+        263,
+        1781,
+        19717,
+        29892,
+        1818,
+        367,
+        297,
+        864,
+        310,
+        263,
+        6532,
+        29889,
+        2398,
+        2217,
+        2998,
+        278,
+        21737,
+        470,
+        8386,
+        310,
+        1316,
+        263,
+        767,
+        1122,
+        367,
+        373,
+        670,
+        937,
+        18055,
+        263,
+        29643,
+        29892,
+        445,
+        8760,
+        338,
+        577,
+        1532,
+        4343,
+        297,
+        278,
+        27656,
+        310,
+        278,
+        18830,
+        13175,
+        29892,
+        393,
+        540,
+        338,
+        5545,
+        408,
+        278,
+        1492,
+        1319,
+        2875,
+        310,
+        777,
+        697,
+        470,
+        916,
+        310,
+        1009,
+        29215,
+        29889
+      ],
+      "note": "long-prose-paragraph"
+    },
+    {
+      "input": "<s>hi</s>",
+      "expected_ids": [
+        1,
+        7251,
+        2
+      ],
+      "note": "bos-eos-surface-form-raw"
+    },
+    {
+      "input": "<|end|>",
+      "expected_ids": [
+        32007
+      ],
+      "note": "chat-end-surface-form-raw"
+    }
+  ]
+}
