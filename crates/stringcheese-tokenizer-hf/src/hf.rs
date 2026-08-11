@@ -641,12 +641,11 @@ pub enum HfPreTokenizer {
     /// (see [`Self::Metaspace::replacement`] /
     /// [`Self::Metaspace::prepend_scheme`] /
     /// [`Self::Metaspace::split`]). Materialised via
-    /// [`to_runtime_metaspace`] into a runtime
-    /// [`Metaspace`]; a caller who wants to apply
-    /// it on a Unigram tokenizer today does so by driving the
-    /// returned `Metaspace` themselves. `to_bpe_tokenizer` still
-    /// rejects a Metaspace pre-tokenizer at conversion time — BPE has
-    /// its own byte-level pipeline.
+    /// [`to_runtime_metaspace`] into a runtime [`Metaspace`].
+    /// Both [`to_bpe_tokenizer`] (Mistral-7B-v0.1 layout) and
+    /// [`to_unigram_tokenizer`] accept this shape and wire it through
+    /// [`PreTokenizerSequence`]. `WordPiece` and `WordLevel` have no
+    /// composition rule for Metaspace and still reject it.
     Metaspace {
         /// The character substituted for ASCII space. HF's default
         /// (and what a bare `{"type": "Metaspace"}` block picks up)
@@ -1929,10 +1928,20 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
     }
 
     // Pre-tokenizer — Split(Regex), ByteLevel(+optional inner Split),
-    // a Sequence combining one Split(Regex) with one ByteLevel, or
-    // nothing at all. See `extract_pre_tokenizer` for the exact rules.
+    // a Sequence combining one Split(Regex) with one ByteLevel, a
+    // SentencePiece Metaspace shape (bare or inside a Sequence — the
+    // Mistral-7B-v0.1 layout), or nothing at all. Metaspace routes
+    // through `extract_pre_tokenizer_sequence` and is attached separately
+    // via `BpeTokenizer::with_pre_tokenizer_sequence`; the other shapes
+    // stay on the regex/byte-level pipeline through `extract_pre_tokenizer`.
+    // See both helpers for the exact rules.
+    let mut sequence_pre_tokenizer: Option<PreTokenizerSequence> = None;
     let pipeline = match &config.pre_tokenizer {
         None => PreTokPipeline::None,
+        Some(pt) if pre_tokenizer_uses_metaspace(pt) => {
+            sequence_pre_tokenizer = Some(extract_pre_tokenizer_sequence(pt)?);
+            PreTokPipeline::None
+        }
         Some(pt) => extract_pre_tokenizer(pt)?,
     };
 
@@ -1983,6 +1992,16 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
             };
             tok = tok.with_pre_tokenizer(PreTokenizerRegex::byte_level(add_prefix_space, split));
         }
+    }
+
+    // Metaspace pre-tokenizer (SentencePiece — Mistral / Llama-family
+    // character-BPE checkpoints that place `▁` marking on the
+    // pre-tokenizer side rather than the normalizer side). Attach after
+    // the regex/byte-level pipeline so the two are mutually exclusive
+    // by construction: `pre_tokenizer_uses_metaspace` above steered
+    // Metaspace-shaped configs to `PreTokPipeline::None`.
+    if let Some(seq) = sequence_pre_tokenizer {
+        tok = tok.with_pre_tokenizer_sequence(seq);
     }
 
     // Decoder — every honoured HfDecoder variant materialises into a
@@ -3753,7 +3772,7 @@ pub fn to_unigram_tokenizer(
     // preceded by WhitespaceSplit as xlm-roberta-base ships) is the
     // shape SentencePiece Unigram checkpoints commonly wear.
     if let Some(pt) = &config.pre_tokenizer {
-        let seq = extract_unigram_pre_tokenizer(pt)?;
+        let seq = extract_pre_tokenizer_sequence(pt)?;
         tok = tok.with_pre_tokenizer(seq);
     }
 
@@ -3807,7 +3826,14 @@ pub fn to_unigram_tokenizer(
 
 /// Reduce an [`HfPreTokenizer`] to a runtime [`PreTokenizerSequence`].
 ///
-/// The Unigram runtime accepts the following on-disk shapes:
+/// Shared between [`to_unigram_tokenizer`] and [`to_bpe_tokenizer`] —
+/// both wire this shape onto the SentencePiece-descended checkpoints
+/// they load. The Unigram runtime uses it to feed the Viterbi loop;
+/// the BPE runtime (Mistral-family character-BPE with `byte_fallback`)
+/// uses it to insert the `▁` markers before the character-level merge
+/// loop runs.
+///
+/// Accepted on-disk shapes:
 ///
 /// * A bare `Metaspace` block — wraps into a single-stage sequence
 ///   containing that Metaspace.
@@ -3820,10 +3846,10 @@ pub fn to_unigram_tokenizer(
 ///
 /// Every other pre-tokenizer variant surfaces
 /// [`HfConversionError::UnsupportedPreTokenizer`]; ambiguous mixes
-/// (e.g. a Sequence containing a `Split(Regex)` sibling that the
-/// Unigram runtime cannot compose with) surface
+/// (e.g. a Sequence containing a `Split(Regex)` sibling that neither
+/// runtime can compose with) surface
 /// [`HfConversionError::AmbiguousSequencePreTokenizer`].
-fn extract_unigram_pre_tokenizer(
+fn extract_pre_tokenizer_sequence(
     pt: &HfPreTokenizer,
 ) -> Result<PreTokenizerSequence, HfConversionError> {
     match pt {
@@ -3834,23 +3860,25 @@ fn extract_unigram_pre_tokenizer(
         HfPreTokenizer::WhitespaceSplit(_) => {
             Ok(PreTokenizerSequence::from(PreTokenizer::WhitespaceSplit))
         }
-        HfPreTokenizer::Sequence { pretokenizers } => sequence_to_unigram_pipeline(pretokenizers),
+        HfPreTokenizer::Sequence { pretokenizers } => {
+            sequence_to_pre_tokenizer_sequence(pretokenizers)
+        }
         _ => Err(HfConversionError::UnsupportedPreTokenizer {
             type_name: "non-Metaspace".to_string(),
-            reason: "Unigram tokenizers only accept SentencePiece Metaspace and/or \
-                     WhitespaceSplit pre-tokenizer stages",
+            reason: "SentencePiece-shape tokenizers only accept Metaspace and/or \
+                     WhitespaceSplit pre-tokenizer stages here",
         }),
     }
 }
 
-/// Materialise a Unigram-side `Sequence[...]` block into a runtime
+/// Materialise a `Sequence[...]` block into a runtime
 /// [`PreTokenizerSequence`], applying the acceptance rules documented
-/// on [`extract_unigram_pre_tokenizer`].
+/// on [`extract_pre_tokenizer_sequence`].
 ///
 /// Nested Sequences are permitted and flatten into the enclosing
 /// sequence's stage list; every non-Metaspace / non-WhitespaceSplit
 /// child surfaces the same error the sibling `extract_*` helpers do.
-fn sequence_to_unigram_pipeline(
+fn sequence_to_pre_tokenizer_sequence(
     children: &[HfPreTokenizer],
 ) -> Result<PreTokenizerSequence, HfConversionError> {
     let mut stages: Vec<PreTokenizer> = Vec::with_capacity(children.len());
@@ -3866,14 +3894,15 @@ fn sequence_to_unigram_pipeline(
             HfPreTokenizer::Sequence { pretokenizers } => {
                 // Flatten nested Sequences so the runtime always sees a
                 // flat stage list. Order is preserved.
-                let nested = sequence_to_unigram_pipeline(pretokenizers)?;
+                let nested = sequence_to_pre_tokenizer_sequence(pretokenizers)?;
                 stages.extend(nested.stages().iter().cloned());
             }
             _ => {
                 // Any other child (Split, ByteLevel, Punctuation, ...)
-                // is ambiguous inside a Unigram-oriented Sequence: the
-                // Viterbi runtime has no composition rule for it. Surface
-                // the ambiguity so callers see exactly what tripped.
+                // is ambiguous inside a SentencePiece-oriented Sequence:
+                // neither the Unigram Viterbi loop nor the BPE merge
+                // loop has a composition rule for it. Surface the
+                // ambiguity so callers see exactly what tripped.
                 return Err(HfConversionError::AmbiguousSequencePreTokenizer {
                     child_count: children.len(),
                 });
@@ -3881,6 +3910,22 @@ fn sequence_to_unigram_pipeline(
         }
     }
     Ok(PreTokenizerSequence::new(stages))
+}
+
+/// `true` iff `pt` is (or contains, at any nesting depth in a `Sequence`)
+/// a `SentencePiece` `Metaspace` block — the shape that routes the BPE and
+/// Unigram loaders through [`extract_pre_tokenizer_sequence`] instead of
+/// the regex/byte-level pipeline. A bare `WhitespaceSplit` alone is
+/// *not* considered a Metaspace shape — its current callers (`WordPiece`,
+/// `WordLevel`) have their own pipelines that consume it directly.
+fn pre_tokenizer_uses_metaspace(pt: &HfPreTokenizer) -> bool {
+    match pt {
+        HfPreTokenizer::Metaspace { .. } => true,
+        HfPreTokenizer::Sequence { pretokenizers } => {
+            pretokenizers.iter().any(pre_tokenizer_uses_metaspace)
+        }
+        _ => false,
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -4090,9 +4135,11 @@ fn deferred_pre_tokenizer_reason(pt: &HfPreTokenizer) -> Option<HfConversionErro
         HfPreTokenizer::Punctuation(_) => ("Punctuation", "deferred to a later landing"),
         HfPreTokenizer::Metaspace { .. } => (
             "Metaspace",
-            "SentencePiece Metaspace is not part of the BPE pipeline; \
-             use `to_runtime_metaspace` to materialise the runtime `Metaspace` \
-             and drive it against a Unigram tokenizer",
+            "SentencePiece Metaspace is not supported on the current model \
+             pipeline; the BPE and Unigram loaders wire Metaspace through \
+             `PreTokenizerSequence` (BPE: `with_pre_tokenizer_sequence`, \
+             Unigram: `with_pre_tokenizer`) — WordPiece and WordLevel have \
+             no composition rule for it",
         ),
         HfPreTokenizer::CharDelimiterSplit(_) => {
             ("CharDelimiterSplit", "deferred to a later landing")
@@ -4171,11 +4218,12 @@ fn to_runtime_normalizer(hn: &HfNormalizer) -> Result<Normalizer, HfConversionEr
 ///
 /// `Metaspace` is `SentencePiece`'s pre-tokenizer for Llama, Mistral,
 /// T5, and XLM-RoBERTa — see the runtime [`Metaspace`] type for the
-/// exact semantics. It is not wired into either [`to_bpe_tokenizer`]
-/// (BPE has its own byte-level pipeline) or [`to_unigram_tokenizer`]
-/// (the current Unigram runtime encodes raw input) today; callers who
-/// need to apply it can obtain the typed runtime value here and drive
-/// it themselves against the produced tokenizer.
+/// exact semantics. It is wired into both [`to_bpe_tokenizer`]
+/// (Mistral-7B-v0.1 ships Metaspace on the pre-tokenizer side) and
+/// [`to_unigram_tokenizer`] via the shared [`PreTokenizerSequence`]
+/// path; callers who want the raw typed runtime value (rather than
+/// letting the loaders wire it) can obtain it here and drive it
+/// against the produced tokenizer themselves.
 ///
 /// # Errors
 ///

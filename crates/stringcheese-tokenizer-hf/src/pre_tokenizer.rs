@@ -529,6 +529,26 @@ impl PreTokenizer {
     /// (both current variants return an empty `Vec`).
     #[must_use]
     pub fn apply(&self, text: &str) -> Vec<String> {
+        self.apply_piece(text, true)
+    }
+
+    /// Apply this single stage to `text`, using `is_first_piece` to
+    /// disambiguate the `First` prepend scheme on the [`Self::Metaspace`]
+    /// variant.
+    ///
+    /// For [`Self::WhitespaceSplit`] the flag is ignored —
+    /// `WhitespaceSplit` has no position-dependent behaviour. For
+    /// [`Self::Metaspace`] the flag is forwarded to
+    /// [`Metaspace::apply_piece`].
+    ///
+    /// Composers that thread piece position through a
+    /// [`PreTokenizerSequence`] should prefer this method over
+    /// [`Self::apply`] and pass `is_first_piece == false` for every
+    /// piece that does not originate at offset 0 in the caller-visible
+    /// input — see [`PreTokenizerSequence::apply_first_piece_context`]
+    /// for the composition shape.
+    #[must_use]
+    pub fn apply_piece(&self, text: &str, is_first_piece: bool) -> Vec<String> {
         match self {
             Self::WhitespaceSplit => {
                 if text.is_empty() {
@@ -536,7 +556,7 @@ impl PreTokenizer {
                 }
                 text.split_whitespace().map(String::from).collect()
             }
-            Self::Metaspace(m) => m.apply(text),
+            Self::Metaspace(m) => m.apply_piece(text, is_first_piece),
         }
     }
 }
@@ -636,6 +656,55 @@ impl PreTokenizerSequence {
             let mut next: Vec<String> = Vec::with_capacity(current.len());
             for piece in &current {
                 next.extend(stage.apply(piece));
+            }
+            current = next;
+        }
+        current
+    }
+
+    /// Apply every stage in left-to-right order, threading
+    /// `is_first_piece_of_input` through the `SentencePiece`
+    /// [`Metaspace`] stages' `First` prepend scheme.
+    ///
+    /// Semantics:
+    ///
+    /// * The first stage receives `text` as a single piece with the
+    ///   caller-supplied `is_first_piece_of_input` flag.
+    /// * Each subsequent stage receives the flattened output of the
+    ///   previous stage; the flag is forwarded to *only* the piece
+    ///   whose current index within its parent is 0 AND whose ancestor
+    ///   at the first stage was the first piece. In practice: threading
+    ///   `true` for a region that starts at offset 0 of the caller
+    ///   input, `false` otherwise, matches HF's
+    ///   `Metaspace::pre_tokenize`'s `position == 0` check when the
+    ///   sequence has a single stage; for composed sequences (e.g.
+    ///   xlm-roberta-base's `Sequence[WhitespaceSplit, Metaspace]`) it
+    ///   propagates the flag only through the leading piece at every
+    ///   stage boundary. Callers that never use `First` scheme are
+    ///   independent of the flag — [`PrependScheme::Always`] and
+    ///   [`PrependScheme::Never`] ignore it entirely.
+    ///
+    /// Equivalent to [`Self::apply`] when `is_first_piece_of_input` is
+    /// `true`; use that shorter method when the caller has no
+    /// specials-based region context to thread.
+    #[must_use]
+    pub fn apply_first_piece_context(
+        &self,
+        text: &str,
+        is_first_piece_of_input: bool,
+    ) -> Vec<String> {
+        if self.stages.is_empty() {
+            if text.is_empty() {
+                return Vec::new();
+            }
+            return alloc::vec![text.to_string()];
+        }
+        let mut current: Vec<String> = alloc::vec![text.to_string()];
+        for stage in &self.stages {
+            let mut next: Vec<String> = Vec::with_capacity(current.len());
+            for (i, piece) in current.iter().enumerate() {
+                let piece_is_first = is_first_piece_of_input && i == 0;
+                next.extend(stage.apply_piece(piece, piece_is_first));
             }
             current = next;
         }

@@ -629,6 +629,26 @@ pub struct BpeTokenizer {
     vocab: BpeVocabulary,
     special_tokens: BTreeMap<String, TokenId>,
     pre_tokenizer_pattern: Option<PreTokenizerRegex>,
+    /// Optional [`PreTokenizerSequence`] applied to each between-specials
+    /// region *before* the byte / char seeding and merge loop run. This
+    /// is how SentencePiece-descended checkpoints that ship as
+    /// `model.type == "BPE"` (Mistral-7B-v0.1 is the exemplar — HF's
+    /// `"pre_tokenizer": { "type": "Metaspace", "prepend_scheme": "first",
+    /// "split": false }`) get their word-initial `▁` marking wired
+    /// through the BPE pipeline. When `Some`, each piece the sequence
+    /// produces is fed independently into the (regex-or-not)
+    /// [`Self::pre_tokenizer_pattern`] + seed + merge pipeline; the
+    /// resulting ids are concatenated in order. Held here rather than
+    /// folded into [`Self::pre_tokenizer_pattern`] because the two
+    /// pipelines are conceptually different (regex/byte-level split vs.
+    /// SentencePiece-style substitution): every real checkpoint uses
+    /// exactly one of the two, and keeping them separate lets the
+    /// existing tiktoken-style byte-level path stay untouched.
+    ///
+    /// Available under the `std` Cargo feature (the same gate
+    /// [`PreTokenizerSequence`] lives behind).
+    #[cfg(feature = "std")]
+    pre_tokenizer_sequence: Option<crate::pre_tokenizer::PreTokenizerSequence>,
     decoder: Decoder,
     /// Optional Unicode normalization step run *before* pre-tokenization
     /// and the merge loop. See [`crate::normalizer`] for the semantics
@@ -673,6 +693,8 @@ impl BpeTokenizer {
             vocab,
             special_tokens: BTreeMap::new(),
             pre_tokenizer_pattern: None,
+            #[cfg(feature = "std")]
+            pre_tokenizer_sequence: None,
             decoder: Decoder::Passthrough,
             #[cfg(feature = "hf-normalizer")]
             normalizer: None,
@@ -698,6 +720,34 @@ impl BpeTokenizer {
     #[must_use]
     pub fn with_pre_tokenizer(mut self, pattern: PreTokenizerRegex) -> Self {
         self.pre_tokenizer_pattern = Some(pattern);
+        self
+    }
+
+    /// Attaches (or replaces) a
+    /// [`PreTokenizerSequence`](crate::pre_tokenizer::PreTokenizerSequence)
+    /// applied to each between-specials region *before* the (optional)
+    /// [`Self::with_pre_tokenizer`] pattern and the merge loop run.
+    ///
+    /// This is the SentencePiece-style [`Metaspace`](crate::Metaspace)
+    /// pipeline that Llama-family BPE checkpoints (Mistral-7B-v0.1) wire
+    /// on the pre-tokenizer side rather than the normalizer side (which
+    /// is how Llama-2 does it). Each piece produced by the sequence is
+    /// fed independently into the seed + merge loop and its ids are
+    /// concatenated in order; empty pieces are skipped.
+    ///
+    /// The parameter is `impl Into<PreTokenizerSequence>`, so callers
+    /// can pass either a bare [`Metaspace`](crate::Metaspace) (wrapped
+    /// via [`PreTokenizerSequence::from`](crate::PreTokenizerSequence))
+    /// or a full sequence.
+    ///
+    /// Available under the `std` Cargo feature.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn with_pre_tokenizer_sequence(
+        mut self,
+        pre_tokenizer_sequence: impl Into<crate::pre_tokenizer::PreTokenizerSequence>,
+    ) -> Self {
+        self.pre_tokenizer_sequence = Some(pre_tokenizer_sequence.into());
         self
     }
 
@@ -827,6 +877,16 @@ impl BpeTokenizer {
     #[must_use]
     pub fn normalizer(&self) -> Option<&crate::normalizer::Normalizer> {
         self.normalizer.as_ref()
+    }
+
+    /// Read-only access to the configured
+    /// [`PreTokenizerSequence`](crate::pre_tokenizer::PreTokenizerSequence),
+    /// if any. Wired via [`Self::with_pre_tokenizer_sequence`]; see that
+    /// builder's docs for the semantics.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn pre_tokenizer_sequence(&self) -> Option<&crate::pre_tokenizer::PreTokenizerSequence> {
+        self.pre_tokenizer_sequence.as_ref()
     }
 
     /// Read-only access to the configured post-processor.
@@ -1108,7 +1168,76 @@ impl BpeTokenizer {
     /// offset of `region` within the original input, used to compute
     /// output offsets. The per-word merge strategy is dispatched through
     /// `merge_fn` so the tests can substitute the naive oracle.
+    ///
+    /// When a
+    /// [`PreTokenizerSequence`](crate::pre_tokenizer::PreTokenizerSequence)
+    /// is configured (see [`Self::with_pre_tokenizer_sequence`]), it is
+    /// applied to `region` first and each resulting piece is fed
+    /// *directly* into the merge loop as a single word (bypassing the
+    /// regex/whitespace [`pre_tokenize`] fall-back — the sequence is
+    /// itself the pre-tokenizer, so treating each of its pieces as one
+    /// word matches HF's pipeline shape exactly and preserves
+    /// non-space whitespace like `\n` that the default whitespace-split
+    /// fall-back would drop). Reported offsets on the emitted pieces
+    /// are relative to the transformed piece's byte layout:
+    /// `SentencePiece` Metaspace substitutes `▁` (U+2581, 3 bytes) for
+    /// ASCII space (1 byte), so the transformed bytes do not map back
+    /// to the caller's original input bytes. Mirrors the byte-level
+    /// path's "offsets into the transformed source" shape.
     fn encode_region_bpe(
+        &self,
+        region: &str,
+        region_offset: usize,
+        out: &mut Vec<(TokenId, Range<usize>, bool)>,
+        merge_fn: MergeLoopFn,
+    ) -> Result<(), TokenizerError> {
+        if region.is_empty() {
+            return Ok(());
+        }
+
+        // If a PreTokenizerSequence is wired up (SentencePiece Metaspace
+        // on Mistral-family BPE), apply it and hand each piece straight
+        // to the merge loop. Skipping `pre_tokenize` here is deliberate:
+        // the sequence has already split the region into the pieces the
+        // downstream model expects, and the default whitespace-split
+        // fall-back in `pre_tokenize` would otherwise drop `\n` and
+        // other non-space whitespace that Metaspace intentionally
+        // preserves. The offset accumulator is a synthetic cursor over
+        // the transformed pieces — see the doc comment above for why
+        // this cannot map back to caller-input bytes.
+        //
+        // We thread `region_offset == 0` as the `is_first_piece_of_input`
+        // flag: HF's `Metaspace::pre_tokenize` prepends under
+        // `PrependScheme::First` only when the piece's absolute offset
+        // in the original input is zero — a region emitted after a
+        // pre-extracted special has `region_offset > 0` and so must NOT
+        // be prepended. This is what keeps `"<s>hi</s>"` on Mistral
+        // encoding the middle `hi` as `hi` (id 5365) rather than `▁hi`
+        // (id 12014). The flag is a no-op for the `Always` / `Never`
+        // schemes, so byte-for-byte behaviour on non-`First` checkpoints
+        // is unchanged.
+        #[cfg(feature = "std")]
+        if let Some(seq) = &self.pre_tokenizer_sequence {
+            let is_first_piece_of_input = region_offset == 0;
+            let mut cursor = region_offset;
+            for piece in seq.apply_first_piece_context(region, is_first_piece_of_input) {
+                if piece.is_empty() {
+                    continue;
+                }
+                let piece_len = piece.len();
+                self.encode_word_bpe(&piece, 0, cursor, out, merge_fn)?;
+                cursor += piece_len;
+            }
+            return Ok(());
+        }
+
+        self.encode_region_bpe_inner(region, region_offset, out, merge_fn)
+    }
+
+    /// Inner half of [`Self::encode_region_bpe`] — pre-tokenize `region`
+    /// via the (optional) regex/byte-level pattern, then feed each
+    /// produced word through [`Self::encode_word_bpe`].
+    fn encode_region_bpe_inner(
         &self,
         region: &str,
         region_offset: usize,
@@ -1125,6 +1254,39 @@ impl BpeTokenizer {
         // straight from `region`; the byte-level path allocates one
         // owned `String` per chunk with the byte↔char mapping applied.
         let words = pre_tokenize(region, self.pre_tokenizer_pattern.as_ref());
+        for word in words {
+            let word_text: &str = word.text.as_ref();
+            self.encode_word_bpe(word_text, word.offset, region_offset, out, merge_fn)?;
+        }
+        Ok(())
+    }
+
+    /// Seed pieces from `word_text`, run the merge loop, and emit each
+    /// surviving piece as a `(TokenId, offset_range, special=false)`
+    /// entry.
+    ///
+    /// * `word_text` is the string the merge loop runs on (already
+    ///   pre-tokenized by the caller — either by `pre_tokenize` or by a
+    ///   [`PreTokenizerSequence`] stage).
+    /// * `word_offset_in_region` is the byte offset of `word_text`
+    ///   within the enclosing region. The `PreTokenizerSequence` path
+    ///   passes `0` because each piece is treated as its own region.
+    /// * `region_offset` is the byte offset of the enclosing region
+    ///   within the caller's input.
+    ///
+    /// The emitted offsets are `region_offset + word_offset_in_region +
+    /// piece_start_in_word .. + piece_len`, matching the offset shape
+    /// the rest of the encode pipeline reports.
+    fn encode_word_bpe(
+        &self,
+        word_text: &str,
+        word_offset_in_region: usize,
+        region_offset: usize,
+        out: &mut Vec<(TokenId, Range<usize>, bool)>,
+        merge_fn: MergeLoopFn,
+    ) -> Result<(), TokenizerError> {
+        let word_bytes = word_text.as_bytes();
+
         // Whether the pre-tokenizer is ByteLevel — decides the piece
         // seed strategy below. Encoded ByteLevel chars are up to 2
         // UTF-8 bytes each, so seeding per byte would split `Ġ` in
@@ -1143,62 +1305,56 @@ impl BpeTokenizer {
         // pieces to the fallback fan-out below.
         let seed_per_char = byte_level || self.byte_fallback.is_some();
 
-        for word in words {
-            let word_start_in_region = word.offset;
-            let word_text: &str = word.text.as_ref();
-            let word_bytes = word_text.as_bytes();
+        // Seed pieces: one per byte in the default path, one per
+        // *char* in both the byte-level and byte-fallback paths
+        // (see comment above).
+        let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
+        if seed_per_char {
+            let mut byte_cursor: usize = 0;
+            for c in word_text.chars() {
+                let len = c.len_utf8();
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                pieces.push(PieceRef {
+                    bytes: s.as_bytes().to_vec(),
+                    start: byte_cursor,
+                    len,
+                });
+                byte_cursor += len;
+            }
+        } else {
+            for (i, &b) in word_bytes.iter().enumerate() {
+                pieces.push(PieceRef {
+                    bytes: alloc::vec![b],
+                    start: i,
+                    len: 1,
+                });
+            }
+        }
 
-            // Seed pieces: one per byte in the default path, one per
-            // *char* in both the byte-level and byte-fallback paths
-            // (see comment above).
-            let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
-            if seed_per_char {
-                let mut byte_cursor: usize = 0;
-                for c in word_text.chars() {
-                    let len = c.len_utf8();
-                    let mut buf = [0u8; 4];
-                    let s = c.encode_utf8(&mut buf);
-                    pieces.push(PieceRef {
-                        bytes: s.as_bytes().to_vec(),
-                        start: byte_cursor,
-                        len,
-                    });
-                    byte_cursor += len;
+        merge_fn(self, &mut pieces);
+
+        for p in pieces {
+            if let Some(id) = self.vocab.id(&p.bytes) {
+                let abs_start = region_offset + word_offset_in_region + p.start;
+                let abs_end = abs_start + p.len;
+                out.push((id, abs_start..abs_end, false));
+            } else if let Some(bf) = self.byte_fallback.as_ref() {
+                // Byte-fallback: the piece survived the merge loop
+                // but its bytes are not in the vocab. Emit one
+                // reserved `<0xXX>` id per byte of the piece. The
+                // offset span of each emitted id is a single byte
+                // in the input — matching how the caller can slice
+                // `input.as_bytes()[range]` back to recover the
+                // original byte.
+                for (k, &b) in p.bytes.iter().enumerate() {
+                    let id = bf[b as usize];
+                    let abs_start = region_offset + word_offset_in_region + p.start + k;
+                    let abs_end = abs_start + 1;
+                    out.push((id, abs_start..abs_end, false));
                 }
             } else {
-                for (i, &b) in word_bytes.iter().enumerate() {
-                    pieces.push(PieceRef {
-                        bytes: alloc::vec![b],
-                        start: i,
-                        len: 1,
-                    });
-                }
-            }
-
-            merge_fn(self, &mut pieces);
-
-            for p in pieces {
-                if let Some(id) = self.vocab.id(&p.bytes) {
-                    let abs_start = region_offset + word_start_in_region + p.start;
-                    let abs_end = abs_start + p.len;
-                    out.push((id, abs_start..abs_end, false));
-                } else if let Some(bf) = self.byte_fallback.as_ref() {
-                    // Byte-fallback: the piece survived the merge loop
-                    // but its bytes are not in the vocab. Emit one
-                    // reserved `<0xXX>` id per byte of the piece. The
-                    // offset span of each emitted id is a single byte
-                    // in the input — matching how the caller can slice
-                    // `input.as_bytes()[range]` back to recover the
-                    // original byte.
-                    for (k, &b) in p.bytes.iter().enumerate() {
-                        let id = bf[b as usize];
-                        let abs_start = region_offset + word_start_in_region + p.start + k;
-                        let abs_end = abs_start + 1;
-                        out.push((id, abs_start..abs_end, false));
-                    }
-                } else {
-                    return Err(TokenizerError::UnknownToken(format_bytes_literal(&p.bytes)));
-                }
+                return Err(TokenizerError::UnknownToken(format_bytes_literal(&p.bytes)));
             }
         }
         Ok(())
@@ -2067,6 +2223,186 @@ mod tests {
                 u32::from(b'd')
             ]
         );
+    }
+
+    // ---------------------------------------------------------------
+    // PreTokenizerSequence — SentencePiece Metaspace on the BPE side
+    // (Mistral-7B-v0.1 layout: Metaspace with prepend_scheme="first"
+    // and split=false, character-level merges over a vocab that
+    // stores UTF-8 surface strings). These tests exercise the encode
+    // path with a hand-crafted vocab so they run without the real
+    // Mistral tokenizer.json on disk.
+    // ---------------------------------------------------------------
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn pre_tokenizer_sequence_metaspace_split_false_encodes_transformed_bytes() {
+        use crate::pre_tokenizer::{Metaspace, PrependScheme};
+
+        // Build a vocab that resembles a tiny character-BPE (Mistral-shape)
+        // vocab: byte alphabet at 0..256, then UTF-8 surfaces for
+        // `▁`, `h`, `e`, `l`, `o`, `w`, `r`, `d`. Merges compose
+        // `▁hello` and `▁world` end-to-end so the full-word tokens beat
+        // the character-by-character seeds.
+        let (mut vocab, _) = byte_vocab_with_extras(&[]);
+        let space_utf8 = "\u{2581}".as_bytes();
+        vocab.insert(256, space_utf8.to_vec()).unwrap();
+        vocab.insert(257, "\u{2581}h".as_bytes().to_vec()).unwrap();
+        vocab.insert(258, "\u{2581}he".as_bytes().to_vec()).unwrap();
+        vocab
+            .insert(259, "\u{2581}hel".as_bytes().to_vec())
+            .unwrap();
+        vocab
+            .insert(260, "\u{2581}hell".as_bytes().to_vec())
+            .unwrap();
+        vocab
+            .insert(261, "\u{2581}hello".as_bytes().to_vec())
+            .unwrap();
+        vocab.insert(262, "\u{2581}w".as_bytes().to_vec()).unwrap();
+        vocab.insert(263, "\u{2581}wo".as_bytes().to_vec()).unwrap();
+        vocab
+            .insert(264, "\u{2581}wor".as_bytes().to_vec())
+            .unwrap();
+        vocab
+            .insert(265, "\u{2581}worl".as_bytes().to_vec())
+            .unwrap();
+        vocab
+            .insert(266, "\u{2581}world".as_bytes().to_vec())
+            .unwrap();
+
+        let mut merges = BpeMergeTable::new();
+        // Compose ▁hello left-to-right.
+        merges.insert(space_utf8.to_vec(), b"h".to_vec(), 0);
+        merges.insert("\u{2581}h".as_bytes().to_vec(), b"e".to_vec(), 1);
+        merges.insert("\u{2581}he".as_bytes().to_vec(), b"l".to_vec(), 2);
+        merges.insert("\u{2581}hel".as_bytes().to_vec(), b"l".to_vec(), 3);
+        merges.insert("\u{2581}hell".as_bytes().to_vec(), b"o".to_vec(), 4);
+        // And ▁world.
+        merges.insert(space_utf8.to_vec(), b"w".to_vec(), 5);
+        merges.insert("\u{2581}w".as_bytes().to_vec(), b"o".to_vec(), 6);
+        merges.insert("\u{2581}wo".as_bytes().to_vec(), b"r".to_vec(), 7);
+        merges.insert("\u{2581}wor".as_bytes().to_vec(), b"l".to_vec(), 8);
+        merges.insert("\u{2581}worl".as_bytes().to_vec(), b"d".to_vec(), 9);
+
+        // Metaspace with split=false and prepend_scheme=first (Mistral's
+        // exact shape). Enable byte_fallback so seed_per_char turns on
+        // — required because the vocab surfaces are UTF-8 characters,
+        // not per-byte alphabet entries.
+        let byte_fallback: [TokenId; 256] = core::array::from_fn(|b| u32::try_from(b).unwrap());
+        let tok = BpeTokenizer::from_parts(merges, vocab)
+            .with_byte_fallback(byte_fallback)
+            .with_pre_tokenizer_sequence(Metaspace {
+                replacement: Metaspace::DEFAULT_REPLACEMENT,
+                prepend_scheme: PrependScheme::First,
+                split: false,
+            });
+
+        let enc = tok.encode("hello world").unwrap();
+        // Metaspace transforms "hello world" into "▁hello▁world" (one
+        // piece, split=false). Merges compose that into `▁hello` (261)
+        // and `▁world` (266).
+        assert_eq!(enc.ids, vec![261, 266]);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn pre_tokenizer_sequence_metaspace_split_true_yields_per_word_pieces() {
+        use crate::pre_tokenizer::Metaspace;
+
+        // Same shape as above, but with split=true: Metaspace produces
+        // two separate pieces (`▁hello` and `▁world`) that each feed
+        // the merge loop independently. Ids should be identical to the
+        // split=false case because per-word merges compose the same
+        // full-word tokens.
+        let (mut vocab, _) = byte_vocab_with_extras(&[]);
+        let space_utf8 = "\u{2581}".as_bytes();
+        vocab.insert(256, space_utf8.to_vec()).unwrap();
+        vocab
+            .insert(261, "\u{2581}hello".as_bytes().to_vec())
+            .unwrap();
+        vocab
+            .insert(266, "\u{2581}world".as_bytes().to_vec())
+            .unwrap();
+
+        let mut merges = BpeMergeTable::new();
+        merges.insert(space_utf8.to_vec(), b"h".to_vec(), 0);
+        merges.insert("\u{2581}h".as_bytes().to_vec(), b"e".to_vec(), 1);
+        merges.insert("\u{2581}he".as_bytes().to_vec(), b"l".to_vec(), 2);
+        merges.insert("\u{2581}hel".as_bytes().to_vec(), b"l".to_vec(), 3);
+        merges.insert("\u{2581}hell".as_bytes().to_vec(), b"o".to_vec(), 4);
+        merges.insert(space_utf8.to_vec(), b"w".to_vec(), 5);
+        merges.insert("\u{2581}w".as_bytes().to_vec(), b"o".to_vec(), 6);
+        merges.insert("\u{2581}wo".as_bytes().to_vec(), b"r".to_vec(), 7);
+        merges.insert("\u{2581}wor".as_bytes().to_vec(), b"l".to_vec(), 8);
+        merges.insert("\u{2581}worl".as_bytes().to_vec(), b"d".to_vec(), 9);
+        // Vocab needs the intermediate merged pieces so the merge loop
+        // can walk from single-char seeds to the final `▁hello` id.
+        // (Filled after `merges` is built because the vocab was
+        // constructed above.)
+        // (Skipped for brevity: the merge loop still produces `▁hello`
+        // because each merge step just needs the produced bytes to be
+        // in the merge table — it looks up the vocab id at emit time.)
+
+        let byte_fallback: [TokenId; 256] = core::array::from_fn(|b| u32::try_from(b).unwrap());
+        let tok = BpeTokenizer::from_parts(merges, vocab)
+            .with_byte_fallback(byte_fallback)
+            .with_pre_tokenizer_sequence(Metaspace::new());
+
+        let enc = tok.encode("hello world").unwrap();
+        assert_eq!(enc.ids, vec![261, 266]);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn pre_tokenizer_sequence_getter_reflects_configuration() {
+        use crate::pre_tokenizer::Metaspace;
+
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let tok_bare = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab.clone());
+        assert!(tok_bare.pre_tokenizer_sequence().is_none());
+
+        let tok_wired = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab)
+            .with_pre_tokenizer_sequence(Metaspace::new());
+        let seq = tok_wired
+            .pre_tokenizer_sequence()
+            .expect("Metaspace sequence must be wired");
+        assert!(seq.metaspace().is_some());
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn pre_tokenizer_sequence_extracts_specials_around_metaspace_region() {
+        use crate::pre_tokenizer::Metaspace;
+
+        // A special token embedded inside the input still lands as a
+        // special id — the pre_tokenizer_sequence runs per region
+        // (between-specials extraction), matching how HF's tokenizers
+        // pipeline is layered. Vocab / merges assembled just enough to
+        // let `▁hi` compose end-to-end.
+        let (mut vocab, _) = byte_vocab_with_extras(&[]);
+        let space_utf8 = "\u{2581}".as_bytes();
+        vocab.insert(256, space_utf8.to_vec()).unwrap();
+        vocab.insert(300, "\u{2581}h".as_bytes().to_vec()).unwrap();
+        vocab.insert(301, "\u{2581}hi".as_bytes().to_vec()).unwrap();
+
+        let mut merges = BpeMergeTable::new();
+        merges.insert(space_utf8.to_vec(), b"h".to_vec(), 0);
+        merges.insert("\u{2581}h".as_bytes().to_vec(), b"i".to_vec(), 1);
+
+        let mut specials: BTreeMap<String, TokenId> = BTreeMap::new();
+        specials.insert(String::from("<s>"), 1);
+        specials.insert(String::from("</s>"), 2);
+
+        let byte_fallback: [TokenId; 256] = core::array::from_fn(|b| u32::try_from(b).unwrap());
+        let tok = BpeTokenizer::from_parts(merges, vocab)
+            .with_special_tokens(specials)
+            .with_byte_fallback(byte_fallback)
+            .with_pre_tokenizer_sequence(Metaspace::new());
+
+        let enc = tok.encode("<s>hi</s>").unwrap();
+        // <s>, ▁hi, </s>.
+        assert_eq!(enc.ids, vec![1, 301, 2]);
+        assert_eq!(enc.special_mask, vec![true, false, true]);
     }
 
     #[test]
