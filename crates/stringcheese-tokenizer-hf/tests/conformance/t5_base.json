@@ -1,0 +1,342 @@
+{
+  "checkpoint": "t5-base",
+  "source": "transformers.AutoTokenizer.from_pretrained('google-t5/t5-base', use_fast=True).encode(input) - reference tokenizer.json is the one that ships in the upstream repo. transformers 5.14.1 / tokenizers 0.22.2.",
+  "note": "T5-base ships a SentencePiece Unigram tokenizer with a Precompiled charsmap normalizer, a Sequence[WhitespaceSplit, Metaspace(add_prefix_space=true)] pre-tokenizer, and a TemplateProcessing post-processor that appends the </s> EOS token (id 1). The vocabulary has 32100 entries including 100 <extra_id_N> sentinel tokens. The 20 cases span empty / ASCII prose / code / CJK / Cyrillic / Hebrew / Arabic / Devanagari / emoji / whitespace / long inputs / T5-specific task-prefix and sentinel surface forms. Reference ids come from transformers.AutoTokenizer against the shipped tokenizer.json - pass criterion is byte-for-byte parity.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [
+        1
+      ],
+      "note": "empty"
+    },
+    {
+      "input": "Hello",
+      "expected_ids": [
+        8774,
+        1
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        8774,
+        6,
+        296,
+        55,
+        1
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        37,
+        1704,
+        4216,
+        3,
+        20400,
+        4418,
+        7,
+        147,
+        8,
+        19743,
+        1782,
+        5,
+        1
+      ],
+      "note": "ascii-sentence"
+    },
+    {
+      "input": "def add(a, b):\n    return a + b\n",
+      "expected_ids": [
+        20,
+        89,
+        617,
+        599,
+        9,
+        6,
+        3,
+        115,
+        61,
+        10,
+        1205,
+        3,
+        9,
+        1768,
+        3,
+        115,
+        1
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        3,
+        89,
+        29,
+        711,
+        9960,
+        3,
+        2,
+        2281,
+        40,
+        29,
+        55,
+        599,
+        121,
+        107,
+        23,
+        121,
+        3670,
+        3,
+        2,
+        1
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "chinese-2char"
+    },
+    {
+      "input": "今天天气很好，我们一起去公园散步吧。",
+      "expected_ids": [
+        3,
+        2,
+        6,
+        2,
+        1
+      ],
+      "note": "chinese-prose"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        3,
+        5814,
+        8452,
+        1
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "Привет, как дела?",
+      "expected_ids": [
+        3,
+        2,
+        14709,
+        6609,
+        15042,
+        6,
+        3,
+        12095,
+        6652,
+        3,
+        19473,
+        17148,
+        58,
+        1
+      ],
+      "note": "russian-prose"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "hebrew-2byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "devanagari-3byte"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        3,
+        2,
+        1
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "Hello 你好 مرحبا Привет 🌍",
+      "expected_ids": [
+        8774,
+        3,
+        2,
+        3,
+        2,
+        3,
+        2,
+        14709,
+        6609,
+        15042,
+        3,
+        2,
+        1
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "   leading   inner   trailing   ",
+      "expected_ids": [
+        1374,
+        4723,
+        5032,
+        53,
+        1
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.",
+      "expected_ids": [
+        94,
+        19,
+        3,
+        9,
+        2827,
+        7687,
+        120,
+        16974,
+        6,
+        24,
+        3,
+        9,
+        712,
+        388,
+        16,
+        8244,
+        13,
+        3,
+        9,
+        207,
+        13462,
+        6,
+        398,
+        36,
+        16,
+        241,
+        13,
+        3,
+        9,
+        2512,
+        5,
+        611,
+        385,
+        801,
+        8,
+        6382,
+        42,
+        2441,
+        13,
+        224,
+        3,
+        9,
+        388,
+        164,
+        36,
+        30,
+        112,
+        166,
+        7084,
+        3,
+        9,
+        19704,
+        6,
+        48,
+        2827,
+        19,
+        78,
+        168,
+        3599,
+        16,
+        8,
+        10884,
+        13,
+        8,
+        3825,
+        1791,
+        6,
+        24,
+        3,
+        88,
+        19,
+        1702,
+        38,
+        8,
+        269,
+        1329,
+        785,
+        13,
+        128,
+        80,
+        42,
+        119,
+        13,
+        70,
+        16649,
+        5,
+        1
+      ],
+      "note": "long-prose-paragraph"
+    },
+    {
+      "input": "translate English to German: Hello",
+      "expected_ids": [
+        13959,
+        1566,
+        12,
+        2968,
+        10,
+        8774,
+        1
+      ],
+      "note": "t5-extra-id-surface-form-raw"
+    },
+    {
+      "input": "<extra_id_0> and <extra_id_1>",
+      "expected_ids": [
+        32099,
+        11,
+        32098,
+        1
+      ],
+      "note": "t5-sentinel-surface-form-raw"
+    }
+  ]
+}

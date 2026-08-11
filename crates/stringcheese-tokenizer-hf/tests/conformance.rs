@@ -410,6 +410,9 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "llama_2_7b.json",
     "mistral_7b_v01.json",
     "qwen2_7b.json",
+    "phi_3_mini_4k_instruct.json",
+    "gemma_2b.json",
+    "t5_base.json",
 ];
 
 #[test]
@@ -639,4 +642,57 @@ fn conformance_mistral_7b_v01() {
 )]
 fn conformance_qwen2_7b() {
     run_fixture("qwen2_7b.json", "qwen2-7b");
+}
+
+// Real microsoft/Phi-3-mini-4k-instruct tokenizer.json — a Llama-family
+// character-BPE with SentencePiece byte_fallback and a
+// `Sequence[Prepend("▁"), Replace(" " → "▁")]` normalizer (no explicit
+// pre-tokenizer). Same runtime shape as Llama-2, exercised over a
+// distinct 32k vocabulary with 14 added tokens covering Phi-3's
+// chat-format specials (<|end|>, <|user|>, <|assistant|>). Reference
+// ids come from `transformers.AutoTokenizer.from_pretrained(
+// 'microsoft/Phi-3-mini-4k-instruct')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_phi_3_mini_4k_instruct() {
+    run_fixture("phi_3_mini_4k_instruct.json", "phi-3-mini-4k-instruct");
+}
+
+// Real google/gemma-2b tokenizer.json — a SentencePiece-BPE with
+// byte_fallback and a bare `Replace(" " → "▁")` normalizer (no
+// `Prepend`, no pre-tokenizer) over a 256k vocabulary that includes
+// 217 dedicated added-tokens for Gemma's chat format
+// (<start_of_turn>, <end_of_turn>, ...). Distinct shape from the
+// Llama-family fixtures: no Prepend and a much larger vocabulary.
+// The local vocab is fetched via the ungated `unsloth/gemma-2b` mirror
+// because `google/gemma-2b` requires access approval. Reference ids
+// come from `transformers.AutoTokenizer.from_pretrained(
+// 'unsloth/gemma-2b')` against the same tokenizer.json.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_gemma_2b() {
+    run_fixture("gemma_2b.json", "gemma-2b");
+}
+
+// Real google-t5/t5-base tokenizer.json — a SentencePiece Unigram
+// tokenizer with a `Precompiled` charsmap normalizer, a
+// `Sequence[WhitespaceSplit, Metaspace]` pre-tokenizer, and a
+// `TemplateProcessing` post-processor that appends the </s> EOS
+// (id 1). 32100-entry vocabulary including 100 <extra_id_N> sentinel
+// tokens. First fixture exercising the T5-style Unigram+Metaspace
+// combination. Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained('google-t5/t5-base')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_t5_base() {
+    run_fixture("t5_base.json", "t5-base");
 }
