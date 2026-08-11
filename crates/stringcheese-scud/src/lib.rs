@@ -25,8 +25,9 @@
 //!   capability tag, embedded header. Loader rejects mismatched magic,
 //!   unsupported major versions, unknown capabilities, and truncated
 //!   bytes.
-//! * **Capability views (raw body)** — [`CaseDataView`] over the body
-//!   bytes. The full design allows outer Brotli/Zstd compression
+//! * **Capability views (raw body)** — [`CaseDataView`] (Phase 1) and
+//!   [`CollationDataView`] (Phase 2) over the body bytes.
+//!   The full design allows outer Brotli/Zstd compression
 //!   (§ 4.2 flag bits 0 and 1); Phase 1's writer emits the *raw*
 //!   variant (flag bits clear) so the reference implementation stays
 //!   dependency-free. The header layout is forward-compatible with a
@@ -485,6 +486,22 @@ impl<'a> ScudFile<'a> {
             });
         }
         CaseDataView::parse(self.body())
+    }
+
+    /// Project the body as a collation view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_COLLATION`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`CollationDataView`] borrows into
+    /// this [`ScudFile`]'s bytes.
+    pub fn as_collation_data(&self) -> Result<CollationDataView<'a>, ScudError> {
+        if self.capability() != CAP_COLLATION {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_COLLATION,
+                got: self.capability(),
+            });
+        }
+        CollationDataView::parse(self.body())
     }
 }
 
@@ -1024,6 +1041,123 @@ fn decode_full_record(payloads: &[u8], off: usize) -> Option<FullMapping> {
 }
 
 // -----------------------------------------------------------------------
+// Collation view
+// -----------------------------------------------------------------------
+
+/// Section id for the collation-tailoring **expansion** table
+/// (single-scalar → up-to-N-scalar replacements applied to both
+/// operands before UCA comparison). Bytes `E` `x` `p` `n`.
+///
+/// The exact wire shape mirrors [`SECT_FULL_UPPER`] — a 4-byte count
+/// followed by `(u32 src, u32 payload_offset)` index entries in
+/// ascending `src` order, followed by a packed payload region where
+/// each record is `u8 n, [u32; n]`. Entries with `n == 0` are
+/// forbidden by the writer.
+pub const SECT_EXPANSIONS: [u8; 4] = *b"Expn";
+
+/// Section id for a compact collation-options blob carried in the
+/// pack header. Bytes `O` `p` `t` `0`.
+///
+/// The layout is a fixed 4-byte record: `u8 default_strength, u8
+/// case_insensitive, u8 reserved, u8 reserved`. `default_strength`
+/// values map onto the wire encoding of the collation strength enum
+/// (0 = Primary, 1 = Secondary, 2 = Tertiary, 3 = Quaternary,
+/// 4 = Identical). Unknown / absent → the algorithm's compile-time
+/// default (Tertiary).
+pub const SECT_COLLATION_OPTIONS: [u8; 4] = *b"Opt0";
+
+/// Zero-copy view into a SCUD file's collation body.
+///
+/// Every accessor is `O(log n)` — the expansion table is
+/// binary-searched by source scalar. The view carries the parsed
+/// section byte-slices; each lookup re-decodes the fixed-width
+/// record at the matched offset.
+///
+/// The Phase 2 wire format is deliberately minimal: one
+/// character-expansion table (used to encode DE-phonebook
+/// `ä → ae`, both DE variants' `ß → ss`, and future locale
+/// tailorings) plus a 4-byte options blob carrying the pack's
+/// default strength. Later phases can add DUCET-root-reweight
+/// sections without touching the loader — a new section id ships
+/// alongside its consumer.
+#[derive(Debug, Clone, Copy)]
+pub struct CollationDataView<'a> {
+    /// Sorted list of `(u32 src, u8 n, [u32; n])` records — the
+    /// character-expansion table.
+    expansions: &'a [u8],
+    /// Optional 4-byte options blob (see [`SECT_COLLATION_OPTIONS`]).
+    /// Empty when the pack ships no options blob (algorithm defaults
+    /// apply).
+    options: &'a [u8],
+}
+
+impl<'a> CollationDataView<'a> {
+    /// Parse a collation body into a section-projected view.
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            expansions: reader.find(SECT_EXPANSIONS)?.unwrap_or(&[]),
+            options: reader.find(SECT_COLLATION_OPTIONS)?.unwrap_or(&[]),
+        })
+    }
+
+    /// Look up the character-expansion for `src`. Returns a
+    /// [`FullMapping`] of one or more replacement scalars, or `None`
+    /// when this pack has no expansion for the source.
+    #[must_use]
+    pub fn expansion(&self, src: u32) -> Option<FullMapping> {
+        binary_search_full(self.expansions, src)
+    }
+
+    /// True iff the pack carries at least one character expansion.
+    ///
+    /// A caller consulting the pack for pre-normalization can skip
+    /// the expansion walk when this is false, saving one binary
+    /// search per input scalar.
+    #[must_use]
+    pub fn has_expansions(&self) -> bool {
+        // Layout: u32 count followed by index entries; empty when
+        // `expansions` is under 4 bytes or its count field is 0.
+        if self.expansions.len() < 4 {
+            return false;
+        }
+        read_u32(&self.expansions[0..4]) != 0
+    }
+
+    /// Number of expansion entries in the pack. Useful for reporting
+    /// pack coverage in test logs.
+    #[must_use]
+    pub fn expansion_count(&self) -> usize {
+        if self.expansions.len() < 4 {
+            return 0;
+        }
+        read_u32(&self.expansions[0..4]) as usize
+    }
+
+    /// The pack's default collation strength, if any. Returns `None`
+    /// when the pack ships no options blob; callers apply their own
+    /// compile-time default (typically Tertiary).
+    #[must_use]
+    pub fn default_strength(&self) -> Option<u8> {
+        if self.options.len() < 4 {
+            return None;
+        }
+        Some(self.options[0])
+    }
+
+    /// The pack's case-insensitive flag, if the options blob carries
+    /// one. Interpretation is caller-side (typically applied only at
+    /// Tertiary strength or below).
+    #[must_use]
+    pub fn case_insensitive(&self) -> Option<bool> {
+        if self.options.len() < 4 {
+            return None;
+        }
+        Some(self.options[1] != 0)
+    }
+}
+
+// -----------------------------------------------------------------------
 // Writer
 // -----------------------------------------------------------------------
 
@@ -1246,6 +1380,80 @@ impl CaseSectionBuilder {
     }
 }
 
+/// Builds the byte-encoded sections that a collation SCUD pack
+/// contains. Sorts input entries by source scalar so the reader's
+/// binary search stays valid.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct CollationSectionBuilder {
+    expansions: Vec<(u32, Vec<u32>)>,
+    default_strength: Option<u8>,
+    case_insensitive: Option<bool>,
+}
+
+#[cfg(feature = "alloc")]
+impl CollationSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a `(from, [to...])` character-expansion mapping.
+    ///
+    /// Applied to both operands before UCA comparison — the classic
+    /// use is DE-phonebook `ä → ae` (`push_expansion('ä' as u32,
+    /// &['a' as u32, 'e' as u32])`) and both DE variants' `ß → ss`.
+    pub fn push_expansion(&mut self, from: u32, to: &[u32]) {
+        self.expansions.push((from, to.to_vec()));
+    }
+
+    /// Set the pack's default collation strength (see
+    /// [`SECT_COLLATION_OPTIONS`] for the wire encoding).
+    pub fn set_default_strength(&mut self, strength: u8) {
+        self.default_strength = Some(strength);
+    }
+
+    /// Set the pack's case-insensitive flag.
+    pub fn set_case_insensitive(&mut self, v: bool) {
+        self.case_insensitive = Some(v);
+    }
+
+    /// Encode the character-expansion table.
+    ///
+    /// Wire shape mirrors the case-mapping full tables: a 4-byte
+    /// `count` prefix, `count` fixed-width `(u32 src, u32
+    /// payload_offset)` index entries sorted by `src`, and a packed
+    /// payload region where each record is `u8 n, [u32; n]`.
+    #[must_use]
+    pub fn expansion_bytes(&self) -> Vec<u8> {
+        encode_full_table(&self.expansions)
+    }
+
+    /// Encode the options blob. Returns an empty `Vec` when neither
+    /// default-strength nor case-insensitive is set — callers use
+    /// [`is_options_present`](Self::is_options_present) to decide
+    /// whether to append the section at all.
+    #[must_use]
+    pub fn options_bytes(&self) -> Vec<u8> {
+        if !self.is_options_present() {
+            return Vec::new();
+        }
+        alloc::vec![
+            self.default_strength.unwrap_or(2), // 2 = Tertiary default
+            u8::from(self.case_insensitive.unwrap_or(false)),
+            0, // reserved
+            0, // reserved
+        ]
+    }
+
+    /// True iff the builder carries any options-blob content.
+    #[must_use]
+    pub fn is_options_present(&self) -> bool {
+        self.default_strength.is_some() || self.case_insensitive.is_some()
+    }
+}
+
 #[cfg(feature = "alloc")]
 fn encode_pair_table(pairs: &[(u32, u32)]) -> Vec<u8> {
     let mut sorted: Vec<(u32, u32)> = pairs.to_vec();
@@ -1440,6 +1648,73 @@ mod tests {
         assert!(ids.contains(&SECT_SIMPLE_LOWER));
         assert!(ids.contains(&SECT_SIMPLE_UPPER));
         assert!(ids.contains(&SECT_SIMPLE_FOLD));
+    }
+
+    fn build_de_phonebook_collation_pack() -> Vec<u8> {
+        let mut c = CollationSectionBuilder::new();
+        c.push_expansion(0x00DF, &[0x0073, 0x0073]); // ß → ss
+        c.push_expansion(0x00E4, &[0x0061, 0x0065]); // ä → ae
+        c.push_expansion(0x00F6, &[0x006F, 0x0065]); // ö → oe
+        c.push_expansion(0x00FC, &[0x0075, 0x0065]); // ü → ue
+        c.set_default_strength(2); // Tertiary
+        c.set_case_insensitive(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("de"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn collation_view_round_trips() {
+        let bytes = build_de_phonebook_collation_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_COLLATION);
+        assert_eq!(file.locale(), Some("de"));
+        let view = file.as_collation_data().unwrap();
+        assert!(view.has_expansions());
+        assert_eq!(view.expansion_count(), 4);
+        let m = view.expansion(0x00DF).expect("ß expansion");
+        let chars: alloc::vec::Vec<char> = m.chars().collect();
+        assert_eq!(chars, alloc::vec!['s', 's']);
+        let m = view.expansion(0x00E4).expect("ä expansion");
+        let chars: alloc::vec::Vec<char> = m.chars().collect();
+        assert_eq!(chars, alloc::vec!['a', 'e']);
+        assert_eq!(view.default_strength(), Some(2));
+        assert_eq!(view.case_insensitive(), Some(true));
+    }
+
+    #[test]
+    fn empty_collation_pack_is_valid() {
+        let c = CollationSectionBuilder::new();
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("en"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert!(!view.has_expansions());
+        assert_eq!(view.expansion_count(), 0);
+        assert!(view.expansion(0x00DF).is_none());
+        assert_eq!(view.default_strength(), None);
+    }
+
+    #[test]
+    fn as_case_data_rejects_collation_file() {
+        let bytes = build_de_phonebook_collation_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_case_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn as_collation_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_collation_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
     }
 
     #[test]
