@@ -118,6 +118,30 @@ inverted index for metric-space and set-similarity nearest-neighbor
 queries. Metric-space structures enforce metric properties at
 construction.
 
+**Tokenizers** — `stringcheese-tokenizer`,
+`stringcheese-tokenizer-hf`, `stringcheese-tokenizer-tiktoken`.
+The `Tokenizer` / `Segmenter` / `Encoding` trait taxonomy, a
+family of built-in segmenters (whitespace, delimiter, identifier,
+grapheme, n-gram, byte, char), a full Hugging Face
+`tokenizer.json` loader covering BPE / WordPiece / Unigram /
+WordLevel plus HF's normalizer / pre-tokenizer / post-processor /
+decoder chain with byte-for-byte upstream parity, and a
+tiktoken-shape convenience pack layered on top. Shipped
+`no_std` + `alloc` where the algorithm permits. See
+[`docs/design/tokenizers.md`](./design/tokenizers.md) for the
+full taxonomy and [`docs/design/tokenizer-conformance.md`](./design/tokenizer-conformance.md)
+for the shipped conformance corpus.
+
+**Language detection** — `stringcheese-detect` (dispatcher),
+`stringcheese-detect-script` (Tier 0: ~5 KB Unicode-block script
+classifier), `stringcheese-detect-whatlang` (Tier 1: per-script
+whatlang shard, WASM component), `stringcheese-detect-lingua`
+(Tier 2: per-language lingua shard, WASM component). All three
+tiers speak a single WIT contract so the dispatcher can walk from
+cheap-and-coarse to expensive-and-precise. See
+[`docs/design/language-architecture.md`](./design/language-architecture.md)
+for the tier walk and the per-tier data-pack story.
+
 **Language-pack infrastructure** — `stringcheese-lang`. The
 `Language` trait, `LanguageProvider` discovery trait, `Stemmer` /
 `Collator` / `LanguagePhoneticEncoder` plugin points, shared helper
@@ -133,17 +157,23 @@ subtag-strip fallback (`"pt-BR"` → `"pt"`, `"sr-Cyrl-RS"` → `"sr"`,
 `"en-GB-oed"` → `"en"`); callers who need strict-exact semantics
 use `registry::language_exact`.
 
-**Language packs** — `stringcheese-<language>` (e.g.,
-`stringcheese-en`, `stringcheese-de`, `stringcheese-ja`, and dozens
-more shipped in the workspace).
+**Language packs** — `stringcheese-<language>` (45+ shipped:
+`stringcheese-en`, `stringcheese-de`, `stringcheese-fr`,
+`stringcheese-es`, `stringcheese-pt`, `stringcheese-ja`,
+`stringcheese-zh`, `stringcheese-ko`, `stringcheese-ar`,
+`stringcheese-hi`, `stringcheese-th`, `stringcheese-ka`,
+`stringcheese-am`, and 32+ more — see the sub-project map).
 Data-driven implementations of stemming, stopword lists,
 language-specific phonetic encoders, tokenization rules, collation
 tailoring, and morphological analysis — one opt-in crate per
-supported language. The `stringcheese-en` pack ships in v0.1 with a
-~150-word stopword list, the Porter (1980) stemmer, the default
-whitespace-and-punctuation tokenizer, and a Soundex phonetic hookup.
-Additional language packs land as the algorithm-family coverage
-matures.
+supported language. Coverage spans Germanic, Romance, Slavic,
+Balto-Slavic, Uralic, Turkic, Semitic, Iranian, Indo-Aryan,
+Dravidian, Malayo-Polynesian, Sino-Tibetan, Japonic, Koreanic,
+Kartvelian, Armenian isolate branch, and Ge'ez / Semitic-Ethiopic
+families across Latin, Cyrillic, Greek, Armenian, Arabic, Hebrew,
+Devanagari, Bengali, Gurmukhi, Tamil, Malayalam, Thai, Georgian,
+Hangul, CJK, and Ge'ez scripts. Additional language packs land as
+the algorithm-family coverage matures.
 
 **Component-model globalization** (planned) — `stringcheese-icu-*`
 WIT interfaces and data packs. Callers instantiate just the
@@ -254,10 +284,10 @@ crystallized. See the extraction commit for the migration record.
 | `stringcheese-ro` | Romanian pack (**first Balkan Romance pack** — Romanian is genealogically Romance (sibling of Spanish / French / Portuguese / Italian, descended from Vulgar Latin) but geographically Balkan, having spent centuries inside the **Balkan Sprachbund** alongside Bulgarian / Macedonian / Albanian / Greek and picked up several signature Balkan features its Romance cousins lack): ~130-word stopword list (free-standing articles, prepositions, coordinating / subordinating conjunctions, personal / possessive / demonstrative pronouns, negation particles, and the high-frequency conjugations of `a fi` "to be", `a avea` "to have", `a face` "to do/make"; postposed definite articles are NOT listed here — they are morphological endings handled by the stemmer's step 0, not free words to filter), Snowball Romanian stemmer per Porter's `romanian.sbl` — five-step cascade: (1) preprocess (lowercase + Unicode-aware) with an **entry-point cedilla-to-comma-below fold** (`ş → ș` U+015F → U+0219, `ţ → ț` U+0163 → U+021B) so a corpus authored on older systems that emit cedilla still aligns with modern comma-below-form queries; (2) glide-marking pass (i / u between two vowels marked as consonantal `I`/`U` for region computation, reverted in the postlude); (3) region computation (`R1`/`R2` standard Snowball, Romanian-specific `RV` matching the sbl spec — after 2nd letter if consonant, after next consonant if first two are vowels, position 3 otherwise); (4) **step 0 — postposed article strip in R1** (the signature Balkan feature — Romanian writes definite articles as noun-suffixes rather than free words: `omul` = "the man" collapses to `om`, `omului` = "of/to the man" collapses to `om`; longest-match table `'ul' 'ului'` → delete, `'aua'` → `-a`, `'ea' 'ele' 'elor'` → `-e`, `'ii' 'iua' 'iei' 'iile' 'iilor' 'ilor'` → `-i`, `'atei'` → `-ație`, `'ație' 'ația'` → `-ați`); (5) step 1 — standard suffix replacement in R1 (`'abilitate' 'abilitati' 'abilităţi'` → `abil`, `'ibilitate'` → `ibil`, `'ivitate' 'ivitati' 'ivităţi'` → `iv`, `'icitate' 'icator' 'icatoare' 'icatori'` → `ic`, `'ativ' 'ativa' 'ative' 'ativi' 'ativă'` → `at` — iterated to fix-point per the sbl's `do repeat` clause); step 2 — combining suffix delete in R2 (`abil`/`ibil`/`iv`/`ic`/`at`/`it`/`ut`/`ant`/`ător`/`ătoare`/`ători`/`are`/`ere`/`ire`/`inţ`/`ism`/`ist` family); step 3 — verb personal endings in RV (four-conjugation-class paradigm covering the `-ăm`/`-ați` present, `-esc`/`-ești`/`-ește` `-i`-class present, `-am`/`-ai`/`-au` imperfect, `-eam`/`-eați` `-ea`-class, `-âm`/`-âi`/`-ând` `-â` class, aorist `-arăm`/`-arăţi`, pluperfect `-esem`/`-eseși`/`-eseră`, gerund `-ind`/`-ând`); step 4 — final vowel drop in RV (`a`/`e`/`i`/`o`/`u`/`ă` — `â`/`î` deliberately preserved because they mark historical central-vowel `/ɨ/` and rarely appear word-finally); postlude — fold glide markers `I`/`U` back to `i`/`u`. Whitespace-and-punctuation tokenizer (Romanian is delimiter-clean; the five Romanian-specific diacritic letters `ă â î ș ț` (plus the two legacy cedilla forms `ş ţ`) all satisfy `char::is_alphanumeric` and stay word-internal; the ASCII hyphen is a separator, so enclitic pronoun forms like `dă-mi` "give me" and auxiliary contractions like `l-am` "I-have-him" split at the hyphen — the intended behavior for IR because the clitics are stopwords anyway). PHONEX-Romanian Soundex-shape 4-character phonetic hookup with Romanian-tuned preprocessing: cedilla-to-comma-below fold (`ş`/`ţ` → `ș`/`ț`), diacritic folds (`ă`/`â` → `A`, `î` → `I`, `ș` → `S`, `ț` → `T`), Romance-family digraph rewrites (`CH` before front vowel `E`/`I` → `K` for hard `/k/` — Romanian's `chibrit` "match" spelling convention; `GH` → `G` for hard `/g/` — `ghid` "guide"; `PH` → `F` for imports; `TZ` → `T` for legacy transliteration of `ț`), silent intervocalic `H` (kept word-initially so `Horia` seeds with `H` but `Mihai` drops the H), and the standard Soundex classification (`B P F V W = 1`, `C K G Q J X = 2`, `D T = 3`, `L = 4`, `M N = 5`, `R = 6`, `S Z = 7`, vowels + `H` + `Y` = 0 dropped); adapter name `"phonex-ro"`. First Balkan Romance pack — the shared postposed-definite-article feature makes Romanian's morphology look more like Bulgarian's / Macedonian's (`книгата` "the book" in Bulgarian, `cartea` "the book" in Romanian — both suffix the article) than its Romance cousins' (`el libro` / `le livre` / `il libro`), so the shipped stemmer's step 0 is more elaborate than the Spanish / French / Portuguese packs' step 0 (which handle enclitic pronouns, not articles). Retains Latin case marking (gen/dat `-lui` masc singular, `-i`/`-ii` fem singular, `-lor` genitive plural) — every other Romance language lost the Latin case system. Overrides `Language::is_stopword` to fold cedilla → comma-below before comparison so `şi` (cedilla) and `și` (comma-below) both match the stopword list's canonical comma-below-form entry. Registers BCP-47 `"ro"`; `ro-MD` (Moldovan-Latin) falls back to `ro` automatically through the registry's BCP-47 subtag walk. Cyrillic Moldovan (pre-1989 orthography), Métaphone Român, `ci`/`ce`/`gi`/`ge` context-sensitive `/tʃ/` / `/dʒ/` encoding, palatal-alternation reversal (`obosesc` → `obos` currently over-stems), CLDR-tailored Romanian collator (`... a ă â b … i î … s ș t ț … z`), and full-vocabulary cross-verification against Snowball's `voc.txt` / `output.txt` deferred to a follow-up wave. Self-registers into `stringcheese-lang::registry` as `"ro"`. |
 | `stringcheese-ka` | Georgian pack (**first Kartvelian-family pack** in the workspace — Kartvelian is a small Caucasian family (Georgian, Mingrelian, Laz, Svan) unrelated to every prior family the workspace has covered: Indo-European, Uralic, Turkic, Semitic, Sino-Tibetan, Japonic, Koreanic, Austronesian, Austroasiatic; **first Georgian-script pack**): ~65-entry Georgian stopword list stored in Mkhedruli lowercase (personal / demonstrative / interrogative pronouns, high-frequency copula `არის` forms `ვარ`/`ხარ`/`არის`/`ვართ`/`ხართ`/`არიან`, conjunctions `და`/`ან`/`მაგრამ`/`თუ`/`რომ`/`როცა`, negators / affirmatives `არ`/`არა`/`ვერ`/`დიახ`/`კი`, quantifiers, common adverbs); longest-match Georgian **suffix stemmer** covering all seven grammatical cases (nominative `-ი`, dative-accusative `-ს`, ergative `-მა`, genitive `-ის`, instrumental `-ით`, adverbial `-ად`, vocative unmarked), plural markers (contemporary `-ები`, archaic `-ნი` / `-თა`), the five common agglutinated postpositions (`-ში` "in", `-ზე` "on", `-თან` "at", `-გან` "from", `-კენ` "toward", plus `-თვის` "for"), the plural + case / postposition compounds (`-ებით`, `-ებმა`, `-ების`, `-ებში`, `-ებზე`, `-ებთან`, `-ებგან`, `-ებკენ`, `-სთვის`, `-ისკენ`, `-ისთვის`), and the highest-frequency verb personal / tense endings (`-ვდი` 1sg past-continuous, `-ავს` 3sg present, `-იან` 3pl future / present, `-ობდი` / `-ებდი` 2sg past-continuous, bare `-დი` 2sg past), with a **2-scalar minimum stem length** on every strip and longest-match-wins so `-ისთვის` (6 chars) beats bare `-ის` (2 chars). Whitespace-and-punctuation tokenizer (transparent wrapper around `SimpleTokenizer`; Georgian scalars in Mkhedruli U+10D0..=U+10FF, Mtavruli U+1C90..=U+1CBF, Asomtavruli U+10A0..=U+10CF, and Nuskhuri U+2D00..=U+2D2F are all alphabetic under Unicode's classification; Georgian paragraph separator `჻` U+10FB is punctuation and splits). **PHONEX-Georgian phonetic hookup** — a two-stage encoder that (1) case-folds Mtavruli (Unicode 11 capitalized-Mkhedruli block, `+0x0BC0` offset) to Mkhedruli via `char::to_lowercase`, (2) maps each Mkhedruli scalar to its **ISO 9984 (1996)** Latin form (33 modern letters: `ა→a`, `ბ→b`, `გ→g`, `დ→d`, `ე→e`, `ვ→v`, `ზ→z`, `თ→t` aspirated, `ი→i`, `კ→k'` ejective, `ლ→l`, `მ→m`, `ნ→n`, `ო→o`, `პ→p'` ejective, `ჟ→zh`, `რ→r`, `ს→s`, `ტ→t'` ejective, `უ→u`, `ფ→p` aspirated, `ქ→k` aspirated, `ღ→gh`, `ყ→q'` ejective, `შ→sh`, `ჩ→ch`, `ც→ts`, `ძ→dz`, `წ→ts'` ejective, `ჭ→ch'` ejective, `ხ→kh`, `ჯ→j`, `ჰ→h`; five archaic-Old-Georgian letters ჱ ჲ ჳ ჴ ჵ fold to their modern equivalents), and (3) runs the standard Soundex-shape 4-character reduction — but with the ISO 9984 apostrophe (marking Georgian's distinctive **glottalized / ejective consonants**) dropped before Soundex classification, so ejective / aspirate pairs (`კ`/`ქ`, `პ`/`ფ`, `ტ`/`თ`, `წ`/`ც`, `ჭ`/`ჩ`) collapse to the same phonex key by design (class digits `B P F V W = 1`, `C K G Q J X = 2`, `D T = 3`, `L = 4`, `M N = 5`, `R = 6`, `S Z = 7`, vowels + `H` = 0 dropped, consecutive equal codes collapse, pad to 4 with `'0'`); adapter name `"phonex-ka"`. **First Georgian-script pack** — every scalar in Mkhedruli (U+10D0..=U+10FF), Mtavruli (U+1C90..=U+1CBF), and Nuskhuri (U+2D00..=U+2D2F) is **3 bytes in UTF-8** (all three blocks fall in UTF-8's 3-byte range U+0800..=U+FFFF), so all stemmer / phonex / stopword arithmetic runs on `Vec<char>` or `str::chars` iteration — never raw byte offsets — because byte arithmetic would silently corrupt scalar boundaries. Modern Georgian is **unicase** — Mkhedruli was historically the sole modern script; Mtavruli is a capitalized style added in Unicode 11 (2018) and paired with Mkhedruli under the default Unicode case-fold. Overrides `Language::is_stopword` to apply the Mtavruli → Mkhedruli fold before comparison. Old Georgian sibling (`stringcheese-oka` — Asomtavruli / Nuskhuri two-script normalizer, richer Old-Georgian inflection), Mingrelian / Laz / Svan Kartvelian siblings (`stringcheese-xmf`, `stringcheese-lzz`, `stringcheese-sva`), verb-preverb stripping (needs a lexicon), screeve / tense-alternation reversal, BGN/PCGN romanization adapter (diverges from ISO 9984 on the ejective / aspirated distinction), Georgian National (2002) transliteration adapter, and full canonical Georgian stemmer parity (no published Snowball Georgian) all deferred. Self-registers into `stringcheese-lang::registry` as `"ka"`. |
 | `stringcheese-<lang>` | Additional language-specific implementations (planned; one opt-in crate per language) |
-| `stringcheese-tokenizer` | Tokenizer/segmenter trait crate + built-in tokenizers (whitespace, delimiter, identifier, grapheme, n-gram). Foundation for downstream subword algorithm crates and model packs. See [docs/design/tokenizers.md](./design/tokenizers.md). |
-| `stringcheese-tokenizer-hf` | Data-neutral Byte-Pair Encoding (Sennrich, Haddow, Birch 2016) algorithm crate — caller supplies merge table and vocabulary. Substrate for the `stringcheese-tokenizer-tiktoken` model pack (shipped) and the planned `-huggingface` pack. |
-| `stringcheese-tokenizer-tiktoken` | OpenAI tiktoken model tokenizer pack — `cl100k_base` (default feature), `p50k_base`, `r50k_base`, `o200k_base` shipped as SCUD-lite BPE data on top of `stringcheese-tokenizer-hf`. Each variant behind its own Cargo feature; lazy-decode via `OnceLock`. Real OpenAI `mergeable_ranks` blobs are not committed for licence + repo-bloat reasons; the crate's `build.rs` synthesises a small stand-in tokenizer per variant and transcodes contributor-supplied plaintext blobs from `data/<variant>.tiktoken` into SCUD-lite deflate when present. See [docs/design/tokenizers.md § 6](./design/tokenizers.md#6-tiktoken-pack--stringcheese-tokenizer-tiktoken). |
-| `stringcheese-tokenizer-*` | Additional subword-tokenizer algorithm crates (planned: `-wordpiece`, `-sentencepiece`) and pre-configured model packs (planned: `-huggingface`) |
+| `stringcheese-tokenizer` | Tokenizer trait crate — `Tokenizer`, `Segmenter`, `Encoding` traits + built-in segmenters (whitespace, delimiter, identifier, grapheme, n-gram, byte, char) + shared `truncation` and `padding` modules. Substrate for every downstream algorithm and model pack. See [docs/design/tokenizers.md](./design/tokenizers.md). |
+| `stringcheese-tokenizer-hf` | Full Hugging Face `tokenizer.json` loader — BPE / WordPiece / Unigram / WordLevel across the normalizer, pre-tokenizer, post-processor, and decoder chain. Handles the four real HF checkpoints that ship without a `model.type` tag via untagged fallbacks, honours SentencePiece `byte_fallback` on both the Unigram Viterbi and character-BPE paths, materialises the full Llama-2 decoder chain (`Sequence[Replace(▁→ ), ByteFallback, Fuse, Strip]`), and covers Bert / Roberta / Template / ByteLevel / Sequence post-processors. Ships `encode_batch` / `encode_pair` / truncation / padding on the trait. Byte-for-byte parity against upstream `transformers` on the shipped conformance corpus (see [docs/design/tokenizer-conformance.md](./design/tokenizer-conformance.md)). |
+| `stringcheese-tokenizer-tiktoken` | OpenAI tiktoken model pack — `cl100k_base` (default feature), `p50k_base`, `r50k_base`, `o200k_base` on top of `stringcheese-tokenizer-hf`. Each variant behind its own Cargo feature; lazy-decode via `OnceLock`. Real OpenAI `mergeable_ranks` blobs are not committed for licence + repo-bloat reasons; the crate's `build.rs` synthesises a small stand-in tokenizer per variant and transcodes contributor-supplied plaintext blobs from `data/<variant>.tiktoken` when present. Real-vocab parity is verified in the workspace-excluded `stringcheese-tokenizer-tiktoken-conformance` crate under an opt-in `parity-real-vocab` feature — current numbers: `cl100k_base` 200/200, `o200k_base` 200/200. See [docs/design/tokenizers.md § 6](./design/tokenizers.md#6-tiktoken-pack--stringcheese-tokenizer-tiktoken). |
+| `stringcheese-tokenizer-*` | Additional subword-tokenizer algorithm crates and pre-configured model packs. The originally-planned `-wordpiece` / `-sentencepiece` / `-huggingface` split collapsed into `stringcheese-tokenizer-hf` above once the HF `tokenizer.json` loader landed with all four model families in one place; the compressed SCUD BPE data-pack format proposed in `tokenizers.md § 5.2` was **obviated** by direct `tokenizer.json` loading and is not being pursued — see the Phase 4 close in [tokenizers.md § 11](./design/tokenizers.md#11-phased-implementation-plan). |
 | `stringcheese-icu-*` | WIT interfaces + SCUD data packs for i18n (planned) |
 
 The scope boundary is a coherent commitment, not a fence against
@@ -374,14 +404,49 @@ stringcheese/                       — the workspace root
 ├── bench-adapters/                 — head-to-head vs strsim, rapidfuzz, …
 └── docs/                           — design docs, references, publish runbook
 
+# Shipped since the umbrella charter was written
+crates/
+  ├── stringcheese-en, -de, -fr, -es, -pt, -it, -ja, -zh, -ko,
+  │   -ar, -fa, -he, -hi, -ta, -ml, -bn, -mr, -pa, -id, -vi,
+  │   -th, -tr, -fi, -et, -hu, -ru, -uk, -be, -bg, -mk, -sr,
+  │   -cs, -sk, -pl, -da, -sv, -no, -nn, -is, -nl, -ro, -el,
+  │   -hy, -ka, -am
+  │                                         — 45+ opt-in language packs,
+  │                                           self-registering into a static
+  │                                           linkme-backed registry
+  ├── stringcheese-tokenizer                — Tokenizer/Segmenter traits +
+  │                                           built-in segmenters
+  ├── stringcheese-tokenizer-hf             — full Hugging Face
+  │                                           tokenizer.json loader
+  │                                           (BPE / WordPiece / Unigram /
+  │                                           WordLevel), byte-for-byte
+  │                                           parity against upstream
+  │                                           transformers on 13
+  │                                           reference-computed fixtures
+  ├── stringcheese-tokenizer-tiktoken       — OpenAI tiktoken model pack
+  │                                           on top of -tokenizer-hf
+  ├── stringcheese-detect,                  — tiered language-detection
+  │   -detect-script, -detect-whatlang,       stack (script → whatlang →
+  │   -detect-lingua                          lingua) speaking one WIT
+  │                                           contract
+  └── stringcheese-diff, -segment,          — additional preprocessing /
+      -stats, -ident, -escape, -ngram,        text-processing subsystems
+      -minhash, -simhash, -winnowing,         wired into the facade
+      -normalize, -textsplit, -collate,
+      -translit, -pattern, -pattern-regex
+
 # Planned, not shipped in v0.1
 crates/
-  ├── stringcheese-en, -de, -fr, -ja, …   — one crate per supported language
   └── stringcheese-icu-*                    — WIT interfaces for i18n
 
 data/
   └── *.scud                                — compressed CLDR-derived data
-                                              packs (StringCheese Unicode Data)
+                                              packs (StringCheese Unicode
+                                              Data) — for the i18n
+                                              subsystem only; the
+                                              tokenizer subsystem consumes
+                                              tokenizer.json directly and
+                                              does not use SCUD
 ```
 
 Sub-projects depend upward, not sideways. `stringcheese-manip` uses
@@ -728,57 +793,94 @@ StringCheese should become:
 
 ## Version 0.1 Scope
 
-Core infrastructure:
+Core infrastructure (shipping today on the 0.1 development
+branch):
 
-- Comparison abstractions
-- Result types
-- Mathematical property system
-- Normalization framework
-- Unicode preprocessing
-- Levenshtein
-- Damerau
-- Hamming
-- Jaro
-- Jaro-Winkler
-- Dice
-- Jaccard
-- Character and token n-grams
-- Soundex
-- Double Metaphone
-- NYSIIS
-- Workspace reuse
-- SIMD where appropriate
-- no_std core
-- WebAssembly support
-- Comprehensive benchmark suite
+- Comparison abstractions, result types, mathematical property
+  system, normalization framework
+- Unicode preprocessing (NFC / NFKC / NFD / NFKD, case folding,
+  UAX #29 graphemes / words / sentences, UAX #14 line breaks,
+  UAX #15 stability)
+- Edit distance and similarity: Levenshtein, Damerau /
+  Damerau-OSA, Hamming, Jaro, Jaro-Winkler, LCS, Dice, Jaccard,
+  Overlap, Cosine, Ristad-Yianilos learned edit distance
+- Substring search: Rabin-Karp, KMP, Boyer-Moore, Horspool,
+  Two-way, Aho-Corasick, with streaming wrappers
+- Pairwise alignment: Needleman-Wunsch, Smith-Waterman, linear +
+  affine gaps
+- N-gram representation (char / byte / token / grapheme) and
+  set-similarity over the n-gram sets
+- Phonetic keys: Soundex, NYSIIS, full two-key Double Metaphone,
+  Slavic-Metaphone; language-pack hookups for locale-tuned
+  encoders (Kölner, PHONEX-family per Romance / Slavic / Semitic
+  / Turkic / East-Asian)
+- Content-defined chunking: FastCDC, Rabin, Gear, Buzhash,
+  polynomial rolling hashes — every rolling hash carries a
+  vectorised SIMD backend
+- Fingerprints and sketches: MinHash (one-permutation), SimHash
+  (64/128-bit + weighted features + banded LSH), Winnowing
+- Index structures: BK-tree, VP-tree (Random and
+  FarthestFromParent vantage strategies, bulk-build), q-gram
+  inverted
+- Diff: Myers + Patience, unified-diff format, hunks, patch apply
+- Pattern matching: Literal / Wildcard / Glob behind a shared
+  `Pattern` trait, plus an opt-in finite-automata regex engine
+- Tokenizers: `Tokenizer` / `Segmenter` / `Encoding` trait
+  taxonomy, full Hugging Face `tokenizer.json` loader
+  (BPE / WordPiece / Unigram / WordLevel), tiktoken model pack
+- Tiered language detection: script → whatlang → lingua walk
+  behind one WIT contract
+- 45+ opt-in per-language packs (Germanic, Romance, Slavic,
+  Uralic, Turkic, Semitic, Iranian, Indo-Aryan, Dravidian,
+  Malayo-Polynesian, Sino-Tibetan, Japonic, Koreanic, Kartvelian,
+  Armenian isolate, Ge'ez / Semitic-Ethiopic)
+- Workspace-reuse (scratch buffers held on the caller's side to
+  avoid per-call allocation on the hot path)
+- SIMD backends across `compare` (Levenshtein Myers, Jaro
+  wide-block, Damerau Hyyrö, Hamming) and `cdc` (Buzhash, Gear,
+  Rabin via pclmulqdq, polynomial) — AVX2 / SSE2 / NEON /
+  wasm-simd128
+- `no_std` + `alloc` core; every session crate exercised on
+  `wasm32-unknown-unknown` and `wasm32-wasip1`
+- Comprehensive Criterion benchmark suite plus a `dhat-rs`
+  allocation-counting harness; head-to-head Rust / Python / JS /
+  Go / Java bench adapters
 
 ## Future Roadmap
 
+Most of the algorithmic surface originally scoped for 0.2 / 0.3
+landed on the 0.1 development branch (Smith-Waterman,
+Needleman-Wunsch, affine gaps, phoneme representations, BK-trees,
+VP-trees, FastCDC, Rabin / Gear / Buzhash / polynomial rolling
+hashes, MinHash, LSH, streaming APIs, Component Model bindings,
+multilingual phonetic packs — see the shipping matrix above and
+the Version 0.1 Scope section).
+
 ### Version 0.2
-- Smith-Waterman
-- Needleman-Wunsch
-- affine gaps
-- phoneme representations
-- multilingual phonetic packs
-- BK-trees
-- VP-trees
-- FastCDC
-- Rabin fingerprints
-- Gear hash
-- Rabin-Karp
-- Buzhash
-- streaming APIs
+
+- Component Model surface promoted from reference-only to a
+  first-class deliverable — WIT worlds for tokenizer, detect,
+  compare, phonetic; `wit-js-bindgen`-emitted npm modules for the
+  browser story.
+- Additional per-language packs to broaden non-Latin-script
+  coverage (Khmer, Lao, Burmese, Tibetan, Amharic siblings).
+- `stringcheese-icu-*` sub-project boot: WIT interfaces + SCUD
+  data packs for case mapping, collation, plural rules.
+- Higher-precision phonetic encoders: Beider-Morse Phonetic
+  Matching for Latin-script languages, Métaphone-Slavic 2 for
+  Cyrillic packs.
 
 ### Version 0.3
-- probabilistic linkage primitives
-- MinHash
-- locality-sensitive hashing
-- learned similarity models
-- Component Model bindings
-- database integration
-- SQL operators
-- DuckLink integration
-- SQLink integration
+
+- Database integration: SQL operators, DuckLink / SQLink bindings
+  for the metric-space and set-similarity indexes.
+- Learned similarity models on top of Ristad-Yianilos.
+- SCUD-backed compressed CLDR data packs shipped alongside the
+  WIT i18n surface (the SCUD format itself is designed in
+  [`docs/design/wit-i18n.md § 4`](./design/wit-i18n.md#4-scud-data-pack-format-spec);
+  the tokenizer subsystem obviated its own SCUD extension by
+  loading `tokenizer.json` directly — the format survives only
+  for CLDR / ICU data).
 
 ## Guiding Principle
 
@@ -1066,6 +1168,38 @@ Each release publishes a machine-generated correctness report:
 - Fuzzing duration
 - Targets tested
 - Dataset versions
+
+### Current parity snapshot (0.1 development branch)
+
+- **Hugging Face `tokenizer.json` parity.** 13 checkpoints ×
+  (40 or 20) cases = 460 triples, all reference-computed against
+  upstream `transformers` (5.14.1). Coverage spans byte-level BPE
+  (`gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`), tiktoken BPE
+  (`cl100k_base`), WordPiece + `BertNormalizer` (`bert-base-uncased`,
+  `distilbert-base-uncased`, `bert-base-multilingual-cased`),
+  SentencePiece Unigram (`xlm-roberta-base`, `deberta-v3-base`,
+  `mdeberta-v3-base`), and character-BPE + SentencePiece
+  `byte_fallback` (`llama-2-7b-hf`, `mistral-7b-v0.1`). Two
+  hand-crafted synth fixtures (`bpe_byte_fallback_synth`,
+  `unigram_byte_fallback_synth`) cover the byte-fallback runtime
+  without needing a real vendor vocab. See
+  [`docs/design/tokenizer-conformance.md`](./design/tokenizer-conformance.md)
+  for per-checkpoint status.
+- **tiktoken real-vocab parity.** The workspace-excluded
+  `stringcheese-tokenizer-tiktoken-conformance` crate fetches
+  OpenAI's `mergeable_ranks` blobs by SHA-256 and diffs against
+  `tiktoken-rs` under an opt-in `parity-real-vocab` feature.
+  Current numbers: **`cl100k_base` 200/200**, **`o200k_base`
+  200/200**.
+- **SIMD vs scalar differential.** Every SIMD backend
+  (Levenshtein Myers, Jaro wide-block, Damerau Hyyrö, Hamming,
+  Buzhash, Gear, Rabin, polynomial) is fuzzed against its scalar
+  oracle in `fuzz/`; regressions land in per-crate
+  `proptest-regressions/` fixtures.
+- **Cross-target equivalence.** `wasm32-unknown-unknown` and
+  `wasm32-wasip1` CI jobs run the workspace's `alloc`-only test
+  suite; a separate matrix builds each session crate under
+  `no_std` to catch accidental `std` dependencies.
 
 ## Golden Dataset as a Project Asset
 
