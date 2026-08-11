@@ -1592,22 +1592,29 @@ pub enum HfConversionError {
         name: String,
     },
     /// A `Unigram` or `BPE` config set `byte_fallback: true` but the
-    /// vocabulary is missing one or more of the 256 `<0xXX>`
-    /// byte-fallback tokens the mechanism requires. Every byte value
-    /// from `0x00` to `0xFF` needs its own reserved id in the vocab
-    /// (surface string exactly `<0x00>`, `<0x01>`, ..., `<0xFF>`);
-    /// without them, encoding an out-of-vocab character has no
-    /// well-defined fallback path. Surfaced by both
-    /// [`to_unigram_tokenizer`] and [`to_bpe_tokenizer`] — real Llama-2
-    /// / Mistral / Qwen `tokenizer.json` blobs ship as BPE with this
-    /// flag set, XLM-RoBERTa-style `SentencePiece` checkpoints ship as
-    /// Unigram.
+    /// vocabulary is missing coverage for one or more of the 256
+    /// bytes the mechanism requires. Every byte value from `0x00` to
+    /// `0xFF` needs a resolvable id in the vocab, in one of two
+    /// shapes: either the reserved surface string `<0x00>`, `<0x01>`,
+    /// ..., `<0xFF>`, *or* a literal single-byte token whose surface
+    /// is exactly that byte (e.g. byte `0x09` → a vocab entry keyed by
+    /// the literal tab character `"\t"`). Without either shape,
+    /// encoding an out-of-vocab character has no well-defined fallback
+    /// path. Surfaced by both [`to_unigram_tokenizer`] and
+    /// [`to_bpe_tokenizer`] — real Llama-2 / Mistral / Qwen
+    /// `tokenizer.json` blobs ship as BPE with this flag set and all
+    /// 256 reserved surfaces; XLM-RoBERTa-style `SentencePiece`
+    /// checkpoints ship as Unigram; Gemma-family checkpoints ship 255
+    /// reserved surfaces plus one literal single-byte token.
     ByteFallbackTokensMissing {
-        /// How many of the 256 required tokens are missing.
+        /// How many bytes are missing coverage: the count of bytes
+        /// for which *both* the reserved `<0xXX>` surface *and* a
+        /// literal single-byte fallback token are absent from the
+        /// vocabulary.
         missing_count: usize,
-        /// The lowest byte value whose `<0xXX>` token is missing —
-        /// enough to give the caller a starting point without dumping
-        /// all 256 possible values.
+        /// The lowest byte value with no resolvable coverage — enough
+        /// to give the caller a starting point without dumping all
+        /// 256 possible values.
         first_missing_byte: u8,
     },
     /// The `decoder` block used a tag or field this crate cannot
@@ -1727,8 +1734,12 @@ impl fmt::Display for HfConversionError {
             } => write!(
                 f,
                 "model sets byte_fallback: true but its vocabulary \
-                 is missing {missing_count} of the required 256 <0xXX> \
-                 byte-fallback tokens (first missing byte: 0x{first_missing_byte:02X})"
+                 is missing coverage for {missing_count} of the 256 \
+                 byte-fallback bytes — every byte needs either its \
+                 reserved <0xXX> surface or a literal single-byte token \
+                 in the vocab (first uncovered byte: 0x{first_missing_byte:02X}, \
+                 checked for both `<0x{first_missing_byte:02X}>` and a \
+                 literal one-byte surface)"
             ),
             Self::UnsupportedDecoder { reason } => {
                 write!(f, "unsupported HF decoder configuration: {reason}")
@@ -1799,13 +1810,33 @@ pub fn parse_tokenizer_json(json: &str) -> Result<HfTokenizerConfig, HfParseErro
 /// Mirrors the Unigram-side scan in
 /// [`UnigramTokenizer::with_byte_fallback`] byte for byte: the first
 /// occurrence of each surface wins, uppercase and lowercase hex both
-/// count, and any missing byte surfaces
+/// count.
+///
+/// When the reserved `<0xXX>` surface for a byte is *absent*, the scan
+/// falls back to searching the vocab for a **literal single-byte token**
+/// whose surface is exactly that byte (e.g. byte `0x09` → a vocab entry
+/// keyed by the literal tab character `"\t"`). This second shape covers
+/// checkpoints such as `google/gemma-2b` which ship
+/// `byte_fallback: true` alongside 255 of 256 `<0xXX>` surfaces and
+/// substitute a literal single-byte token for the remaining slot.
+/// Because a `String` cannot hold a lone `0x80..=0xFF` byte, only ASCII
+/// bytes (`0x00..=0x7F`) can be covered by this second shape — that is
+/// the same set every real-world checkpoint hits.
+///
+/// Only if *both* the reserved surface *and* the literal single-byte
+/// fallback are missing for a byte does the scan surface
 /// [`HfConversionError::ByteFallbackTokensMissing`] with the count of
-/// missing tokens plus the first missing byte value.
+/// unresolved bytes plus the first such byte value.
 fn resolve_bpe_byte_fallback_ids(
     vocab: &BTreeMap<String, TokenId>,
 ) -> Result<[TokenId; 256], HfConversionError> {
     let mut ids: [Option<TokenId>; 256] = [None; 256];
+    // Second-pass fallback: id of a literal single-byte surface for
+    // byte `b`, if any. Only bytes `0x00..=0x7F` can appear as a
+    // one-byte `String` key (bytes `0x80..=0xFF` on their own are not
+    // valid UTF-8), but the array is written over the full 0..256 so
+    // the resolution logic below stays uniform.
+    let mut literal_ids: [Option<TokenId>; 256] = [None; 256];
     for (surface, &id) in vocab {
         if let Some(b) = parse_byte_fallback_surface(surface) {
             // First occurrence wins — matches the tokenizer's own
@@ -1813,18 +1844,29 @@ fn resolve_bpe_byte_fallback_ids(
             if ids[b as usize].is_none() {
                 ids[b as usize] = Some(id);
             }
+        } else if surface.len() == 1 {
+            let b = surface.as_bytes()[0];
+            if literal_ids[b as usize].is_none() {
+                literal_ids[b as usize] = Some(id);
+            }
         }
     }
     let mut resolved: [TokenId; 256] = [0u32; 256];
     let mut missing_count = 0usize;
     let mut first_missing: Option<u8> = None;
-    for (b, slot) in ids.iter().enumerate() {
-        if let Some(id) = slot {
-            resolved[b] = *id;
+    for b in 0usize..256 {
+        // Prefer the reserved `<0xXX>` surface; fall back to a literal
+        // single-byte token when it is absent. Both shapes are
+        // equivalent under the byte-fallback contract: encode emits
+        // whichever id ends up in the table for a byte that survives
+        // the merge loop, and decode's reverse-lookup maps the id back
+        // to the byte for the flush-run path.
+        if let Some(id) = ids[b].or(literal_ids[b]) {
+            resolved[b] = id;
         } else {
             missing_count += 1;
             if first_missing.is_none() {
-                // `b` iterates a [_; 256] so the cast is exact;
+                // `b` iterates 0..256 so the cast is exact;
                 // `try_from(...).ok()` sidesteps clippy's truncation
                 // lint the same way the Unigram-side scan does.
                 first_missing = u8::try_from(b).ok();
@@ -3002,13 +3044,32 @@ impl UnigramTokenizer {
     /// callers who assemble a tokenizer manually via
     /// [`Self::from_parts`] can call it themselves.
     ///
+    /// # Scan strategy
+    ///
+    /// For each byte value the scan first prefers the reserved
+    /// `<0xXX>` surface (uppercase and lowercase hex both accepted);
+    /// when that surface is *absent* it falls back to a **literal
+    /// single-byte token** whose surface is exactly that byte (e.g.
+    /// byte `0x09` → a vocab entry keyed by the literal tab character
+    /// `"\t"`). This second shape covers checkpoints that ship
+    /// `byte_fallback: true` alongside 255 of 256 `<0xXX>` surfaces —
+    /// see the BPE-side [`to_bpe_tokenizer`] scan for the same
+    /// relaxation and the Gemma-family motivating case. Only bytes
+    /// `0x00..=0x7F` can be represented as a one-byte `String` key
+    /// (bytes `0x80..=0xFF` on their own are not valid UTF-8), which
+    /// is the same set every real-world checkpoint hits.
+    ///
     /// # Errors
     ///
-    /// Returns [`HfConversionError::ByteFallbackTokensMissing`] if
-    /// the vocabulary does not contain the full 256-token
-    /// `<0x00>`..`<0xFF>` set.
+    /// Returns [`HfConversionError::ByteFallbackTokensMissing`] if any
+    /// byte lacks *both* the reserved `<0xXX>` surface and a literal
+    /// single-byte token in the vocabulary.
     pub fn with_byte_fallback(mut self) -> Result<Self, HfConversionError> {
         let mut ids: [Option<usize>; 256] = [None; 256];
+        // Second-pass fallback: id of a literal single-byte surface
+        // for byte `b`, if any. See the BPE-side comment for the same
+        // shape and why the array is written over the full 0..256.
+        let mut literal_ids: [Option<usize>; 256] = [None; 256];
         for (id, (surface, _)) in self.vocab.iter().enumerate() {
             if let Some(b) = parse_byte_fallback_surface(surface) {
                 // First occurrence wins — same policy as `lookup`
@@ -3016,21 +3077,28 @@ impl UnigramTokenizer {
                 if ids[b as usize].is_none() {
                     ids[b as usize] = Some(id);
                 }
+            } else if surface.len() == 1 {
+                let b = surface.as_bytes()[0];
+                if literal_ids[b as usize].is_none() {
+                    literal_ids[b as usize] = Some(id);
+                }
             }
         }
         let mut resolved = alloc::boxed::Box::new([0usize; 256]);
         let mut missing_count = 0usize;
         let mut first_missing: Option<u8> = None;
-        for (b, slot) in ids.iter().enumerate() {
-            if let Some(id) = slot {
-                resolved[b] = *id;
+        for b in 0usize..256 {
+            // Prefer the reserved `<0xXX>` surface; fall back to a
+            // literal single-byte token when it is absent. Mirrors
+            // the BPE-side scan byte for byte.
+            if let Some(id) = ids[b].or(literal_ids[b]) {
+                resolved[b] = id;
             } else {
                 missing_count += 1;
                 if first_missing.is_none() {
-                    // `b` comes from an iterator over a [_; 256]
-                    // array, so it is always in 0..=255 — the cast is
-                    // exact. Use `try_from` anyway so clippy's
-                    // truncation lint does not fire.
+                    // `b` iterates 0..256 so the cast is exact; use
+                    // `try_from` so clippy's truncation lint does not
+                    // fire.
                     first_missing = u8::try_from(b).ok();
                 }
             }
@@ -7811,6 +7879,115 @@ mod tests {
             let enc = Tokenizer::encode(&tok, text).unwrap();
             let round = Tokenizer::decode(&tok, &enc.ids).unwrap();
             assert_eq!(round, text, "round-trip failed on {text:?}");
+        }
+    }
+
+    #[test]
+    fn bpe_byte_fallback_accepts_literal_single_byte_surface_when_reserved_is_missing() {
+        // Gemma-2b's shape: `byte_fallback: true` alongside 255 of 256
+        // reserved `<0xXX>` surfaces plus a literal single-byte token
+        // for the 256th (`google/gemma-2b` omits `<0x09>` in favour of
+        // a literal tab). Loader construction must succeed and the
+        // byte-fallback table must resolve byte 0x09 to the literal
+        // tab token's id — verified via the decode reverse-lookup so
+        // this test does not have to plumb a Metaspace pre-tokenizer
+        // (the encoding side is exercised by the `conformance_gemma_2b`
+        // fixture, which runs against the real gemma-2b pipeline).
+        let mut entries: Vec<String> = Vec::new();
+        entries.push(r#""<unk>": 0"#.to_string());
+        entries.push(r#""<s>": 1"#.to_string());
+        entries.push(r#""</s>": 2"#.to_string());
+        let byte_id_base: u32 = 3;
+        for b in 0u32..=255 {
+            if b == 0x09 {
+                // Skip the reserved <0x09> surface. Every other id in
+                // the 3..=258 window still corresponds to `<0xXX>` for
+                // its byte; the byte-fallback scan resolves 0x09 to
+                // the literal-tab id below.
+                continue;
+            }
+            entries.push(format!(r#""<0x{b:02X}>": {}"#, byte_id_base + b));
+        }
+        // Literal tab token — the byte-fallback scan's second pass
+        // resolves byte 0x09 to this id.
+        let literal_tab_id: u32 = 259;
+        entries.push(format!(r#""\t": {literal_tab_id}"#));
+        let json = format!(
+            r#"{{
+                "added_tokens": [],
+                "model": {{
+                    "type": "BPE",
+                    "vocab": {{{}}},
+                    "merges": [],
+                    "byte_fallback": true
+                }}
+            }}"#,
+            entries.join(",")
+        );
+        let config = parse_tokenizer_json(&json).unwrap();
+        let tok = to_bpe_tokenizer(&config).unwrap();
+        // Loader accepted the 255-reserved + 1-literal shape.
+        assert!(tok.byte_fallback_enabled());
+
+        // Decode-side proof that the literal-tab id occupies the byte
+        // 0x09 slot in the byte-fallback table: decoding [259] routes
+        // through the byte-run flush path (`byte_fallback_byte_for(259)
+        // == Some(0x09)`) and produces "\t".
+        let decoded = Tokenizer::decode(&tok, &[literal_tab_id]).unwrap();
+        assert_eq!(decoded, "\t");
+
+        // Every *other* byte still resolves via its reserved surface —
+        // encoding a non-vocab ASCII char (`?`, 0x3F) fires the byte-
+        // fallback path and emits the reserved id at `base + 0x3F`.
+        let enc = Tokenizer::encode(&tok, "?").unwrap();
+        assert_eq!(enc.ids, vec![byte_id_base + 0x3F]);
+    }
+
+    #[test]
+    fn bpe_byte_fallback_rejects_when_both_reserved_and_literal_are_missing() {
+        // Regression: even with the literal-single-byte fallback in
+        // play, a byte with neither its reserved `<0xXX>` surface nor
+        // a literal single-byte token in the vocab is still surfaced
+        // as `ByteFallbackTokensMissing`. Build a vocab with 254
+        // reserved surfaces (skipping 0x09 and 0x41) plus a literal
+        // `A` (single-byte surface for 0x41) — byte 0x09 is uncovered
+        // on both shapes and must error.
+        let mut entries: Vec<String> = Vec::new();
+        entries.push(r#""<unk>": 0"#.to_string());
+        entries.push(r#""<s>": 1"#.to_string());
+        entries.push(r#""</s>": 2"#.to_string());
+        let byte_id_base: u32 = 3;
+        for b in 0u32..=255 {
+            if b == 0x09 || b == 0x41 {
+                continue;
+            }
+            entries.push(format!(r#""<0x{b:02X}>": {}"#, byte_id_base + b));
+        }
+        // Literal `A` covers byte 0x41 but not 0x09.
+        entries.push(r#""A": 259"#.to_string());
+        let json = format!(
+            r#"{{
+                "added_tokens": [],
+                "model": {{
+                    "type": "BPE",
+                    "vocab": {{{}}},
+                    "merges": [],
+                    "byte_fallback": true
+                }}
+            }}"#,
+            entries.join(",")
+        );
+        let config = parse_tokenizer_json(&json).unwrap();
+        let err = to_bpe_tokenizer(&config).unwrap_err();
+        match err {
+            HfConversionError::ByteFallbackTokensMissing {
+                missing_count,
+                first_missing_byte,
+            } => {
+                assert_eq!(missing_count, 1);
+                assert_eq!(first_missing_byte, 0x09);
+            }
+            other => panic!("expected ByteFallbackTokensMissing, got {other:?}"),
         }
     }
 

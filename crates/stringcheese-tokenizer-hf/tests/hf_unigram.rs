@@ -791,6 +791,105 @@ fn byte_fallback_hf_loader_wires_it_end_to_end() {
 }
 
 #[test]
+fn byte_fallback_accepts_literal_single_byte_surface_when_reserved_is_missing() {
+    // Gemma-2b's shape: `byte_fallback: true` alongside 255 of 256
+    // reserved `<0xXX>` surfaces plus a literal single-byte token for
+    // the 256th (`google/gemma-2b` omits `<0x09>` in favour of a
+    // literal tab). Construction must succeed and byte-fallback must
+    // resolve byte 0x09 to the literal tab token's id.
+    let mut vocab_entries: Vec<String> = Vec::new();
+    vocab_entries.push(r#"["<unk>", 0.0]"#.to_string());
+    for b in 0u32..=255 {
+        if b == 0x09 {
+            // Skip the reserved <0x09> surface — the literal tab token
+            // below is the byte-0x09 coverage instead.
+            continue;
+        }
+        vocab_entries.push(format!(r#"["<0x{b:02X}>", -3.0]"#));
+    }
+    // Literal tab token — score cheap enough that it can win against
+    // the reserved surfaces' `-3.0` when it appears standalone.
+    vocab_entries.push(r#"["\t", -1.0]"#.to_string());
+    let json = format!(
+        r#"{{
+            "added_tokens": [],
+            "model": {{
+                "type": "Unigram",
+                "vocab": [{}],
+                "unk_id": 0,
+                "byte_fallback": true
+            }}
+        }}"#,
+        vocab_entries.join(",")
+    );
+    let config = parse_tokenizer_json(&json).unwrap();
+    let tok = to_unigram_tokenizer(&config).unwrap();
+    assert!(tok.byte_fallback_enabled());
+
+    // Layout: <unk> at 0, then 255 reserved <0xXX> surfaces at 1..=255
+    // (skipping 0x09), then the literal tab at id 256.
+    let literal_tab_id: usize = 256;
+
+    // Encoding a bare tab must produce the literal tab id — the vocab
+    // has it, so the Viterbi path picks it and the byte-fallback path
+    // never fires on this character.
+    let ids = tok.encode("\t").unwrap();
+    assert_eq!(ids, vec![literal_tab_id]);
+    // Round-trip: decoding the literal tab id must recover the tab
+    // character (the byte-fallback reverse-lookup wires it into the
+    // byte-run flush path so `\t` comes back as U+0009).
+    let decoded = tok.decode(&ids).unwrap();
+    assert_eq!(decoded, "\t");
+}
+
+#[test]
+fn byte_fallback_rejects_when_both_reserved_and_literal_are_missing() {
+    // Regression: even with the literal-single-byte fallback in play,
+    // a byte with neither its reserved `<0xXX>` surface nor a literal
+    // single-byte token in the vocab is still surfaced as
+    // `ByteFallbackTokensMissing`. Build a vocab with 254 reserved
+    // surfaces (skipping bytes 0x09 and 0x41) plus a literal `A`
+    // (single-byte surface for 0x41) — byte 0x09 is uncovered on both
+    // shapes and must error.
+    let mut vocab_entries: Vec<String> = Vec::new();
+    vocab_entries.push(r#"["<unk>", 0.0]"#.to_string());
+    for b in 0u32..=255 {
+        if b == 0x09 || b == 0x41 {
+            continue;
+        }
+        vocab_entries.push(format!(r#"["<0x{b:02X}>", -3.0]"#));
+    }
+    // `A` (0x41) has a literal single-byte fallback but `\t` (0x09)
+    // has neither shape → error.
+    vocab_entries.push(r#"["A", -1.0]"#.to_string());
+    let json = format!(
+        r#"{{
+            "added_tokens": [],
+            "model": {{
+                "type": "Unigram",
+                "vocab": [{}],
+                "unk_id": 0,
+                "byte_fallback": true
+            }}
+        }}"#,
+        vocab_entries.join(",")
+    );
+    let config = parse_tokenizer_json(&json).unwrap();
+    let err = to_unigram_tokenizer(&config).unwrap_err();
+    match err {
+        HfConversionError::ByteFallbackTokensMissing {
+            missing_count,
+            first_missing_byte,
+        } => {
+            // Only byte 0x09 is missing coverage on both shapes.
+            assert_eq!(missing_count, 1);
+            assert_eq!(first_missing_byte, 0x09);
+        }
+        other => panic!("expected ByteFallbackTokensMissing, got {other:?}"),
+    }
+}
+
+#[test]
 fn hf_loader_wires_whitespace_split_metaspace_sequence() {
     // The xlm-roberta-base composition: WhitespaceSplit followed by
     // Metaspace. The loader must materialise a two-stage sequence
