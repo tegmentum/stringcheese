@@ -2117,6 +2117,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-icu-case"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-scud",
+ "wit-parser",
+]
+
+[[package]]
 name = "stringcheese-id"
 version = "0.1.0"
 dependencies = [
