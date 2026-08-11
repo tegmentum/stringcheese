@@ -4,7 +4,7 @@
 //! established by `stringcheese-tokenizer-component`'s
 //! `wit_file_parses_under_wit_parser` unit test.
 
-const WIT_SOURCE: &str = include_str!("../../../component/wit/stringcheese-icu-case.wit");
+const WIT_SOURCE: &str = include_str!("../../../component/wit/icu-case/stringcheese-icu-case.wit");
 
 #[test]
 fn wit_file_parses_under_wit_parser() {
@@ -14,7 +14,7 @@ fn wit_file_parses_under_wit_parser() {
             std::path::Path::new("stringcheese-icu-case.wit"),
             WIT_SOURCE,
         )
-        .expect("component/wit/stringcheese-icu-case.wit must parse under wit-parser");
+        .expect("component/wit/icu-case/stringcheese-icu-case.wit must parse under wit-parser");
     let pkg_name = &resolve.packages[pkg].name;
     assert_eq!(pkg_name.namespace, "stringcheese");
     assert_eq!(pkg_name.name, "icu-case");

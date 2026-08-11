@@ -112,7 +112,7 @@ Each `.wit` declares a package (`package stringcheese:icu-case@0.1.0;`), one or 
 
 ```wit
 // Proposed — not yet implemented.
-// component/wit/stringcheese-icu-case.wit
+// component/wit/icu-case/stringcheese-icu-case.wit
 
 package stringcheese:icu-case@0.1.0;
 
@@ -487,7 +487,7 @@ A conservative reading of the Unicode Licence's attribution requirement may pref
 
 Delivery is per capability, one phase per new WIT + first pack + SCUD supplement.
 
-**Phase 1 — SCUD format + case mapping (foundation).** Done when: `crates/stringcheese-scud` loads a well-formed file and extracts magic / version / CLDR version / capability views; `component/wit/stringcheese-icu-case.wit` parses under `wit-parser` and passes `wit-bindgen` smoke; `crates/stringcheese-icu-case` implements the algorithm side and delegates to `CaseDataView<'_>`; `crates/stringcheese-en` ships `case-en.scud`, registers via `LanguageProvider`, and passes ≥ 100 golden vectors (ASCII, common Latin extended, German ß, Turkish `i` via the `tr` pack loaded alongside); `crates/stringcheese-tr` exists as the second pack so cross-locale composition is exercised; size measurement infrastructure ([wasm-and-wit-interface.md § Measurement](./wasm-and-wit-interface.md#measurement)) reports the composed component's size in CI.
+**Phase 1 — SCUD format + case mapping (foundation).** Done when: `crates/stringcheese-scud` loads a well-formed file and extracts magic / version / CLDR version / capability views; `component/wit/icu-case/stringcheese-icu-case.wit` parses under `wit-parser` and passes `wit-bindgen` smoke; `crates/stringcheese-icu-case` implements the algorithm side and delegates to `CaseDataView<'_>`; `crates/stringcheese-en` ships `case-en.scud`, registers via `LanguageProvider`, and passes ≥ 100 golden vectors (ASCII, common Latin extended, German ß, Turkish `i` via the `tr` pack loaded alongside); `crates/stringcheese-tr` exists as the second pack so cross-locale composition is exercised; size measurement infrastructure ([wasm-and-wit-interface.md § Measurement](./wasm-and-wit-interface.md#measurement)) reports the composed component's size in CI.
 
 **Phase 2 — Collation.** Done when `stringcheese-icu-collation` WIT + Rust implementation lands; `compare` and `sort-key` pass the UCA conformance subset (<https://www.unicode.org/reports/tr10/CollationTest.html>) at primary/secondary/tertiary strength; `collation-en.scud` and `collation-de.scud` ship as the first two locales; footprint measured and reported.
 
@@ -506,7 +506,7 @@ Each phase is independently releasable; a caller who needs only case mapping nev
 **Landed.** The Phase 1 foundation ships across four commits:
 
 - `stringcheese-scud` — the SCUD file-format loader (wire format v1.0). Parses the header (magic / version / flags / capability tag / CLDR + locale annotations) and hands out per-capability views; the first capability, `CaseDataView`, covers simple + full lower/upper/fold plus contextual (locale-override, final-sigma) tables. Ships `ScudWriter` for build-time SCUD generation. 12 unit tests + 1 doctest.
-- `stringcheese-icu-case` — the WIT interface at `component/wit/stringcheese-icu-case.wit` (parses cleanly under `wit-parser`; 3 smoke tests assert package name / version / interfaces / world), plus the `CaseEngine` algorithm side that consumes one or more `CasePack`s and walks the CLDR fallback chain (`pt-BR → pt → ""`) at query time. 13 unit tests.
+- `stringcheese-icu-case` — the WIT interface at `component/wit/icu-case/stringcheese-icu-case.wit` (parses cleanly under `wit-parser`; 3 smoke tests assert package name / version / interfaces / world), plus the `CaseEngine` algorithm side that consumes one or more `CasePack`s and walks the CLDR fallback chain (`pt-BR → pt → ""`) at query time. 13 unit tests.
 - `stringcheese-en` case-scud pack — a hand-verified, CLDR-44.1-derived `case-en.scud` blob (~2.3 KiB) covering ASCII, Latin-1 supplement, common Latin Extended-A, German ß full expansion (→ "SS" / "ss"), capital sharp S, and Œ/Æ ligatures. Exposed via `case_data::CASE_EN_SCUD` and `case_data::case_pack()` under the `case-scud` cargo feature (default on). 12 golden-vector test functions totaling ≥ 195 assertions.
 - `stringcheese-tr` case-scud pack — a `case-tr.scud` blob (~200 B) carrying Turkish's dotted / dotless-I contextual overrides (`I → ı`, `i → İ`) plus symmetric simple pairs and the Turkish alphabet letters. Cross-locale composition exercised in `tests/case_cross_locale.rs`: an `[en_pack, tr_pack]` engine yields different output for the same input under `"en"` vs `"tr"`. 10 golden-vector test functions + 8 composition tests.
 - CI — new `wasm-i18n-case` job in `.github/workflows/ci.yml` builds both packs, runs the golden + composition suites, and prints per-locale SCUD sizes to the run log.

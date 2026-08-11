@@ -21,7 +21,7 @@
 //!
 //! # WIT surface
 //!
-//! The WIT file at `component/wit/stringcheese-icu-case.wit` defines
+//! The WIT file at `component/wit/icu-case/stringcheese-icu-case.wit` defines
 //! four exports on the `case` world:
 //!
 //! * `to-lower(input, locale)` — locale-sensitive lowercasing.
