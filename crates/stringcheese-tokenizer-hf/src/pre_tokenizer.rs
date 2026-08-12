@@ -56,6 +56,46 @@ use core::mem;
 
 use fancy_regex::Regex;
 
+/// Behaviour of a split-by-pattern step (Hugging Face
+/// `SplitDelimiterBehavior`).
+///
+/// Governs how the matches of a split pattern relate to the pieces the
+/// pre-tokenizer emits. Applies to HF `Split`, `Punctuation`, `Digits`,
+/// `CharDelimiterSplit`, etc. On-disk JSON encoding matches HF's
+/// exactly: `"removed"` / `"isolated"` / `"merged_with_previous"` /
+/// `"merged_with_next"` / `"contiguous"`.
+///
+/// # Semantics (input `"a,b,,c"`, pattern `,`)
+///
+/// * [`Self::Removed`] → `["a", "b", "c"]` — matches dropped.
+/// * [`Self::Isolated`] → `["a", ",", "b", ",", ",", "c"]` — matches
+///   become their own pieces.
+/// * [`Self::MergedWithPrevious`] → `["a,", "b,", ",", "c"]` — matches
+///   glue onto the piece before them (or, when nothing precedes,
+///   become their own piece).
+/// * [`Self::MergedWithNext`] → `["a", ",b", ",", ",c"]` — matches glue
+///   onto the piece after them (or, when nothing follows, become their
+///   own piece).
+/// * [`Self::Contiguous`] → `["a", ",", "b", ",,", "c"]` — adjacent
+///   matches collapse into a single piece.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplitDelimiterBehavior {
+    /// Drop the matches; keep only the non-match regions.
+    Removed,
+    /// Matches become their own pieces. HF's default and what a bare
+    /// `Punctuation { }` / `Digits { }` block picks up.
+    #[default]
+    Isolated,
+    /// Matches glue onto the piece before them. Falls back to
+    /// [`Self::Isolated`] behaviour when nothing precedes.
+    MergedWithPrevious,
+    /// Matches glue onto the piece after them. Falls back to
+    /// [`Self::Isolated`] behaviour when nothing follows.
+    MergedWithNext,
+    /// Adjacent matches collapse into a single piece.
+    Contiguous,
+}
+
 /// The canonical tiktoken pre-tokenizer pattern used by both
 /// `cl100k_base` (GPT-3.5 / GPT-4) and `o200k_base` (GPT-4o / o1) —
 /// the two workhorse variants shipped by

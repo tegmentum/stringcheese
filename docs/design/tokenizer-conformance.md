@@ -319,76 +319,75 @@ Each is filed here so a follow-up can pick them up without re-deriving:
   gate is the only blocker. All 20 fixture ids are recorded so the
   next-agent landing can flip the test from panic-on-load to (up to)
   20/20 with no fixture churn.
-- **`Punctuation` pre-tokenizer unsupported (blocks Falcon-7b).**
-  `tiiuae/falcon-7b` ships a `pre_tokenizer.type == "Sequence"` whose
-  four children are `Punctuation(behavior=Contiguous)`, `ByteLevel`,
+- ~~**`Punctuation` pre-tokenizer unsupported (blocks Falcon-7b).**~~
+  **FIXED (Wave-17 landing).** `tiiuae/falcon-7b` ships a
+  `pre_tokenizer.type == "Sequence"` whose four children are
+  `Punctuation(behavior=Contiguous)`, `ByteLevel`,
   `Digits(individual_digits=false)`, and
-  `Split(pattern=Regex("[0-9][0-9][0-9]"))`. The BPE loader rejects
-  the first child with
-  `UnsupportedPreTokenizer { type_name: "Punctuation", reason: "deferred to a later landing" }`,
-  so `conformance_falcon_7b` currently fails at `to_tokenizer(&config)`
-  and none of the 20 cases run. All 20 fixture ids are recorded so
-  the next-agent landing can flip the test from panic-on-load to
-  (up to) 20/20 with no fixture churn. Adding the `Punctuation` and
-  `Digits` combinators to the pre-tokenizer runtime unblocks Falcon-7b
-  and any other Falcon-family checkpoint that shares the shape.
-- **Whitespace-run added tokens skipped by pre-tokenization (2/20
-  cases on Phi-2).** `microsoft/phi-2` ships 38
-  added-vocabulary entries (`id 50257..=50294`) whose content is a run
-  of literal ASCII space characters of decreasing length
-  (`"                               "` down to `"  "`), each marked
-  `normalized: true` and `special: false`. Upstream
-  `transformers.AutoTokenizer` matches these against the *raw* input
-  before ByteLevel pre-tokenization runs, collapsing a run of N spaces
-  into a single added-token id when a matching length exists (so
-  `\n    return` in Python code becomes `[…, 198, 50284, 7783, …]`
-  where `50284` is the "4 spaces" added token). The BPE runtime today
-  matches only `normalized: false` added tokens against the raw input;
-  `normalized: true` non-special added tokens are ignored, so both the
-  `python-code` and `whitespace-heavy` cases on Phi-2 currently fall
-  through to per-space ByteLevel encoding (`220` × N) and mismatch.
-  Adds pressure on the added-vocabulary matcher to route
-  `normalized: true` entries through the same raw-input scan.
-- **Phi-3-mini's four Llama-family gaps** are all fixed as of the
-  latest landing — `conformance_phi_3_mini_4k_instruct` runs 20/20
-  cases to parity against the hand-crafted vocab. Two commits closed
-  the four fixture cases:
-  - `python-code`: `BpeTokenizer::encode_region_bpe_inner` now
-    short-circuits `pre_tokenize` when byte-fallback is enabled and no
-    pre-tokenizer pattern is configured, passing the whole region to
-    the merge loop as a single word. The previous whitespace-split
-    fallback silently dropped `\n` (and every other non-space
-    whitespace) before byte-fallback could route those bytes to the
-    reserved `<0xXX>` tokens. Also relevant to the Llama-2, Mistral,
-    and Gemma checkpoints, whose fixtures happen not to contain a
-    newline case but would surface the same bug.
-  - `empty`, `bos-eos-surface-form-raw`, `chat-end-surface-form-raw`:
-    `BpeTokenizer::encode_pieces_with_policy` now extracts registered
-    special-token surfaces from the RAW input first, then applies the
-    configured normalizer to each between-specials region
-    independently. Mirrors HF's `added_vocabulary::extract_and_normalize`
-    ordering that the WordPiece and Unigram runtimes already ship.
-    Consequences: empty raw input yields no regions to normalize (so
-    the `Prepend` marker is not emitted), and specials embedded in the
-    input are matched before the normalizer prepends `▁` in front of
-    them (so `<s>hi</s>` encodes to `[1, 7251, 2]` and `<|end|>` to
-    `[32007]`, matching upstream). Unit tests
-    `phi3_shape_*` in `bpe.rs` lock the four fixture behaviours in
-    place against a hand-crafted Phi-3-shape vocab so the parity
-    coverage does not depend on the real `tokenizer.json` on disk.
-    **Verification against the real vocab (with the parity fix from
-    the byte-fallback landing) surfaces one residual gap (1/20 cases):
-    `<s>hi</s>` currently encodes to `[1, 7251, 829, 29879, 29958]`
-    against the real vocab, expected `[1, 7251, 2]`. The Phi-3 real
-    `tokenizer.json` records `</s>` as an added-vocab entry with
-    `special: false, rstrip: true` (only `<s>` is `special: true`),
-    and the raw-input scan the hand-crafted-vocab tests exercise
-    matches on `special: true` and does not currently recognise the
-    non-special/`rstrip`-flagged `</s>` entry as an added-vocab hit.
-    Same class of gap as the Phi-2 whitespace-run finding above — the
-    added-vocabulary matcher needs to cover `special: false` /
-    `normalized: true` / `rstrip` / `lstrip` variants that upstream
-    treats uniformly.**
+  `Split(pattern=Regex("[0-9][0-9][0-9]"))`. `PreTokenizerRegex` now
+  carries typed `Punctuation` / `Digits` / `Split` / `Sequence`
+  variants (see `crates/stringcheese-tokenizer-hf/src/bpe.rs` around
+  the `Punctuation` and `Sequence` variants), and the HF loader
+  materialises the four-child sequence via
+  `sequence_to_pipeline`'s general path when the fast-path
+  ByteLevel/Split pair-shape doesn't match. All five HF
+  `SplitDelimiterBehavior` modes (Isolated / Contiguous / Removed /
+  MergedWithPrevious / MergedWithNext) round-trip through the runtime
+  matcher; unit tests
+  `punctuation_stage_*` / `digits_stage_*` / `sequence_stage_*` in
+  `bpe.rs` lock them in place. Result: `conformance_falcon_7b` runs
+  **20/20** at real-vocab parity.
+- ~~**Whitespace-run added tokens skipped by pre-tokenization (2/20
+  cases on Phi-2).**~~ **FIXED (Wave-17 landing).** `microsoft/phi-2`
+  ships 38 added-vocabulary entries (`id 50257..=50294`) whose content
+  is a run of literal ASCII space characters of decreasing length,
+  each marked `normalized: true` and `special: false`. The HF loader
+  now folds every `added_tokens[*]` entry into the tokenizer's
+  `AddedTokenFlags` table (see
+  `BpeTokenizer::with_added_vocab` — the `special_tokens`
+  builder is retained for tiktoken-shape callers), and
+  `encode_pieces_with_policy` runs a **two-phase** matcher: Phase 1
+  scans the RAW input for `normalized == false` entries, and Phase 2
+  scans each per-region NORMALIZED text for `normalized == true`
+  entries. Both phases honour `lstrip: true` and `rstrip: true` by
+  extending the match span outward through adjacent whitespace,
+  matching HF's `added_vocabulary::extract_and_normalize` byte for
+  byte. Result: `conformance_phi_2` runs **20/20** at real-vocab
+  parity.
+- ~~**Phi-3-mini's residual `<s>hi</s>` gap (1/20 real-vocab
+  cases).**~~ **FIXED (Wave-17 landing).** The Phi-3
+  `tokenizer.json` records `</s>` as an added-vocab entry with
+  `special: false, rstrip: true` (only `<s>` is `special: true`).
+  The added-vocab matcher now recognises non-special added-vocab
+  entries in the raw-input scan (`</s>` becomes a legitimate Phase-1
+  match) and consumes trailing whitespace on `rstrip: true` entries.
+  Unit tests
+  `added_vocab_special_false_still_matched_and_emitted`,
+  `added_vocab_rstrip_true_consumes_trailing_whitespace`,
+  `added_vocab_lstrip_true_consumes_preceding_whitespace`,
+  `added_vocab_lstrip_and_rstrip_compose`,
+  `added_vocab_normalized_true_matches_normalized_region`, and
+  `added_vocab_normalized_true_with_special_false_matched_and_flagged_nonspecial`
+  in `bpe.rs` cover every flag variant plus two combinations. Result:
+  `conformance_phi_3_mini_4k_instruct` runs **20/20** at real-vocab
+  parity.
+
+### Per-checkpoint conformance pass counts (Wave-17 baseline)
+
+Every real-vocab `#[test]` in `tests/conformance.rs` runs 20/20 cases
+at parity against the reference `transformers.AutoTokenizer` output,
+including the three previously-blocked fixtures:
+
+| checkpoint                     | pre-Wave-17 | post-Wave-17 |
+| ------------------------------ | ----------- | ------------ |
+| `falcon-7b`                    | 0/20        | **20/20**    |
+| `phi-2`                        | 18/20       | **20/20**    |
+| `phi-3-mini-4k-instruct`       | 19/20       | **20/20**    |
+| every other fixture (18 total) | 20/20       | **20/20**    |
+
+Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
+--features parity-real-vocab --locked` — 22 tests pass (21
+per-checkpoint fixtures + 1 meta test).
 
 ## Hand-computed fallback
 

@@ -335,6 +335,122 @@ pub enum PreTokenizerRegex {
         /// region is byte-encoded as a single chunk.
         split: Option<crate::pre_tokenizer::RegexPreTokenizer>,
     },
+    /// Hugging Face `Punctuation` — split every Unicode-punctuation
+    /// character (any Unicode category `P*`). The behaviour argument
+    /// governs how the punctuation matches relate to the emitted
+    /// pieces — see
+    /// [`SplitDelimiterBehavior`](crate::pre_tokenizer::SplitDelimiterBehavior)
+    /// for the five modes. Falcon-family checkpoints ship
+    /// `Punctuation { behavior: Contiguous }` as the first entry of a
+    /// pre-tokenizer sequence; the default is
+    /// [`crate::pre_tokenizer::SplitDelimiterBehavior::Isolated`],
+    /// matching HF's own default. Gated on `std` (like `Regex` /
+    /// `ByteLevel`) because the runtime driver relies on the same
+    /// regex backend those variants use.
+    #[cfg(feature = "std")]
+    Punctuation(crate::pre_tokenizer::SplitDelimiterBehavior),
+    /// Hugging Face `Digits` — split runs of decimal digits. When
+    /// `individual_digits` is `true`, every digit becomes its own
+    /// piece (each digit is a match); when `false`, contiguous digit
+    /// runs are single pieces. Both shapes use `Isolated` behaviour —
+    /// non-digit regions are kept as pieces alongside the digit
+    /// matches. HF's `Digits { individual_digits: false }` is what
+    /// Falcon-family checkpoints wire between the `ByteLevel` stage
+    /// and a `Split(Regex="[0-9]{3}")` cleanup. Gated on `std` for the
+    /// same reason as [`Self::Punctuation`].
+    #[cfg(feature = "std")]
+    Digits {
+        /// If `true`, each digit becomes its own piece; otherwise
+        /// runs of digits stay together as single pieces.
+        individual_digits: bool,
+    },
+    /// Hugging Face `Split { pattern: Regex, behavior, invert }` with a
+    /// general behaviour argument. The `invert` field is not accepted
+    /// here — every real HF checkpoint ships `invert: false`, and the
+    /// runtime does not implement inversion. Callers that need HF's
+    /// `Isolated` behaviour on a `Split(Regex)` block can also pick
+    /// [`Self::Regex`], which is byte-for-byte equivalent to
+    /// `Self::Split { regex, behavior: Isolated }` when the match
+    /// gaps are ignored (tiktoken semantics); the two split when
+    /// non-match regions matter.
+    #[cfg(feature = "std")]
+    Split {
+        /// The compiled pattern to match.
+        regex: crate::pre_tokenizer::RegexPreTokenizer,
+        /// How the matches relate to the emitted pieces.
+        behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+    },
+    /// An ordered sequence of pre-tokenizer stages, applied
+    /// left-to-right. Each stage receives the previous stage's output
+    /// as its input regions and further splits them. HF's
+    /// `pre_tokenizer.type == "Sequence"` block materialises into this
+    /// variant when it has more than one operative child. Empty
+    /// sequences are permitted and behave as the identity. Gated on
+    /// `std` — the children usually contain regex-backed variants that
+    /// require it.
+    #[cfg(feature = "std")]
+    Sequence(Vec<PreTokenizerRegex>),
+}
+
+/// Per-entry flags for an added-vocabulary token, mirroring Hugging
+/// Face's `AddedToken` struct.
+///
+/// Populated from a `tokenizer.json` `added_tokens[*]` entry by the
+/// HF loader via [`BpeTokenizer::with_added_vocab`]. Governs how the
+/// entry's surface interacts with the extract-and-normalize pipeline:
+///
+/// * `normalized == false` (HF's default for `special == true`
+///   entries) — the surface is matched against the RAW caller input,
+///   before the normalizer runs.
+/// * `normalized == true` (HF's default for `special == false`
+///   entries) — the surface is matched against each per-region
+///   NORMALIZED text, after normalization runs.
+/// * `lstrip == true` — any leading whitespace immediately preceding
+///   the matched surface is absorbed into the match span.
+/// * `rstrip == true` — any trailing whitespace immediately following
+///   the matched surface is absorbed into the match span.
+/// * `special == true` — the entry counts as a "special" token for
+///   downstream consumers (the emitted piece's `special_mask` bit is
+///   set); `false` entries still get their assigned id but do not.
+///
+/// The four flags compose independently. See
+/// [`BpeTokenizer::encode`] for the exact match-point semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the four flags mirror Hugging Face's AddedToken struct on the wire byte-for-byte; \
+              collapsing them into an enum would break parity with the on-disk shape"
+)]
+pub struct AddedTokenFlags {
+    /// The token id emitted when the surface matches.
+    pub id: TokenId,
+    /// `true` when the surface is matched post-normalization.
+    pub normalized: bool,
+    /// `true` when leading whitespace is absorbed into the match span.
+    pub lstrip: bool,
+    /// `true` when trailing whitespace is absorbed into the match span.
+    pub rstrip: bool,
+    /// `true` when the token is registered as a "special" for the
+    /// downstream `special_mask`.
+    pub special: bool,
+}
+
+impl AddedTokenFlags {
+    /// Convenience: the "special, non-normalized, no strip" defaults
+    /// that reproduce the pre-flag behaviour of
+    /// [`BpeTokenizer::with_special_tokens`]. Every entry passed
+    /// through the legacy `with_special_tokens` builder implicitly
+    /// picks up these flags.
+    #[must_use]
+    pub const fn legacy_special(id: TokenId) -> Self {
+        Self {
+            id,
+            normalized: false,
+            lstrip: false,
+            rstrip: false,
+            special: true,
+        }
+    }
 }
 
 impl PreTokenizerRegex {
@@ -367,6 +483,72 @@ impl PreTokenizerRegex {
         Self::ByteLevel {
             add_prefix_space,
             split,
+        }
+    }
+
+    /// Builds a Hugging Face `Punctuation` pre-tokenizer with the
+    /// given behaviour. HF's own default (bare `{"type":"Punctuation"}`)
+    /// is [`SplitDelimiterBehavior::Isolated`](crate::pre_tokenizer::SplitDelimiterBehavior::Isolated).
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub const fn punctuation(behavior: crate::pre_tokenizer::SplitDelimiterBehavior) -> Self {
+        Self::Punctuation(behavior)
+    }
+
+    /// Builds a Hugging Face `Digits` pre-tokenizer.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub const fn digits(individual_digits: bool) -> Self {
+        Self::Digits { individual_digits }
+    }
+
+    /// Builds a `Split(Regex, behavior)` pre-tokenizer — the general
+    /// form of HF's `Split` block.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn split(
+        regex: crate::pre_tokenizer::RegexPreTokenizer,
+        behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+    ) -> Self {
+        Self::Split { regex, behavior }
+    }
+
+    /// Wraps a list of stages in a [`Self::Sequence`] pipeline.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub const fn sequence(stages: Vec<PreTokenizerRegex>) -> Self {
+        Self::Sequence(stages)
+    }
+
+    /// `true` when this pipeline, or any of its stages, is (or contains)
+    /// a `ByteLevel` block.
+    ///
+    /// Used by the merge-loop seed strategy inside
+    /// `BpeTokenizer::encode_word_bpe` (private): byte-level encoding
+    /// produces multi-byte chars from a single input byte, and the
+    /// merge loop must seed one piece per char (not per byte) so the
+    /// encoded chars stay atomic. That property propagates into any
+    /// `Sequence` pipeline that contains a `ByteLevel` stage.
+    ///
+    /// Always `false` on `alloc`-only builds — the `ByteLevel`,
+    /// `Sequence`, `Punctuation`, `Digits`, and `Split` variants are
+    /// all gated behind `std`, so the only matchable variant is
+    /// [`Self::Literal`].
+    #[must_use]
+    pub fn contains_byte_level(&self) -> bool {
+        #[cfg(feature = "std")]
+        match self {
+            Self::Literal(_)
+            | Self::Regex(_)
+            | Self::Punctuation(_)
+            | Self::Digits { .. }
+            | Self::Split { .. } => false,
+            Self::ByteLevel { .. } => true,
+            Self::Sequence(stages) => stages.iter().any(Self::contains_byte_level),
+        }
+        #[cfg(not(feature = "std"))]
+        match self {
+            Self::Literal(_) => false,
         }
     }
 }
@@ -641,6 +823,18 @@ pub struct BpeTokenizer {
     merges: BpeMergeTable,
     vocab: BpeVocabulary,
     special_tokens: BTreeMap<String, TokenId>,
+    /// Per-entry flags for every entry in [`Self::special_tokens`],
+    /// mirroring Hugging Face's `AddedToken` struct. Populated by the
+    /// HF loader via [`Self::with_added_vocab`]; absent (empty) when
+    /// callers only use [`Self::with_special_tokens`], in which case
+    /// every registered surface is treated with
+    /// [`AddedTokenFlags::legacy_special`] defaults (special, matched
+    /// on the raw input, no lstrip/rstrip). The map's keys are a
+    /// superset of [`Self::special_tokens`]' keys — an entry present
+    /// here that is missing from `special_tokens` is a builder bug
+    /// and encode still works (the flags are ignored on unmatched
+    /// surfaces).
+    added_token_flags: BTreeMap<String, AddedTokenFlags>,
     pre_tokenizer_pattern: Option<PreTokenizerRegex>,
     /// Optional [`PreTokenizerSequence`] applied to each between-specials
     /// region *before* the byte / char seeding and merge loop run. This
@@ -705,6 +899,7 @@ impl BpeTokenizer {
             merges,
             vocab,
             special_tokens: BTreeMap::new(),
+            added_token_flags: BTreeMap::new(),
             pre_tokenizer_pattern: None,
             #[cfg(feature = "std")]
             pre_tokenizer_sequence: None,
@@ -723,9 +918,52 @@ impl BpeTokenizer {
     /// Special tokens are matched *literally* in the input (longest
     /// match first) and emitted as their pre-assigned ids without
     /// participating in the BPE merge loop.
+    ///
+    /// Every entry passed here implicitly picks up the
+    /// [`AddedTokenFlags::legacy_special`] flag set: `special = true`,
+    /// `normalized = false`, no `lstrip` / `rstrip`. Callers who need
+    /// the full HF flag semantics (`normalized`, `lstrip`, `rstrip`,
+    /// `special: false`) should use [`Self::with_added_vocab`]
+    /// instead — this legacy builder stays as-is so every existing
+    /// caller (tests, tiktoken loader, etc.) is unaffected.
     #[must_use]
     pub fn with_special_tokens(mut self, tokens: BTreeMap<String, TokenId>) -> Self {
         self.special_tokens = tokens;
+        // Rebuild the flags map so it stays consistent with the
+        // special_tokens map. Legacy callers get the "special=true,
+        // normalized=false, no strip" default per surface.
+        self.added_token_flags = self
+            .special_tokens
+            .iter()
+            .map(|(s, &id)| (s.clone(), AddedTokenFlags::legacy_special(id)))
+            .collect();
+        self
+    }
+
+    /// Attaches (or replaces) the added-vocabulary table with per-entry
+    /// [`AddedTokenFlags`].
+    ///
+    /// The loader passes every `added_tokens[*]` entry from the HF
+    /// config here — both `special: true` (BOS / EOS / chat markers)
+    /// and `special: false` (Phi-2's whitespace-run compression ids,
+    /// Phi-3's `</s>` with `rstrip: true`). The flag semantics mirror
+    /// Hugging Face's `added_vocabulary::extract_and_normalize`
+    /// pipeline byte for byte — see [`AddedTokenFlags`] for the
+    /// per-flag contract and [`Self::encode`] for the two-phase
+    /// match-point semantics (raw-input scan for `normalized == false`
+    /// entries, per-region normalized scan for `normalized == true`).
+    ///
+    /// Passing an empty map clears the added-vocab table. This
+    /// supersedes any prior [`Self::with_special_tokens`] call — the
+    /// two writes to the same underlying `special_tokens` field are
+    /// last-wins.
+    #[must_use]
+    pub fn with_added_vocab(mut self, entries: BTreeMap<String, AddedTokenFlags>) -> Self {
+        self.special_tokens = entries
+            .iter()
+            .map(|(surface, flags)| (surface.clone(), flags.id))
+            .collect();
+        self.added_token_flags = entries;
         self
     }
 
@@ -1117,7 +1355,6 @@ impl BpeTokenizer {
         merge_fn: MergeLoopFn,
     ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
         let bytes = text.as_bytes();
-        let all_specials = self.sorted_specials();
 
         // Pre-scan for any disallowed special-token surface in the input.
         // Doing this up front (rather than inline in the main walk)
@@ -1126,6 +1363,7 @@ impl BpeTokenizer {
         // longer allowed one — matching tiktoken, which errors on *any*
         // occurrence of a disallowed surface.
         if let Some((allowed, disallowed)) = policy {
+            let all_specials = self.sorted_specials();
             match disallowed {
                 DisallowedSpecials::None => {}
                 DisallowedSpecials::All => {
@@ -1152,66 +1390,105 @@ impl BpeTokenizer {
             }
         }
 
-        // Build the effective list of specials the main walk should
-        // *match*. When there's no policy, every registered special is
-        // in play; with a policy, only surfaces in `allowed_special` are
-        // considered — everything else flows through the BPE loop as
-        // regular text.
-        let effective_specials: Vec<(String, TokenId)> = match policy {
-            None => all_specials,
-            Some((allowed, _)) => all_specials
-                .into_iter()
-                .filter(|(s, _)| allowed.contains(s.as_str()))
-                .collect(),
-        };
+        // Build the two per-phase entry lists, filtered by policy:
+        //   * raw-scan entries — matched against the RAW input before
+        //     normalization runs (HF `normalized: false` — every
+        //     "special: true" chat marker plus opt-in non-special
+        //     entries like Phi-3-mini's `</s>`).
+        //   * norm-scan entries — matched against each per-region
+        //     NORMALIZED text (HF `normalized: true` — Phi-2's
+        //     whitespace-run compression ids).
+        let raw_entries = self.sorted_added_by_normalized_flag(false, policy);
+        let norm_entries = self.sorted_added_by_normalized_flag(true, policy);
 
+        // Phase 1: pre-compute every raw-scan match, applying lstrip /
+        // rstrip to extend each match's span outward through adjacent
+        // whitespace. Doing it in two passes (find-all-matches, then
+        // stitch regions) keeps the match spans stable across the
+        // between-regions computation.
+        let raw_matches = find_added_vocab_matches(text, &raw_entries);
+
+        // Phase 2: walk raw_matches; between them, take the raw slice,
+        // normalize it, and further extract norm_entries within the
+        // normalized region.
         let mut out = Vec::new();
-        // Walk the input, extracting special-token literal matches. The
-        // regions between matches are handed to the BPE loop with the
-        // normalizer applied *per region* (see the doc-comment above).
         let mut cursor = 0usize;
-        while cursor < bytes.len() {
-            // Try to match a special token at `cursor`.
-            let mut matched = None;
-            for (surface, id) in &effective_specials {
-                let sb = surface.as_bytes();
-                if bytes[cursor..].starts_with(sb) {
-                    matched = Some((surface.clone(), *id, sb.len()));
-                    break;
-                }
+        for m in &raw_matches {
+            if m.start > cursor {
+                let raw_region = &text[cursor..m.start];
+                self.encode_between_specials(
+                    raw_region,
+                    cursor,
+                    &norm_entries,
+                    &mut out,
+                    merge_fn,
+                )?;
             }
-            if let Some((_surface, id, len)) = matched {
-                out.push((id, cursor..cursor + len, true));
-                cursor += len;
-                continue;
-            }
-            // No special match here: consume up to the next special
-            // occurrence (or end-of-input), normalize that raw region
-            // in isolation, then BPE-encode the normalized region.
-            let mut next_special = bytes.len();
-            for (surface, _id) in &effective_specials {
-                let sb = surface.as_bytes();
-                if let Some(rel) = find_subslice(&bytes[cursor..], sb) {
-                    let abs = cursor + rel;
-                    if abs < next_special {
-                        next_special = abs;
-                    }
-                }
-            }
-            let raw_region = &text[cursor..next_special];
-            // Per-region normalization. When no normalizer is configured
-            // this borrows the raw region unchanged (see
-            // `normalize_text`) and adds no cost. Offsets reported on
-            // the emitted pieces track the normalized-region byte
-            // layout, keyed off `cursor` — matching how the pre-
-            // normalization pipeline already reported offsets into
-            // transformed bytes (e.g. Metaspace's `▁` substitution).
-            let normalized_region = self.normalize_text(raw_region);
-            let region_ref: &str = normalized_region.as_ref();
-            self.encode_region_bpe(region_ref, cursor, &mut out, merge_fn)?;
-            cursor = next_special;
+            out.push((m.id, m.start..m.end, m.is_special));
+            cursor = m.end;
         }
+        if cursor < text.len() {
+            let raw_region = &text[cursor..];
+            self.encode_between_specials(raw_region, cursor, &norm_entries, &mut out, merge_fn)?;
+        }
+
         Ok(out)
+    }
+
+    /// The Phase-2 sibling of [`Self::encode_pieces_with_policy`]:
+    /// normalize `raw_region`, then within the normalized region scan
+    /// for [`AddedTokenFlags::normalized`] added-vocab entries and
+    /// BPE-encode the plain-text pieces between them.
+    ///
+    /// `region_offset` is the byte offset of `raw_region` within the
+    /// caller's input; used to key emitted offsets. The added-vocab
+    /// match spans are re-anchored into the same coordinate system so
+    /// their byte ranges land where a caller can still slice into the
+    /// original input.
+    fn encode_between_specials(
+        &self,
+        raw_region: &str,
+        region_offset: usize,
+        norm_entries: &[SortedAddedEntry<'_>],
+        out: &mut Vec<(TokenId, Range<usize>, bool)>,
+        merge_fn: MergeLoopFn,
+    ) -> Result<(), TokenizerError> {
+        if raw_region.is_empty() {
+            return Ok(());
+        }
+        let normalized = self.normalize_text(raw_region);
+        let norm_ref: &str = normalized.as_ref();
+        if norm_entries.is_empty() {
+            // Fast path: no Phase-2 matches to consider — hand the
+            // whole normalized region straight to the BPE loop.
+            return self.encode_region_bpe(norm_ref, region_offset, out, merge_fn);
+        }
+        // Compute matches within the normalized region.
+        let norm_matches = find_added_vocab_matches(norm_ref, norm_entries);
+        let mut nc = 0usize;
+        for m in &norm_matches {
+            if m.start > nc {
+                let plain = &norm_ref[nc..m.start];
+                self.encode_region_bpe(plain, region_offset + nc, out, merge_fn)?;
+            }
+            // The emitted offset is relative to the normalized region
+            // (which the encode-side of the pipeline already treats as
+            // the source of piece byte layouts — Metaspace's `▁`
+            // substitution is the exemplar). Anchor to `region_offset`
+            // so downstream consumers see one contiguous coordinate
+            // system per input.
+            out.push((
+                m.id,
+                (region_offset + m.start)..(region_offset + m.end),
+                m.is_special,
+            ));
+            nc = m.end;
+        }
+        if nc < norm_ref.len() {
+            let tail = &norm_ref[nc..];
+            self.encode_region_bpe(tail, region_offset + nc, out, merge_fn)?;
+        }
+        Ok(())
     }
 
     /// Sort specials longest-first so that `<|im_start|>` matches before
@@ -1225,6 +1502,57 @@ impl BpeTokenizer {
             .collect();
         v.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
         v
+    }
+
+    /// Return the added-vocab entries whose [`AddedTokenFlags::normalized`]
+    /// flag matches `want_normalized`, filtered by the tiktoken-style
+    /// policy (`allowed_special` wins over the disallowed set — see
+    /// [`Self::encode_with_special_policy`] for the full contract).
+    ///
+    /// Sorted longest-surface-first so a longer surface (`<|im_start|>`)
+    /// shadows a shorter prefix (`<|im|>`) at match time; ties are
+    /// broken by lexical order for determinism. Every surface not
+    /// present in [`Self::added_token_flags`] is treated as a legacy
+    /// special via [`AddedTokenFlags::legacy_special`], preserving the
+    /// pre-refactor behaviour of [`Self::with_special_tokens`]-only
+    /// callers.
+    fn sorted_added_by_normalized_flag<'p>(
+        &'p self,
+        want_normalized: bool,
+        policy: Option<(&BTreeSet<&str>, &DisallowedSpecials<'_>)>,
+    ) -> Vec<SortedAddedEntry<'p>> {
+        let mut entries: Vec<SortedAddedEntry<'p>> = self
+            .special_tokens
+            .iter()
+            .map(|(surface, &id)| {
+                let flags = self.added_token_flags.get(surface).copied().unwrap_or_else(
+                    // Legacy callers (no added_token_flags entry) get
+                    // the "special, non-normalized, no strip" defaults.
+                    || AddedTokenFlags::legacy_special(id),
+                );
+                SortedAddedEntry {
+                    surface: surface.as_str(),
+                    flags,
+                }
+            })
+            .filter(|e| e.flags.normalized == want_normalized)
+            .collect();
+        // Apply the tiktoken-style policy filter, if any. The policy
+        // only governs Phase-1 raw-scan entries in HF's own pipeline —
+        // Phase-2 normalized-scan entries are unaffected (they can't
+        // appear in raw input to error against). Keeping the filter
+        // uniform is safe: policy is only ever populated when a
+        // caller explicitly opts in via `encode_with_special_policy`.
+        if let Some((allowed, _)) = policy {
+            entries.retain(|e| allowed.contains(e.surface));
+        }
+        entries.sort_by(|a, b| {
+            b.surface
+                .len()
+                .cmp(&a.surface.len())
+                .then_with(|| a.surface.cmp(b.surface))
+        });
+        entries
     }
 
     /// BPE-encode a substring of the input; `region_offset` is the byte
@@ -1367,15 +1695,18 @@ impl BpeTokenizer {
     ) -> Result<(), TokenizerError> {
         let word_bytes = word_text.as_bytes();
 
-        // Whether the pre-tokenizer is ByteLevel — decides the piece
-        // seed strategy below. Encoded ByteLevel chars are up to 2
-        // UTF-8 bytes each, so seeding per byte would split `Ġ` in
-        // half; we seed per char instead so multi-byte encoded chars
-        // stay atomic.
-        let byte_level = matches!(
-            self.pre_tokenizer_pattern,
-            Some(PreTokenizerRegex::ByteLevel { .. })
-        );
+        // Whether the pre-tokenizer is (or contains) a ByteLevel stage
+        // — decides the piece seed strategy below. Encoded ByteLevel
+        // chars are up to 2 UTF-8 bytes each, so seeding per byte
+        // would split `Ġ` in half; we seed per char instead so
+        // multi-byte encoded chars stay atomic. Falcon-family
+        // checkpoints wrap a `ByteLevel` stage inside a `Sequence`
+        // (Punctuation → ByteLevel → Digits → Split); the sequence
+        // still needs per-char seeding, so we walk the tree.
+        let byte_level = self
+            .pre_tokenizer_pattern
+            .as_ref()
+            .is_some_and(PreTokenizerRegex::contains_byte_level);
         // Character-BPE (Llama-2 / Mistral / Qwen) also needs per-char
         // seeding: the vocab keys single-character surfaces by their
         // raw UTF-8 bytes (`"é"` → `[0xC3, 0xA9]`), so seeding per
@@ -1969,85 +2300,39 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
     {
         return pre_tokenize_byte_level(text, *add_prefix_space, split.as_ref());
     }
+    // Punctuation / Digits / Split (non-Isolated) / Sequence route
+    // through the multi-stage pipeline. A single stage runs once; a
+    // `Sequence` iterates every child in order over the accumulated
+    // regions. See [`apply_stage`] for the semantics.
+    #[cfg(feature = "std")]
+    if let Some(
+        p @ (PreTokenizerRegex::Punctuation(_)
+        | PreTokenizerRegex::Digits { .. }
+        | PreTokenizerRegex::Split { .. }
+        | PreTokenizerRegex::Sequence(_)),
+    ) = pattern
+    {
+        return apply_stage(alloc::vec![text.to_string()], p)
+            .into_iter()
+            .scan(0usize, |cursor, piece| {
+                let offset = *cursor;
+                *cursor += piece.len();
+                Some(Word {
+                    offset,
+                    text: alloc::borrow::Cow::Owned(piece),
+                })
+            })
+            .collect();
+    }
     match pattern {
         Some(PreTokenizerRegex::Literal(sep)) if !sep.is_empty() => {
-            let sep_bytes = sep.as_bytes();
-            let bytes = text.as_bytes();
-            let mut cursor = 0usize;
-            while cursor < bytes.len() {
-                // Skip separators.
-                while cursor + sep_bytes.len() <= bytes.len()
-                    && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
-                {
-                    cursor += sep_bytes.len();
-                }
-                if cursor >= bytes.len() {
-                    break;
-                }
-                let start = cursor;
-                while cursor < bytes.len() {
-                    if cursor + sep_bytes.len() <= bytes.len()
-                        && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
-                    {
-                        break;
-                    }
-                    cursor += 1;
-                }
-                if cursor > start {
-                    out.push(Word {
-                        offset: start,
-                        text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
-                    });
-                }
-            }
+            pre_tokenize_literal(text, sep.as_str(), &mut out);
         }
         _ => {
             // No pattern (or empty separator): fall back to whitespace
             // splitting. This matches the design doc's "fall through to
             // whitespace" behaviour.
-            let bytes = text.as_bytes();
-            let mut cursor = 0usize;
-            while cursor < bytes.len() {
-                // Skip whitespace.
-                while cursor < bytes.len() {
-                    let Some(ch) = text[cursor..].chars().next() else {
-                        break;
-                    };
-                    if ch.is_whitespace() {
-                        cursor += ch.len_utf8();
-                    } else {
-                        break;
-                    }
-                }
-                if cursor >= bytes.len() {
-                    break;
-                }
-                let start = cursor;
-                while cursor < bytes.len() {
-                    let Some(ch) = text[cursor..].chars().next() else {
-                        break;
-                    };
-                    if ch.is_whitespace() {
-                        break;
-                    }
-                    cursor += ch.len_utf8();
-                }
-                if cursor > start {
-                    out.push(Word {
-                        offset: start,
-                        text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
-                    });
-                }
-            }
-            // If the text contained NO non-whitespace at all we still
-            // emit nothing; if the text was pure non-whitespace we
-            // emit one word.
-            if out.is_empty() && !text.is_empty() && text.chars().any(|c| !c.is_whitespace()) {
-                out.push(Word {
-                    offset: 0,
-                    text: alloc::borrow::Cow::Borrowed(text),
-                });
-            }
+            pre_tokenize_whitespace(text, &mut out);
         }
     }
     // Fallback: if no pattern *and* whitespace splitting yielded nothing
@@ -2055,6 +2340,88 @@ fn pre_tokenize<'a>(text: &'a str, pattern: Option<&PreTokenizerRegex>) -> Vec<W
     // that above. If the input is entirely whitespace, `out` stays
     // empty and we emit nothing — which is what tiktoken does too.
     out
+}
+
+/// Literal-separator split helper for [`PreTokenizerRegex::Literal`].
+/// Emits every non-empty run between consecutive separator matches.
+fn pre_tokenize_literal<'a>(text: &'a str, sep: &str, out: &mut Vec<Word<'a>>) {
+    let sep_bytes = sep.as_bytes();
+    let bytes = text.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        // Skip separators.
+        while cursor + sep_bytes.len() <= bytes.len()
+            && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
+        {
+            cursor += sep_bytes.len();
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+        let start = cursor;
+        while cursor < bytes.len() {
+            if cursor + sep_bytes.len() <= bytes.len()
+                && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
+            {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor > start {
+            out.push(Word {
+                offset: start,
+                text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
+            });
+        }
+    }
+}
+
+/// Whitespace-split fallback (design-doc §5.1 "no pre-tokenizer" shape).
+/// Skips leading and interior whitespace runs; if the input is
+/// entirely non-whitespace, emits it as a single word.
+fn pre_tokenize_whitespace<'a>(text: &'a str, out: &mut Vec<Word<'a>>) {
+    let bytes = text.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        // Skip whitespace.
+        while cursor < bytes.len() {
+            let Some(ch) = text[cursor..].chars().next() else {
+                break;
+            };
+            if ch.is_whitespace() {
+                cursor += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+        let start = cursor;
+        while cursor < bytes.len() {
+            let Some(ch) = text[cursor..].chars().next() else {
+                break;
+            };
+            if ch.is_whitespace() {
+                break;
+            }
+            cursor += ch.len_utf8();
+        }
+        if cursor > start {
+            out.push(Word {
+                offset: start,
+                text: alloc::borrow::Cow::Borrowed(&text[start..cursor]),
+            });
+        }
+    }
+    // If the text contained NO non-whitespace at all we still emit
+    // nothing; if the text was pure non-whitespace we emit one word.
+    if out.is_empty() && !text.is_empty() && text.chars().any(|c| !c.is_whitespace()) {
+        out.push(Word {
+            offset: 0,
+            text: alloc::borrow::Cow::Borrowed(text),
+        });
+    }
 }
 
 /// Byte-level pre-tokenizer helper — split out of [`pre_tokenize`] so
@@ -2112,6 +2479,401 @@ fn pre_tokenize_byte_level<'a>(
     out
 }
 
+/// Stage-based pre-tokenizer pipeline.
+///
+/// Every stage takes the current list of piece strings and produces a
+/// new list, in left-to-right order. Concatenating the returned pieces
+/// yields the byte content of the pipeline's output — which for
+/// [`PreTokenizerRegex::ByteLevel`] stages will differ from the input
+/// (the byte↔char bijection replaces every input byte). The offsets
+/// returned to the caller of [`pre_tokenize`] are synthetic cursors
+/// over that concatenated output, not offsets into the original input.
+///
+/// # Sequence composition
+///
+/// `Sequence` iterates its children in order, feeding the previous
+/// child's output into the next. An empty `Sequence` behaves as the
+/// identity — the input pieces are returned unchanged.
+#[cfg(feature = "std")]
+fn apply_stage(pieces: Vec<String>, stage: &PreTokenizerRegex) -> Vec<String> {
+    match stage {
+        PreTokenizerRegex::Literal(sep) => pieces
+            .into_iter()
+            .flat_map(|p| split_piece_literal(p, sep.as_str()))
+            .collect(),
+        PreTokenizerRegex::Regex(pre) => pieces
+            .into_iter()
+            .flat_map(|p| split_piece_regex(&p, pre))
+            .collect(),
+        PreTokenizerRegex::ByteLevel {
+            add_prefix_space,
+            split,
+        } => pieces
+            .into_iter()
+            .flat_map(|p| split_piece_byte_level(&p, *add_prefix_space, split.as_ref()))
+            .collect(),
+        PreTokenizerRegex::Punctuation(behavior) => pieces
+            .into_iter()
+            .flat_map(|p| split_piece_by_char_predicate(&p, char_is_punctuation, *behavior))
+            .collect(),
+        PreTokenizerRegex::Digits { individual_digits } => {
+            let behavior = crate::pre_tokenizer::SplitDelimiterBehavior::Isolated;
+            let mut out = Vec::with_capacity(pieces.len());
+            for piece in pieces {
+                if *individual_digits {
+                    out.extend(split_piece_by_char_predicate(
+                        &piece,
+                        |c| c.is_ascii_digit(),
+                        behavior,
+                    ));
+                } else {
+                    out.extend(split_piece_by_char_run(
+                        &piece,
+                        |c| c.is_ascii_digit(),
+                        behavior,
+                    ));
+                }
+            }
+            out
+        }
+        PreTokenizerRegex::Split { regex, behavior } => pieces
+            .into_iter()
+            .flat_map(|p| split_piece_by_regex_matches(&p, regex, *behavior))
+            .collect(),
+        PreTokenizerRegex::Sequence(stages) => {
+            let mut current = pieces;
+            for s in stages {
+                current = apply_stage(current, s);
+            }
+            current
+        }
+    }
+}
+
+/// Split a piece on every occurrence of `sep`. Matches
+/// [`PreTokenizerRegex::Literal`] semantics — delimiter runs collapse
+/// and leading/trailing matches drop.
+#[cfg(feature = "std")]
+fn split_piece_literal(piece: String, sep: &str) -> Vec<String> {
+    if sep.is_empty() || piece.is_empty() {
+        return alloc::vec![piece];
+    }
+    let mut out = Vec::new();
+    let bytes = piece.as_bytes();
+    let sep_bytes = sep.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        while cursor + sep_bytes.len() <= bytes.len()
+            && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
+        {
+            cursor += sep_bytes.len();
+        }
+        if cursor >= bytes.len() {
+            break;
+        }
+        let start = cursor;
+        while cursor < bytes.len() {
+            if cursor + sep_bytes.len() <= bytes.len()
+                && &bytes[cursor..cursor + sep_bytes.len()] == sep_bytes
+            {
+                break;
+            }
+            cursor += 1;
+        }
+        out.push(piece[start..cursor].to_string());
+    }
+    out
+}
+
+/// Split a piece via a compiled regex, keeping only matched substrings
+/// (tiktoken semantics — [`PreTokenizerRegex::Regex`], `re.findall`
+/// shape).
+#[cfg(feature = "std")]
+fn split_piece_regex(piece: &str, pre: &crate::pre_tokenizer::RegexPreTokenizer) -> Vec<String> {
+    pre.split(piece)
+        .into_iter()
+        .map(|(_off, s)| s.to_string())
+        .collect()
+}
+
+/// `ByteLevel` per-piece application: prepend a leading space (when
+/// requested and not already present), split by the optional inner
+/// regex, then byte-encode each chunk through the `ByteLevel`
+/// bijection.
+#[cfg(feature = "std")]
+fn split_piece_byte_level(
+    piece: &str,
+    add_prefix_space: bool,
+    split: Option<&crate::pre_tokenizer::RegexPreTokenizer>,
+) -> Vec<String> {
+    let source: alloc::borrow::Cow<'_, str> = if add_prefix_space && !piece.starts_with(' ') {
+        let mut s = String::with_capacity(piece.len() + 1);
+        s.push(' ');
+        s.push_str(piece);
+        alloc::borrow::Cow::Owned(s)
+    } else {
+        alloc::borrow::Cow::Borrowed(piece)
+    };
+    let src = source.as_ref();
+    let chunks: Vec<&str> = if let Some(pre) = split {
+        pre.split(src).into_iter().map(|(_o, s)| s).collect()
+    } else if src.is_empty() {
+        Vec::new()
+    } else {
+        alloc::vec![src]
+    };
+    chunks
+        .into_iter()
+        .map(crate::byte_level::encode_bytes)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// `true` when `c` is any Unicode punctuation character (category `P*`)
+/// OR belongs to the ASCII punctuation ranges HF's own `Punctuation`
+/// pre-tokenizer treats as punctuation. HF's implementation uses
+/// `char::is_ascii_punctuation` AND `unicode_categories::UnicodeCategories::is_punctuation`
+/// — a superset of the strict Unicode category set. We mirror both.
+#[cfg(feature = "std")]
+fn char_is_punctuation(c: char) -> bool {
+    if c.is_ascii() {
+        return c.is_ascii_punctuation();
+    }
+    matches!(
+        unicode_general_category::get_general_category(c),
+        unicode_general_category::GeneralCategory::ConnectorPunctuation
+            | unicode_general_category::GeneralCategory::DashPunctuation
+            | unicode_general_category::GeneralCategory::ClosePunctuation
+            | unicode_general_category::GeneralCategory::FinalPunctuation
+            | unicode_general_category::GeneralCategory::InitialPunctuation
+            | unicode_general_category::GeneralCategory::OtherPunctuation
+            | unicode_general_category::GeneralCategory::OpenPunctuation
+    )
+}
+
+/// Split `piece` at every char matching `pred`, applying HF's
+/// [`SplitDelimiterBehavior`](crate::pre_tokenizer::SplitDelimiterBehavior)
+/// semantics. Each *individual* matching char is a match — use
+/// [`split_piece_by_char_run`] when the caller wants runs of matching
+/// chars grouped into single matches.
+#[cfg(feature = "std")]
+fn split_piece_by_char_predicate(
+    piece: &str,
+    pred: fn(char) -> bool,
+    behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+) -> Vec<String> {
+    // Materialise the matches as (start, end) byte ranges over `piece`.
+    // Each match is one Unicode scalar — its byte length is the char's
+    // UTF-8 length.
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = 0usize;
+    for c in piece.chars() {
+        let len = c.len_utf8();
+        if pred(c) {
+            matches.push((cursor, cursor + len));
+        }
+        cursor += len;
+    }
+    apply_split_behavior(piece, &matches, behavior)
+}
+
+/// Like [`split_piece_by_char_predicate`] but treats consecutive
+/// matching chars as a single grouped match. Matches HF's `Digits {
+/// individual_digits: false }` semantics.
+#[cfg(feature = "std")]
+fn split_piece_by_char_run(
+    piece: &str,
+    pred: fn(char) -> bool,
+    behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+) -> Vec<String> {
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = 0usize;
+    let mut run_start: Option<usize> = None;
+    for c in piece.chars() {
+        let len = c.len_utf8();
+        if pred(c) {
+            if run_start.is_none() {
+                run_start = Some(cursor);
+            }
+        } else if let Some(start) = run_start.take() {
+            matches.push((start, cursor));
+        }
+        cursor += len;
+    }
+    if let Some(start) = run_start {
+        matches.push((start, cursor));
+    }
+    apply_split_behavior(piece, &matches, behavior)
+}
+
+/// Split `piece` by the matches produced by `pre`, applying HF's
+/// [`SplitDelimiterBehavior`](crate::pre_tokenizer::SplitDelimiterBehavior)
+/// semantics. Used by [`PreTokenizerRegex::Split`].
+#[cfg(feature = "std")]
+fn split_piece_by_regex_matches(
+    piece: &str,
+    pre: &crate::pre_tokenizer::RegexPreTokenizer,
+    behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+) -> Vec<String> {
+    let matches: Vec<(usize, usize)> = pre
+        .split_ranges(piece)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect();
+    apply_split_behavior(piece, &matches, behavior)
+}
+
+/// One entry of the base decomposition consumed by
+/// [`apply_split_behavior`] — an alternating between/match kind plus
+/// a `(start, end)` byte range.
+#[cfg(feature = "std")]
+#[derive(Clone, Copy)]
+enum DecompKind {
+    Between,
+    Match,
+}
+
+/// Apply [`SplitDelimiterBehavior`](crate::pre_tokenizer::SplitDelimiterBehavior)
+/// to a piece plus a list of `(start, end)` match ranges. Dispatches
+/// to one of the four per-mode helpers so the parent stays short.
+#[cfg(feature = "std")]
+fn apply_split_behavior(
+    piece: &str,
+    matches: &[(usize, usize)],
+    behavior: crate::pre_tokenizer::SplitDelimiterBehavior,
+) -> Vec<String> {
+    use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+    if matches.is_empty() {
+        return if piece.is_empty() {
+            Vec::new()
+        } else {
+            alloc::vec![piece.to_string()]
+        };
+    }
+
+    let decomp = build_split_decomposition(piece, matches);
+    match behavior {
+        B::Isolated => decomp
+            .into_iter()
+            .map(|(_, s, e)| piece[s..e].to_string())
+            .collect(),
+        B::Removed => decomp
+            .into_iter()
+            .filter_map(|(k, s, e)| match k {
+                DecompKind::Match => None,
+                DecompKind::Between => Some(piece[s..e].to_string()),
+            })
+            .collect(),
+        B::MergedWithPrevious => merge_matches_with_previous(piece, decomp),
+        B::MergedWithNext => merge_matches_with_next(piece, decomp),
+        B::Contiguous => collapse_adjacent_matches(piece, decomp),
+    }
+}
+
+/// Base decomposition: alternating non-match / match / non-match / ...
+/// pieces, in byte-range form. Zero-length non-match pieces are
+/// dropped up front so behaviour choices operate on real content.
+#[cfg(feature = "std")]
+fn build_split_decomposition(
+    piece: &str,
+    matches: &[(usize, usize)],
+) -> Vec<(DecompKind, usize, usize)> {
+    let mut decomp: Vec<(DecompKind, usize, usize)> = Vec::with_capacity(matches.len() * 2 + 1);
+    let mut cursor = 0usize;
+    for &(s, e) in matches {
+        if s > cursor {
+            decomp.push((DecompKind::Between, cursor, s));
+        }
+        if e > s {
+            decomp.push((DecompKind::Match, s, e));
+        }
+        cursor = e;
+    }
+    if cursor < piece.len() {
+        decomp.push((DecompKind::Between, cursor, piece.len()));
+    }
+    decomp
+}
+
+/// [`SplitDelimiterBehavior::MergedWithPrevious`]: matches glue onto
+/// the preceding piece (or become their own piece if nothing
+/// precedes).
+#[cfg(feature = "std")]
+fn merge_matches_with_previous(
+    piece: &str,
+    decomp: Vec<(DecompKind, usize, usize)>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (k, s, e) in decomp {
+        let chunk = &piece[s..e];
+        match k {
+            DecompKind::Between => out.push(chunk.to_string()),
+            DecompKind::Match => {
+                if let Some(last) = out.last_mut() {
+                    last.push_str(chunk);
+                } else {
+                    out.push(chunk.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// [`SplitDelimiterBehavior::MergedWithNext`]: matches glue onto the
+/// following piece (or become their own if nothing follows). Walks
+/// right-to-left so the "next" concept is the last-pushed piece.
+#[cfg(feature = "std")]
+fn merge_matches_with_next(piece: &str, decomp: Vec<(DecompKind, usize, usize)>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (k, s, e) in decomp.into_iter().rev() {
+        let chunk = &piece[s..e];
+        match k {
+            DecompKind::Between => out.push(chunk.to_string()),
+            DecompKind::Match => {
+                if let Some(last) = out.last_mut() {
+                    let mut merged = chunk.to_string();
+                    merged.push_str(last);
+                    *last = merged;
+                } else {
+                    out.push(chunk.to_string());
+                }
+            }
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// [`SplitDelimiterBehavior::Contiguous`]: runs of adjacent match
+/// entries collapse into a single piece.
+#[cfg(feature = "std")]
+fn collapse_adjacent_matches(piece: &str, decomp: Vec<(DecompKind, usize, usize)>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut pending_match_start: Option<usize> = None;
+    let mut pending_match_end: usize = 0;
+    for (k, s, e) in decomp {
+        match k {
+            DecompKind::Match => {
+                if pending_match_start.is_none() {
+                    pending_match_start = Some(s);
+                }
+                pending_match_end = e;
+            }
+            DecompKind::Between => {
+                if let Some(ms) = pending_match_start.take() {
+                    out.push(piece[ms..pending_match_end].to_string());
+                }
+                out.push(piece[s..e].to_string());
+            }
+        }
+    }
+    if let Some(ms) = pending_match_start {
+        out.push(piece[ms..pending_match_end].to_string());
+    }
+    out
+}
+
 /// Format a byte slice as a printable label for error messages.
 fn format_bytes_literal(b: &[u8]) -> String {
     use core::fmt::Write as _;
@@ -2130,6 +2892,138 @@ fn format_id(id: TokenId) -> String {
     s.push_str(&id.to_string());
     s.push('>');
     s
+}
+
+/// One added-vocab entry as consumed by the encode-side matcher.
+///
+/// Borrows the surface string from the tokenizer's `special_tokens`
+/// map so the sort doesn't clone; the flags are already `Copy`.
+struct SortedAddedEntry<'a> {
+    surface: &'a str,
+    flags: AddedTokenFlags,
+}
+
+/// One `(start, end, id, is_special)` match produced by the
+/// added-vocab scanner. `start` and `end` are byte offsets into the
+/// input string being scanned (raw input for Phase 1, normalized
+/// region for Phase 2). The span may extend beyond the raw surface's
+/// byte range when the entry has `lstrip: true` (start pushed left
+/// through preceding whitespace) or `rstrip: true` (end pushed right
+/// through trailing whitespace).
+struct AddedMatch {
+    id: TokenId,
+    start: usize,
+    end: usize,
+    is_special: bool,
+}
+
+/// Scan `text` for greedy left-to-right added-vocab matches over
+/// `entries` (already sorted longest-first). Applies each match's
+/// [`AddedTokenFlags::lstrip`] and [`AddedTokenFlags::rstrip`]
+/// semantics: extends the match span outward through adjacent
+/// Unicode-whitespace characters. Returns the matches in the order
+/// they occur.
+///
+/// The cursor advances one byte at a time between match attempts. A
+/// match can not overlap the previous match — the cursor jumps to the
+/// (extended) `end` of the previous match. This matches HF's own
+/// `added_vocabulary::find_matches` shape.
+fn find_added_vocab_matches(text: &str, entries: &[SortedAddedEntry<'_>]) -> Vec<AddedMatch> {
+    let mut matches = Vec::new();
+    if entries.is_empty() || text.is_empty() {
+        return matches;
+    }
+    let bytes = text.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        // Longest-first match at `cursor`.
+        let mut hit: Option<&SortedAddedEntry<'_>> = None;
+        for e in entries {
+            let sb = e.surface.as_bytes();
+            if bytes[cursor..].starts_with(sb) {
+                hit = Some(e);
+                break;
+            }
+        }
+        if let Some(e) = hit {
+            let raw_start = cursor;
+            let raw_end = cursor + e.surface.len();
+            let start = if e.flags.lstrip {
+                raw_start - trailing_whitespace_len(&text[..raw_start])
+            } else {
+                raw_start
+            };
+            let end = if e.flags.rstrip {
+                raw_end + leading_whitespace_len(&text[raw_end..])
+            } else {
+                raw_end
+            };
+            matches.push(AddedMatch {
+                id: e.flags.id,
+                start,
+                end,
+                is_special: e.flags.special,
+            });
+            cursor = end;
+        } else {
+            // Advance by one Unicode scalar to keep every walk step
+            // valid UTF-8. Bytes past the initial byte of a multi-byte
+            // sequence are continuation bytes (10xxxxxx) and can not
+            // start a new match anyway.
+            let step = utf8_char_len(bytes[cursor]);
+            cursor += step;
+        }
+    }
+    matches
+}
+
+/// Number of leading Unicode-whitespace bytes in `text` (i.e. sum of
+/// the UTF-8 byte lengths of each leading whitespace char).
+fn leading_whitespace_len(text: &str) -> usize {
+    let mut consumed = 0usize;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            consumed += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    consumed
+}
+
+/// Number of trailing Unicode-whitespace bytes in `text` (sum of the
+/// UTF-8 byte lengths of each trailing whitespace char). Callers use
+/// this to extend a match backward by `text.len() - trailing_ws_len`.
+fn trailing_whitespace_len(text: &str) -> usize {
+    let mut consumed = 0usize;
+    for c in text.chars().rev() {
+        if c.is_whitespace() {
+            consumed += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    consumed
+}
+
+/// Byte length of the UTF-8 sequence whose leading byte is `first`.
+/// Defensive: returns 1 for continuation bytes (`0x80..0xC0`) and for
+/// invalid leads (which shouldn't appear in valid UTF-8 anyway), so a
+/// caller can safely advance a byte cursor by the return value on
+/// unrecognised input rather than looping forever.
+const fn utf8_char_len(first: u8) -> usize {
+    // Continuation bytes and ASCII both step by 1 — deliberately.
+    // The `if first < 0xC0` guard collapses those two ranges and keeps
+    // the function total across every u8, including invalid leads.
+    if first < 0xC0 {
+        1
+    } else if first < 0xE0 {
+        2
+    } else if first < 0xF0 {
+        3
+    } else {
+        4
+    }
 }
 
 /// Straight substring search over byte slices — no third-party regex.
@@ -2514,6 +3408,213 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Punctuation / Digits / Sequence pre-tokenizer stages.
+    //
+    // These exercise the multi-stage pipeline that Falcon-family
+    // checkpoints wire through as
+    // `Sequence[Punctuation(Contiguous), ByteLevel, Digits(individual_digits=false),
+    // Split(Regex="[0-9][0-9][0-9]")]`. Each `SplitDelimiterBehavior`
+    // mode is exercised on a punctuation-dense input.
+    // ---------------------------------------------------------------
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_isolated_splits_each_punct_char() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello, world!")],
+            &PreTokenizerRegex::punctuation(B::Isolated),
+        );
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("Hello"),
+                String::from(","),
+                String::from(" world"),
+                String::from("!"),
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_contiguous_groups_adjacent_puncts() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello,, world!!")],
+            &PreTokenizerRegex::punctuation(B::Contiguous),
+        );
+        // Consecutive `,,` and `!!` collapse into single pieces.
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("Hello"),
+                String::from(",,"),
+                String::from(" world"),
+                String::from("!!"),
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_removed_drops_matches() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello, world!")],
+            &PreTokenizerRegex::punctuation(B::Removed),
+        );
+        assert_eq!(pieces, vec![String::from("Hello"), String::from(" world")]);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_merged_with_previous_glues_left() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello, world!")],
+            &PreTokenizerRegex::punctuation(B::MergedWithPrevious),
+        );
+        assert_eq!(
+            pieces,
+            vec![String::from("Hello,"), String::from(" world!")]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_merged_with_next_glues_right() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello, world!")],
+            &PreTokenizerRegex::punctuation(B::MergedWithNext),
+        );
+        // `,` glues onto ` world`; the final `!` has nothing following
+        // it and stays as its own piece.
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("Hello"),
+                String::from(", world"),
+                String::from("!")
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn punctuation_stage_handles_unicode_puncts() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        // Ideographic comma (、), fullwidth question mark (？), Chinese
+        // enumeration comma. All Unicode `P*` categories.
+        let pieces = apply_stage(
+            alloc::vec![String::from("Hello，world。")],
+            &PreTokenizerRegex::punctuation(B::Isolated),
+        );
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("Hello"),
+                String::from("，"),
+                String::from("world"),
+                String::from("。"),
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn digits_stage_runs_kept_together() {
+        // Falcon uses `individual_digits=false`, which keeps digit runs
+        // as single pieces.
+        let pieces = apply_stage(
+            alloc::vec![String::from("abc123def")],
+            &PreTokenizerRegex::digits(false),
+        );
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("abc"),
+                String::from("123"),
+                String::from("def")
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn digits_stage_individual_splits_each_digit() {
+        let pieces = apply_stage(
+            alloc::vec![String::from("a12b")],
+            &PreTokenizerRegex::digits(true),
+        );
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("a"),
+                String::from("1"),
+                String::from("2"),
+                String::from("b"),
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn sequence_stage_applies_children_left_to_right() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        // Punctuation(Isolated) then Digits(false):
+        //   "abc, 12!def3"
+        //   → Punctuation: ["abc", ",", " 12", "!", "def3"]
+        //   → Digits:      ["abc", ",", " ", "12", "!", "def", "3"]
+        let pipeline = PreTokenizerRegex::sequence(alloc::vec![
+            PreTokenizerRegex::punctuation(B::Isolated),
+            PreTokenizerRegex::digits(false),
+        ]);
+        let pieces = apply_stage(alloc::vec![String::from("abc, 12!def3")], &pipeline);
+        assert_eq!(
+            pieces,
+            vec![
+                String::from("abc"),
+                String::from(","),
+                String::from(" "),
+                String::from("12"),
+                String::from("!"),
+                String::from("def"),
+                String::from("3"),
+            ]
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn sequence_stage_empty_is_identity() {
+        let pipeline = PreTokenizerRegex::sequence(alloc::vec![]);
+        let pieces = apply_stage(alloc::vec![String::from("hello")], &pipeline);
+        assert_eq!(pieces, vec![String::from("hello")]);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn contains_byte_level_walks_nested_sequence() {
+        use crate::pre_tokenizer::SplitDelimiterBehavior as B;
+        let bl = PreTokenizerRegex::byte_level(false, None);
+        assert!(bl.contains_byte_level());
+        let pipeline = PreTokenizerRegex::sequence(alloc::vec![
+            PreTokenizerRegex::punctuation(B::Isolated),
+            bl,
+            PreTokenizerRegex::digits(false),
+        ]);
+        assert!(pipeline.contains_byte_level());
+        // No byte-level anywhere → false.
+        let no_bl = PreTokenizerRegex::sequence(alloc::vec![
+            PreTokenizerRegex::punctuation(B::Isolated),
+            PreTokenizerRegex::digits(false),
+        ]);
+        assert!(!no_bl.contains_byte_level());
+    }
+
+    // ---------------------------------------------------------------
     // Llama-family "Prepend(▁) + Replace(' '→'▁')" normalizer +
     // specials-around-normalizer interaction. These regression tests
     // cover the Phi-3-mini failing cases (empty, `<s>hi</s>`,
@@ -2632,6 +3733,216 @@ mod tests {
         let tok = build_phi3_shape_tokenizer();
         let enc = tok.encode("hi<s>hi").unwrap();
         assert_eq!(enc.ids, vec![7251, 1, 7251]);
+    }
+
+    // ---------------------------------------------------------------
+    // Added-vocab flag semantics (normalized / lstrip / rstrip /
+    // special:false and their combinations). These exercise the
+    // Phase-1/Phase-2 matcher in isolation from any real vocab.
+    // ---------------------------------------------------------------
+
+    /// Build a byte-alphabet tokenizer with a single [`AddedTokenFlags`]
+    /// entry.
+    fn added_vocab_tokenizer(surface: &str, flags: AddedTokenFlags) -> BpeTokenizer {
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let mut entries = BTreeMap::new();
+        entries.insert(String::from(surface), flags);
+        BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_added_vocab(entries)
+    }
+
+    #[test]
+    fn added_vocab_special_false_still_matched_and_emitted() {
+        // Regression for the Phi-3-mini `</s>` failure: the entry is
+        // `special: false` but must still be pre-extracted from the
+        // raw input, otherwise it BPE-encodes character by character.
+        let tok = added_vocab_tokenizer(
+            "</s>",
+            AddedTokenFlags {
+                id: 42,
+                normalized: false,
+                lstrip: false,
+                rstrip: false,
+                special: false,
+            },
+        );
+        let enc = tok.encode("</s>").unwrap();
+        assert_eq!(enc.ids, vec![42]);
+        // But its `special_mask` bit is FALSE because the entry is
+        // `special: false` — matches HF's `is_special` field on the
+        // produced encoding.
+        assert_eq!(enc.special_mask, vec![false]);
+    }
+
+    #[test]
+    fn added_vocab_rstrip_true_consumes_trailing_whitespace() {
+        // A `rstrip: true` entry absorbs trailing whitespace so the
+        // adjacent BPE region never sees it. `</s>  ab` becomes
+        // `[42, id(a), id(b)]` — the two trailing spaces are eaten
+        // and there is no whitespace region between them.
+        let tok = added_vocab_tokenizer(
+            "</s>",
+            AddedTokenFlags {
+                id: 42,
+                normalized: false,
+                lstrip: false,
+                rstrip: true,
+                special: true,
+            },
+        );
+        let enc = tok.encode("</s>  ab").unwrap();
+        assert_eq!(enc.ids, vec![42, u32::from(b'a'), u32::from(b'b')]);
+    }
+
+    #[test]
+    fn added_vocab_lstrip_true_consumes_preceding_whitespace() {
+        // A `lstrip: true` entry absorbs leading whitespace so the
+        // adjacent BPE region on the left never emits it. `ab  <|end|>`
+        // becomes `[id(a), id(b), 42]`.
+        let tok = added_vocab_tokenizer(
+            "<|end|>",
+            AddedTokenFlags {
+                id: 42,
+                normalized: false,
+                lstrip: true,
+                rstrip: false,
+                special: true,
+            },
+        );
+        let enc = tok.encode("ab  <|end|>").unwrap();
+        assert_eq!(enc.ids, vec![u32::from(b'a'), u32::from(b'b'), 42]);
+    }
+
+    #[test]
+    fn added_vocab_lstrip_and_rstrip_compose() {
+        // Combining both flags: the entry eats whitespace on both
+        // sides. `ab \t<|end|> \ncd` → `[id(a), id(b), 42, id(c),
+        // id(d)]`.
+        let tok = added_vocab_tokenizer(
+            "<|end|>",
+            AddedTokenFlags {
+                id: 42,
+                normalized: false,
+                lstrip: true,
+                rstrip: true,
+                special: true,
+            },
+        );
+        let enc = tok.encode("ab \t<|end|> \ncd").unwrap();
+        assert_eq!(
+            enc.ids,
+            vec![
+                u32::from(b'a'),
+                u32::from(b'b'),
+                42,
+                u32::from(b'c'),
+                u32::from(b'd')
+            ]
+        );
+    }
+
+    #[cfg(feature = "hf-normalizer")]
+    #[test]
+    fn added_vocab_normalized_true_matches_normalized_region() {
+        // `normalized: true` entries are matched AFTER per-region
+        // normalization. A `Replace(" " → "_")` normalizer converts
+        // `hello world` to `hello_world`; a `normalized: true` entry
+        // for `_w` (id 900) matches on the normalized text.
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let normalizer = crate::normalizer::Normalizer::Replace {
+            pattern: String::from(" "),
+            content: String::from("_"),
+        };
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            String::from("_w"),
+            AddedTokenFlags {
+                id: 900,
+                normalized: true,
+                lstrip: false,
+                rstrip: false,
+                special: false,
+            },
+        );
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab)
+            .with_added_vocab(entries)
+            .with_normalizer(normalizer);
+        let enc = tok.encode("hello world").unwrap();
+        // Expected: "hello" (5 byte ids) + `_w` (900) + "orld" (4 byte
+        // ids). The normalizer swaps the space for `_`, then the
+        // Phase-2 scanner matches `_w` and emits 900.
+        assert_eq!(
+            enc.ids,
+            vec![
+                u32::from(b'h'),
+                u32::from(b'e'),
+                u32::from(b'l'),
+                u32::from(b'l'),
+                u32::from(b'o'),
+                900,
+                u32::from(b'o'),
+                u32::from(b'r'),
+                u32::from(b'l'),
+                u32::from(b'd'),
+            ]
+        );
+    }
+
+    #[test]
+    fn added_vocab_normalized_true_with_special_false_matched_and_flagged_nonspecial() {
+        // The `normalized: true + special: false` combination is
+        // Phi-2's whitespace-run compression shape: `"    "` (4
+        // spaces) at id 50284, matched inside the normalized region
+        // and NOT flagged as special. Verifying both flags compose
+        // together in the Phase-2 matcher.
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            String::from("    "),
+            AddedTokenFlags {
+                id: 50284,
+                normalized: true,
+                lstrip: false,
+                rstrip: false,
+                special: false,
+            },
+        );
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_added_vocab(entries);
+        let enc = tok.encode("a    b").unwrap();
+        assert_eq!(enc.ids, vec![u32::from(b'a'), 50284, u32::from(b'b')]);
+        assert_eq!(enc.special_mask, vec![false, false, false]);
+    }
+
+    #[test]
+    fn added_vocab_longest_first_wins_over_shorter_prefix() {
+        // If two added-vocab entries share a common prefix, the longer
+        // wins at match time (`<|im_start|>` beats `<|im|>`). This is
+        // the same longest-match invariant `sorted_specials` enforced,
+        // now applied per phase.
+        let (vocab, _) = byte_vocab_with_extras(&[]);
+        let mut entries = BTreeMap::new();
+        entries.insert(String::from("<|im|>"), AddedTokenFlags::legacy_special(10));
+        entries.insert(
+            String::from("<|im_start|>"),
+            AddedTokenFlags::legacy_special(11),
+        );
+        let tok = BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_added_vocab(entries);
+        let enc = tok.encode("<|im_start|>").unwrap();
+        assert_eq!(enc.ids, vec![11]);
+    }
+
+    #[test]
+    fn added_vocab_matches_across_utf8_boundaries_safely() {
+        // A between-matches walk that encounters a multi-byte UTF-8
+        // sequence must advance one Unicode scalar at a time, never
+        // splitting a continuation byte. Regression sentinel for the
+        // Phase-1 raw-scan cursor step.
+        let tok = added_vocab_tokenizer("<|end|>", AddedTokenFlags::legacy_special(42));
+        // "café<|end|>" — the `é` is 2 UTF-8 bytes (0xC3 0xA9); a
+        // byte-by-byte cursor would land on the continuation byte.
+        let enc = tok.encode("café<|end|>").unwrap();
+        // The 4 bytes of "café" become 4 vocab lookups (the bytes are
+        // in the byte-alphabet vocab), then id 42 for the special.
+        assert_eq!(enc.ids.last(), Some(&42));
     }
 
     #[test]
