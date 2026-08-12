@@ -159,6 +159,8 @@ pub mod collation_data;
 pub mod collator;
 #[cfg(feature = "alloc")]
 pub mod contraction;
+#[cfg(feature = "datetime-scud")]
+pub mod datetime_data;
 #[cfg(feature = "number-scud")]
 pub mod number_data;
 #[cfg(feature = "plural-scud")]
