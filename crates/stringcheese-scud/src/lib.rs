@@ -551,6 +551,22 @@ impl<'a> ScudFile<'a> {
         }
         DateTimeDataView::parse(self.body())
     }
+
+    /// Project the body as a break-iteration view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_BREAK`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`BreakDataView`] borrows into this
+    /// [`ScudFile`]'s bytes.
+    pub fn as_break_data(&self) -> Result<BreakDataView<'a>, ScudError> {
+        if self.capability() != CAP_BREAK {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_BREAK,
+                got: self.capability(),
+            });
+        }
+        BreakDataView::parse(self.body())
+    }
 }
 
 /// Parse the outer file header (magic through the CLDR/locale
@@ -1774,6 +1790,442 @@ impl<'a> DateTimeDataView<'a> {
     }
 }
 
+// -----------------------------------------------------------------------
+// Break-iteration view (Phase 5)
+// -----------------------------------------------------------------------
+
+/// Section id for the grapheme-cluster property class table. Bytes
+/// `B` `k` `G` `c`.
+///
+/// Wire layout: a `u32 count` prefix followed by `count` fixed-width
+/// `(u32 start, u32 length, u8 class)` records (9 bytes each) sorted
+/// by `start`. The `class` byte is one of the [`GraphemeClass`]
+/// discriminants. Ranges are half-open in spirit — the range covers
+/// scalars `start..start + length`. An empty section means "the
+/// algorithm crate applies its built-in default classification"; the
+/// Phase 5 default pack ships empty class sections and lets the
+/// algorithm crate own the classification tables in code.
+pub const SECT_GRAPHEME_CLASSES: [u8; 4] = *b"BkGc";
+
+/// Section id for the word-break property class table. Same wire
+/// layout as [`SECT_GRAPHEME_CLASSES`]; the `class` byte is a
+/// [`WordClass`] discriminant. Bytes `B` `k` `W` `c`.
+pub const SECT_WORD_CLASSES: [u8; 4] = *b"BkWc";
+
+/// Section id for the sentence-break property class table. Same wire
+/// layout as [`SECT_GRAPHEME_CLASSES`]; the `class` byte is a
+/// [`SentenceClass`] discriminant. Bytes `B` `k` `S` `c`.
+pub const SECT_SENTENCE_CLASSES: [u8; 4] = *b"BkSc";
+
+/// Section id for the grapheme-cluster rule table. Bytes `B` `k`
+/// `G` `r`.
+///
+/// Wire layout: a single `u8 rules_id` byte identifying which
+/// rule-set the algorithm crate should apply. Phase 5 defines two
+/// values:
+///
+/// * `0` — no rules section present (identical to omitting the
+///   section).
+/// * `1` — the UAX #29 default rule set built into the algorithm
+///   crate.
+///
+/// Future locale-specific tailorings (Japanese/Chinese word-break
+/// dictionaries) will carry additional bytes after the id.
+pub const SECT_GRAPHEME_RULES: [u8; 4] = *b"BkGr";
+
+/// Section id for the word-break rule table. Same wire layout as
+/// [`SECT_GRAPHEME_RULES`]. Bytes `B` `k` `W` `r`.
+pub const SECT_WORD_RULES: [u8; 4] = *b"BkWr";
+
+/// Section id for the sentence-break rule table. Same wire layout as
+/// [`SECT_GRAPHEME_RULES`]. Bytes `B` `k` `S` `r`.
+pub const SECT_SENTENCE_RULES: [u8; 4] = *b"BkSr";
+
+/// Well-known rule-id byte for "use the UAX #29 default rules".
+/// Written by [`BreakSectionBuilder::set_default_rules`].
+pub const RULES_UAX29_DEFAULT: u8 = 1;
+
+/// Unicode `Grapheme_Cluster_Break` property values per UAX #29
+/// § 3.
+///
+/// The `Other` value covers every scalar that does not carry an
+/// explicit `Grapheme_Cluster_Break` classification (the default
+/// class). SCUD packs may omit ranges that map to `Other`; the
+/// algorithm crate substitutes `Other` for any lookup that finds no
+/// covering range.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum GraphemeClass {
+    /// Default class.
+    Other = 0,
+    /// `CR` — U+000D.
+    Cr = 1,
+    /// `LF` — U+000A.
+    Lf = 2,
+    /// `Control` — control characters excluding CR/LF (`Cc`, `Cf`
+    /// minus certain exceptions, line/paragraph separators, ZWNJ,
+    /// ZWJ carve-out handled elsewhere).
+    Control = 3,
+    /// `Extend` — combining marks and the like.
+    Extend = 4,
+    /// `ZWJ` — U+200D.
+    Zwj = 5,
+    /// `Regional_Indicator` — U+1F1E6..U+1F1FF.
+    RegionalIndicator = 6,
+    /// `Prepend` — a prepend character (Arabic number sign etc.).
+    Prepend = 7,
+    /// `SpacingMark` — spacing combining marks that join to the
+    /// previous grapheme.
+    SpacingMark = 8,
+    /// `L` — Hangul leading jamo.
+    HangulL = 9,
+    /// `V` — Hangul vowel jamo.
+    HangulV = 10,
+    /// `T` — Hangul trailing jamo.
+    HangulT = 11,
+    /// `LV` — Hangul precomposed syllable ending in a vowel.
+    HangulLv = 12,
+    /// `LVT` — Hangul precomposed syllable ending in a trailing jamo.
+    HangulLvt = 13,
+    /// `Extended_Pictographic` — an emoji or emoji-adjacent
+    /// pictographic scalar (per UAX #29 + UTS #51).
+    ExtendedPictographic = 14,
+}
+
+impl GraphemeClass {
+    /// Round-trip a `u8` back into the typed enum. `Other` for
+    /// unknown discriminants preserves the "unknown class is Other"
+    /// invariant the algorithm crate relies on.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Cr,
+            2 => Self::Lf,
+            3 => Self::Control,
+            4 => Self::Extend,
+            5 => Self::Zwj,
+            6 => Self::RegionalIndicator,
+            7 => Self::Prepend,
+            8 => Self::SpacingMark,
+            9 => Self::HangulL,
+            10 => Self::HangulV,
+            11 => Self::HangulT,
+            12 => Self::HangulLv,
+            13 => Self::HangulLvt,
+            14 => Self::ExtendedPictographic,
+            _ => Self::Other,
+        }
+    }
+
+    /// The wire-encoded `u8` discriminant.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Unicode `Word_Break` property values per UAX #29 § 4.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum WordClass {
+    /// Default class.
+    Other = 0,
+    /// `CR`.
+    Cr = 1,
+    /// `LF`.
+    Lf = 2,
+    /// `Newline` — line/paragraph separator except CR/LF.
+    Newline = 3,
+    /// `Extend`.
+    Extend = 4,
+    /// `ZWJ` — U+200D.
+    Zwj = 5,
+    /// `Regional_Indicator`.
+    RegionalIndicator = 6,
+    /// `Format`.
+    Format = 7,
+    /// `Katakana`.
+    Katakana = 8,
+    /// `Hebrew_Letter`.
+    HebrewLetter = 9,
+    /// `ALetter`.
+    ALetter = 10,
+    /// `Single_Quote` — U+0027.
+    SingleQuote = 11,
+    /// `Double_Quote` — U+0022.
+    DoubleQuote = 12,
+    /// `MidNumLet`.
+    MidNumLet = 13,
+    /// `MidLetter`.
+    MidLetter = 14,
+    /// `MidNum`.
+    MidNum = 15,
+    /// `Numeric`.
+    Numeric = 16,
+    /// `ExtendNumLet`.
+    ExtendNumLet = 17,
+    /// `WSegSpace`.
+    WSegSpace = 18,
+    /// `Extended_Pictographic`.
+    ExtendedPictographic = 19,
+}
+
+impl WordClass {
+    /// Round-trip a `u8` back into the typed enum. Unknown → `Other`.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Cr,
+            2 => Self::Lf,
+            3 => Self::Newline,
+            4 => Self::Extend,
+            5 => Self::Zwj,
+            6 => Self::RegionalIndicator,
+            7 => Self::Format,
+            8 => Self::Katakana,
+            9 => Self::HebrewLetter,
+            10 => Self::ALetter,
+            11 => Self::SingleQuote,
+            12 => Self::DoubleQuote,
+            13 => Self::MidNumLet,
+            14 => Self::MidLetter,
+            15 => Self::MidNum,
+            16 => Self::Numeric,
+            17 => Self::ExtendNumLet,
+            18 => Self::WSegSpace,
+            19 => Self::ExtendedPictographic,
+            _ => Self::Other,
+        }
+    }
+
+    /// The wire-encoded `u8` discriminant.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Unicode `Sentence_Break` property values per UAX #29 § 5.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum SentenceClass {
+    /// Default class.
+    Other = 0,
+    /// `CR`.
+    Cr = 1,
+    /// `LF`.
+    Lf = 2,
+    /// `Extend`.
+    Extend = 3,
+    /// `Sep` — line/paragraph separator excluding CR/LF.
+    Sep = 4,
+    /// `Format`.
+    Format = 5,
+    /// `Sp` — whitespace.
+    Sp = 6,
+    /// `Lower`.
+    Lower = 7,
+    /// `Upper`.
+    Upper = 8,
+    /// `OLetter` — letters that are neither upper nor lower.
+    OLetter = 9,
+    /// `Numeric`.
+    Numeric = 10,
+    /// `ATerm` — ambiguous sentence terminator (`.`).
+    ATerm = 11,
+    /// `STerm` — definite sentence terminator (`!`, `?`, …).
+    STerm = 12,
+    /// `Close` — closing punctuation.
+    Close = 13,
+    /// `SContinue` — continuation punctuation (`,`, `;`, …) that
+    /// suppresses a break after an `ATerm`.
+    SContinue = 14,
+}
+
+impl SentenceClass {
+    /// Round-trip a `u8` back into the typed enum. Unknown → `Other`.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Cr,
+            2 => Self::Lf,
+            3 => Self::Extend,
+            4 => Self::Sep,
+            5 => Self::Format,
+            6 => Self::Sp,
+            7 => Self::Lower,
+            8 => Self::Upper,
+            9 => Self::OLetter,
+            10 => Self::Numeric,
+            11 => Self::ATerm,
+            12 => Self::STerm,
+            13 => Self::Close,
+            14 => Self::SContinue,
+            _ => Self::Other,
+        }
+    }
+
+    /// The wire-encoded `u8` discriminant.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Zero-copy view into a SCUD file's break-iteration body.
+///
+/// Every accessor is `O(log n)` in the size of the corresponding
+/// class-range table; the rule-id accessors are `O(1)`. Callers who
+/// see all sections as empty (the Phase 5 default pack) fall back to
+/// the algorithm crate's built-in default classification and rule
+/// set.
+#[derive(Debug, Clone, Copy)]
+pub struct BreakDataView<'a> {
+    grapheme_classes: &'a [u8],
+    word_classes: &'a [u8],
+    sentence_classes: &'a [u8],
+    grapheme_rules: &'a [u8],
+    word_rules: &'a [u8],
+    sentence_rules: &'a [u8],
+}
+
+impl<'a> BreakDataView<'a> {
+    /// Parse a break-iteration body into a section-projected view.
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            grapheme_classes: reader.find(SECT_GRAPHEME_CLASSES)?.unwrap_or(&[]),
+            word_classes: reader.find(SECT_WORD_CLASSES)?.unwrap_or(&[]),
+            sentence_classes: reader.find(SECT_SENTENCE_CLASSES)?.unwrap_or(&[]),
+            grapheme_rules: reader.find(SECT_GRAPHEME_RULES)?.unwrap_or(&[]),
+            word_rules: reader.find(SECT_WORD_RULES)?.unwrap_or(&[]),
+            sentence_rules: reader.find(SECT_SENTENCE_RULES)?.unwrap_or(&[]),
+        })
+    }
+
+    /// True iff the grapheme-class section carries at least one
+    /// range.
+    #[must_use]
+    pub fn has_grapheme_classes(&self) -> bool {
+        range_table_count(self.grapheme_classes) > 0
+    }
+
+    /// True iff the word-class section carries at least one range.
+    #[must_use]
+    pub fn has_word_classes(&self) -> bool {
+        range_table_count(self.word_classes) > 0
+    }
+
+    /// True iff the sentence-class section carries at least one
+    /// range.
+    #[must_use]
+    pub fn has_sentence_classes(&self) -> bool {
+        range_table_count(self.sentence_classes) > 0
+    }
+
+    /// The rule-id byte for grapheme rules, or `0` (no rules) if the
+    /// section is absent.
+    #[must_use]
+    pub fn grapheme_rules_id(&self) -> u8 {
+        first_byte_or_zero(self.grapheme_rules)
+    }
+
+    /// The rule-id byte for word rules.
+    #[must_use]
+    pub fn word_rules_id(&self) -> u8 {
+        first_byte_or_zero(self.word_rules)
+    }
+
+    /// The rule-id byte for sentence rules.
+    #[must_use]
+    pub fn sentence_rules_id(&self) -> u8 {
+        first_byte_or_zero(self.sentence_rules)
+    }
+
+    /// Look up the [`GraphemeClass`] of the given scalar, consulting
+    /// only the pack's class table. Returns `None` when the pack
+    /// does not carry any classification for `cp` (the caller
+    /// substitutes its built-in default in that case).
+    #[must_use]
+    pub fn grapheme_class(&self, cp: u32) -> Option<GraphemeClass> {
+        lookup_range_class(self.grapheme_classes, cp).map(GraphemeClass::from_u8)
+    }
+
+    /// Look up the [`WordClass`] of the given scalar.
+    #[must_use]
+    pub fn word_class(&self, cp: u32) -> Option<WordClass> {
+        lookup_range_class(self.word_classes, cp).map(WordClass::from_u8)
+    }
+
+    /// Look up the [`SentenceClass`] of the given scalar.
+    #[must_use]
+    pub fn sentence_class(&self, cp: u32) -> Option<SentenceClass> {
+        lookup_range_class(self.sentence_classes, cp).map(SentenceClass::from_u8)
+    }
+}
+
+/// Wire size of one class-range record: `(u32 start, u32 length, u8
+/// class)` = 9 bytes.
+const CLASS_RANGE_RECORD_BYTES: usize = 9;
+
+fn range_table_count(bytes: &[u8]) -> u32 {
+    if bytes.len() < 4 {
+        return 0;
+    }
+    read_u32(&bytes[0..4])
+}
+
+fn first_byte_or_zero(bytes: &[u8]) -> u8 {
+    if bytes.is_empty() { 0 } else { bytes[0] }
+}
+
+/// Binary-search the sorted class-range table encoded at `bytes`
+/// for a range containing `cp`. Returns the `class` byte if found.
+fn lookup_range_class(bytes: &[u8], cp: u32) -> Option<u8> {
+    let count = range_table_count(bytes) as usize;
+    if count == 0 {
+        return None;
+    }
+    let records = &bytes[4..];
+    if records.len() < count * CLASS_RANGE_RECORD_BYTES {
+        return None;
+    }
+    // Binary search on the ranges sorted by `start`. Because the
+    // ranges are non-overlapping we can locate the last range whose
+    // start <= cp and then check its length.
+    let mut lo = 0usize;
+    let mut hi = count;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let off = mid * CLASS_RANGE_RECORD_BYTES;
+        let start = read_u32(&records[off..off + 4]);
+        if start <= cp {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo == 0 {
+        return None;
+    }
+    let idx = lo - 1;
+    let off = idx * CLASS_RANGE_RECORD_BYTES;
+    let start = read_u32(&records[off..off + 4]);
+    let length = read_u32(&records[off + 4..off + 8]);
+    let class = records[off + 8];
+    // length == 0 is nonsensical; treat as no coverage.
+    if length == 0 {
+        return None;
+    }
+    // Overflow-safe: start + length may exceed u32::MAX; use u64.
+    let end = u64::from(start) + u64::from(length);
+    if u64::from(cp) < end {
+        Some(class)
+    } else {
+        None
+    }
+}
+
 /// Walk `n` consecutive `(u8 len, [u8; len] utf8)` records and return
 /// the string at index `idx`. Returns `None` on truncation, invalid
 /// UTF-8, or when `idx` runs past the end.
@@ -2480,6 +2932,153 @@ impl DateTimeSectionBuilder {
     }
 }
 
+/// Builds the byte-encoded sections that a break-iteration SCUD pack
+/// contains.
+///
+/// Accepts three kinds of input: (a) per-class range tables as
+/// `(start, length, class_byte)` triples for graphemes, words, and
+/// sentences; (b) optional per-axis rule-id bytes (default: none).
+/// A caller that wants the pack's readers to fall through to the
+/// algorithm crate's built-in default classification simply omits
+/// the ranges and calls [`Self::set_default_rules`], which stamps
+/// the well-known [`RULES_UAX29_DEFAULT`] rule id on each axis.
+///
+/// # Wire format
+///
+/// Each range table is encoded as `u32 count` + `count * 9` bytes,
+/// with the 9 bytes per record being little-endian `(u32 start,
+/// u32 length, u8 class)`. The writer sorts ranges by `start` for
+/// binary-search correctness on the reader side.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct BreakSectionBuilder {
+    grapheme_ranges: Vec<(u32, u32, u8)>,
+    word_ranges: Vec<(u32, u32, u8)>,
+    sentence_ranges: Vec<(u32, u32, u8)>,
+    grapheme_rules: Option<u8>,
+    word_rules: Option<u8>,
+    sentence_rules: Option<u8>,
+}
+
+#[cfg(feature = "alloc")]
+impl BreakSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a `(start, length, class)` grapheme-class range.
+    ///
+    /// The range covers scalars `start..start + length`. Overlapping
+    /// or duplicated ranges are not validated; the writer sorts by
+    /// `start` and the reader picks whichever comes first — callers
+    /// author their tables so ranges do not overlap.
+    pub fn push_grapheme_range(&mut self, start: u32, length: u32, class: GraphemeClass) {
+        self.grapheme_ranges.push((start, length, class.as_u8()));
+    }
+
+    /// Push a `(start, length, class)` word-class range.
+    pub fn push_word_range(&mut self, start: u32, length: u32, class: WordClass) {
+        self.word_ranges.push((start, length, class.as_u8()));
+    }
+
+    /// Push a `(start, length, class)` sentence-class range.
+    pub fn push_sentence_range(&mut self, start: u32, length: u32, class: SentenceClass) {
+        self.sentence_ranges.push((start, length, class.as_u8()));
+    }
+
+    /// Stamp the well-known UAX #29 default rule id on all three
+    /// axes. Callers who want the algorithm crate's built-in
+    /// grapheme/word/sentence rules to apply reach for this
+    /// convenience.
+    pub fn set_default_rules(&mut self) {
+        self.grapheme_rules = Some(RULES_UAX29_DEFAULT);
+        self.word_rules = Some(RULES_UAX29_DEFAULT);
+        self.sentence_rules = Some(RULES_UAX29_DEFAULT);
+    }
+
+    /// Set a specific rule-id byte for grapheme rules. Overrides
+    /// any prior call to [`Self::set_default_rules`].
+    pub fn set_grapheme_rules(&mut self, id: u8) {
+        self.grapheme_rules = Some(id);
+    }
+
+    /// Set a specific rule-id byte for word rules.
+    pub fn set_word_rules(&mut self, id: u8) {
+        self.word_rules = Some(id);
+    }
+
+    /// Set a specific rule-id byte for sentence rules.
+    pub fn set_sentence_rules(&mut self, id: u8) {
+        self.sentence_rules = Some(id);
+    }
+
+    /// Encode the grapheme-class range section. Returns an empty
+    /// `Vec` when no ranges were pushed.
+    #[must_use]
+    pub fn grapheme_classes_bytes(&self) -> Vec<u8> {
+        encode_range_table(&self.grapheme_ranges)
+    }
+
+    /// Encode the word-class range section.
+    #[must_use]
+    pub fn word_classes_bytes(&self) -> Vec<u8> {
+        encode_range_table(&self.word_ranges)
+    }
+
+    /// Encode the sentence-class range section.
+    #[must_use]
+    pub fn sentence_classes_bytes(&self) -> Vec<u8> {
+        encode_range_table(&self.sentence_ranges)
+    }
+
+    /// Encode the grapheme rule id, or an empty `Vec` if none set.
+    #[must_use]
+    pub fn grapheme_rules_bytes(&self) -> Vec<u8> {
+        match self.grapheme_rules {
+            Some(id) => alloc::vec![id],
+            None => Vec::new(),
+        }
+    }
+
+    /// Encode the word rule id, or an empty `Vec` if none set.
+    #[must_use]
+    pub fn word_rules_bytes(&self) -> Vec<u8> {
+        match self.word_rules {
+            Some(id) => alloc::vec![id],
+            None => Vec::new(),
+        }
+    }
+
+    /// Encode the sentence rule id, or an empty `Vec` if none set.
+    #[must_use]
+    pub fn sentence_rules_bytes(&self) -> Vec<u8> {
+        match self.sentence_rules {
+            Some(id) => alloc::vec![id],
+            None => Vec::new(),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+fn encode_range_table(ranges: &[(u32, u32, u8)]) -> Vec<u8> {
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted = ranges.to_vec();
+    sorted.sort_by_key(|(s, _, _)| *s);
+    let mut out = Vec::with_capacity(4 + sorted.len() * CLASS_RANGE_RECORD_BYTES);
+    let count = u32::try_from(sorted.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for (start, length, class) in sorted {
+        out.extend_from_slice(&start.to_le_bytes());
+        out.extend_from_slice(&length.to_le_bytes());
+        out.push(class);
+    }
+    out
+}
+
 #[cfg(feature = "alloc")]
 fn encode_counted_strings_12(names: Option<&[alloc::string::String; 12]>) -> Vec<u8> {
     let Some(names) = names else {
@@ -2981,6 +3580,157 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         assert!(matches!(
             file.as_datetime_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    fn build_test_break_default_pack() -> Vec<u8> {
+        let mut b = BreakSectionBuilder::new();
+        // Two ranges so binary search is exercised: ASCII 'a'..='z'
+        // is ALetter, U+200D is ZWJ.
+        b.push_word_range('a' as u32, 26, WordClass::ALetter);
+        b.push_word_range(0x200D, 1, WordClass::Zwj);
+        b.push_grapheme_range(0x000D, 1, GraphemeClass::Cr);
+        b.push_grapheme_range(0x1F1E6, 26, GraphemeClass::RegionalIndicator);
+        b.push_sentence_range('.' as u32, 1, SentenceClass::ATerm);
+        b.set_default_rules();
+        let mut w = ScudWriter::new(CAP_BREAK, "44.1", Some(""));
+        w.append_section(SECT_GRAPHEME_CLASSES, &b.grapheme_classes_bytes());
+        w.append_section(SECT_WORD_CLASSES, &b.word_classes_bytes());
+        w.append_section(SECT_SENTENCE_CLASSES, &b.sentence_classes_bytes());
+        w.append_section(SECT_GRAPHEME_RULES, &b.grapheme_rules_bytes());
+        w.append_section(SECT_WORD_RULES, &b.word_rules_bytes());
+        w.append_section(SECT_SENTENCE_RULES, &b.sentence_rules_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn break_pack_round_trips() {
+        let bytes = build_test_break_default_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_BREAK);
+        let view = file.as_break_data().unwrap();
+        assert!(view.has_word_classes());
+        assert!(view.has_grapheme_classes());
+        assert!(view.has_sentence_classes());
+        assert_eq!(view.word_class('a' as u32), Some(WordClass::ALetter));
+        assert_eq!(view.word_class('z' as u32), Some(WordClass::ALetter));
+        assert_eq!(view.word_class(0x200D), Some(WordClass::Zwj));
+        assert_eq!(view.word_class('9' as u32), None);
+        assert_eq!(view.grapheme_class(0x000D), Some(GraphemeClass::Cr));
+        assert_eq!(
+            view.grapheme_class(0x1F1E6),
+            Some(GraphemeClass::RegionalIndicator),
+        );
+        assert_eq!(
+            view.grapheme_class(0x1F1FF),
+            Some(GraphemeClass::RegionalIndicator),
+        );
+        assert_eq!(view.grapheme_class(0x1F200), None);
+        assert_eq!(view.sentence_class('.' as u32), Some(SentenceClass::ATerm));
+        assert_eq!(view.grapheme_rules_id(), RULES_UAX29_DEFAULT);
+        assert_eq!(view.word_rules_id(), RULES_UAX29_DEFAULT);
+        assert_eq!(view.sentence_rules_id(), RULES_UAX29_DEFAULT);
+    }
+
+    #[test]
+    fn break_empty_pack_reports_no_data() {
+        let mut w = ScudWriter::new(CAP_BREAK, "44.1", Some(""));
+        // Empty pack — every accessor returns "no data".
+        let empty = BreakSectionBuilder::new();
+        w.append_section(SECT_GRAPHEME_CLASSES, &empty.grapheme_classes_bytes());
+        w.append_section(SECT_WORD_CLASSES, &empty.word_classes_bytes());
+        w.append_section(SECT_SENTENCE_CLASSES, &empty.sentence_classes_bytes());
+        w.append_section(SECT_GRAPHEME_RULES, &empty.grapheme_rules_bytes());
+        w.append_section(SECT_WORD_RULES, &empty.word_rules_bytes());
+        w.append_section(SECT_SENTENCE_RULES, &empty.sentence_rules_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        assert!(!view.has_grapheme_classes());
+        assert!(!view.has_word_classes());
+        assert!(!view.has_sentence_classes());
+        assert_eq!(view.word_class('a' as u32), None);
+        assert_eq!(view.grapheme_class(0x000D), None);
+        assert_eq!(view.sentence_class('.' as u32), None);
+        assert_eq!(view.grapheme_rules_id(), 0);
+        assert_eq!(view.word_rules_id(), 0);
+        assert_eq!(view.sentence_rules_id(), 0);
+    }
+
+    #[test]
+    fn break_class_enum_round_trips() {
+        for c in [
+            GraphemeClass::Other,
+            GraphemeClass::Cr,
+            GraphemeClass::Lf,
+            GraphemeClass::Control,
+            GraphemeClass::Extend,
+            GraphemeClass::Zwj,
+            GraphemeClass::RegionalIndicator,
+            GraphemeClass::Prepend,
+            GraphemeClass::SpacingMark,
+            GraphemeClass::HangulL,
+            GraphemeClass::HangulV,
+            GraphemeClass::HangulT,
+            GraphemeClass::HangulLv,
+            GraphemeClass::HangulLvt,
+            GraphemeClass::ExtendedPictographic,
+        ] {
+            assert_eq!(GraphemeClass::from_u8(c.as_u8()), c);
+        }
+        assert_eq!(GraphemeClass::from_u8(200), GraphemeClass::Other);
+        for c in [
+            WordClass::Other,
+            WordClass::Cr,
+            WordClass::Lf,
+            WordClass::Newline,
+            WordClass::Extend,
+            WordClass::Zwj,
+            WordClass::RegionalIndicator,
+            WordClass::Format,
+            WordClass::Katakana,
+            WordClass::HebrewLetter,
+            WordClass::ALetter,
+            WordClass::SingleQuote,
+            WordClass::DoubleQuote,
+            WordClass::MidNumLet,
+            WordClass::MidLetter,
+            WordClass::MidNum,
+            WordClass::Numeric,
+            WordClass::ExtendNumLet,
+            WordClass::WSegSpace,
+            WordClass::ExtendedPictographic,
+        ] {
+            assert_eq!(WordClass::from_u8(c.as_u8()), c);
+        }
+        for c in [
+            SentenceClass::Other,
+            SentenceClass::Cr,
+            SentenceClass::Lf,
+            SentenceClass::Extend,
+            SentenceClass::Sep,
+            SentenceClass::Format,
+            SentenceClass::Sp,
+            SentenceClass::Lower,
+            SentenceClass::Upper,
+            SentenceClass::OLetter,
+            SentenceClass::Numeric,
+            SentenceClass::ATerm,
+            SentenceClass::STerm,
+            SentenceClass::Close,
+            SentenceClass::SContinue,
+        ] {
+            assert_eq!(SentenceClass::from_u8(c.as_u8()), c);
+        }
+    }
+
+    #[test]
+    fn as_break_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_break_data(),
             Err(ScudError::CapabilityMismatch { .. })
         ));
     }

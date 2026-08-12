@@ -1,0 +1,133 @@
+// StringCheese ICU alternative — break-iteration capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the segmentation surface: grapheme cluster, word,
+// and sentence boundary iteration per Unicode Standard Annex #29
+// (<https://www.unicode.org/reports/tr29/>). Line breaking (UAX #14)
+// is a separate concern deferred to a follow-up phase.
+//
+// See `docs/design/wit-i18n.md` § 2.6 for the design commentary and
+// § 8.5 for Phase 5's delivery notes.
+//
+// The interface follows the tegmentum:i18n-* shape used by the
+// plural / number / datetime packages: a small set of interfaces, a
+// `capabilities` interface for introspection, and a `world` binding
+// them together.
+//
+// Boundary offsets are returned as byte offsets into the input's
+// UTF-8 encoding — matches Rust's `str` convention and is what wasm
+// callers expect. Every segmenter always emits both the leading `0`
+// boundary and the trailing `len(input)` boundary, so the returned
+// list has `N + 1` entries for `N` segments.
+//
+// Locale wiring: `segment-words` and `segment-sentences` accept a
+// locale tag for forward compatibility with per-locale tailorings
+// (Japanese/Chinese word-break dictionaries), but the initial Phase
+// 5 implementation uses the UAX #29 default rules regardless of the
+// tag — locale plumbing is present so upgrades stay
+// interface-compatible.
+
+package tegmentum:i18n-segment@0.1.0;
+
+/// Shared types. Split into its own interface so the `segment` and
+/// `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "de", "fr", "ja-JP". The empty
+    /// string denotes the CLDR root locale.
+    type locale = string;
+
+    /// One word-level segmentation record.
+    ///
+    /// `start` and `end` are byte offsets into the input (both in
+    /// `0..=len(input)`, with `start < end` unless the input is
+    /// empty). `is-word-like` is true for segments that a caller
+    /// would render as "a word" (letters, digits, joiners); false
+    /// for punctuation runs and whitespace between words.
+    record word-segment {
+        /// The inclusive UTF-8 byte offset where the segment starts.
+        start: u32,
+        /// The exclusive UTF-8 byte offset where the segment ends.
+        end: u32,
+        /// True for word-like segments (letters, digits, joiners);
+        /// false for punctuation-only or whitespace-only runs.
+        %is-word-like: bool,
+    }
+
+    /// Errors surfaced by the segmentation interface.
+    variant segment-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        invalid-locale(string),
+    }
+}
+
+/// The core segmentation surface.
+///
+/// Every function takes an input string plus (for word / sentence)
+/// a locale tag, and returns a list of byte-offset boundaries or
+/// (word) segment records.
+interface segment {
+    use types.{locale, word-segment, segment-error};
+
+    /// Grapheme-cluster boundaries per UAX #29 § 3.
+    ///
+    /// Returns a strictly-increasing list of UTF-8 byte offsets. The
+    /// first entry is always `0` and the last is always the input's
+    /// byte length; the interstitial entries are cluster boundaries.
+    /// Two consecutive entries `boundaries[i]` and `boundaries[i +
+    /// 1]` delimit one grapheme.
+    ///
+    /// The function is locale-neutral — UAX #29 grapheme rules are
+    /// language-independent.
+    segment-graphemes: func(text: string) -> list<u32>;
+
+    /// Word segments per UAX #29 § 4.
+    ///
+    /// Returns a list of `word-segment` records covering the whole
+    /// input contiguously; the `start` of the first record is `0`
+    /// and the `end` of the last is `len(text)`. Callers who want
+    /// only word-like segments filter on `is-word-like`.
+    ///
+    /// The `locale` argument is accepted for forward compatibility
+    /// with per-locale tailorings; Phase 5 applies the UAX #29
+    /// default rules regardless of the tag.
+    segment-words: func(text: string, locale: locale) -> list<word-segment>;
+
+    /// Sentence boundaries per UAX #29 § 5.
+    ///
+    /// Returns a strictly-increasing list of UTF-8 byte offsets in
+    /// the same shape as `segment-graphemes`: leading `0`, trailing
+    /// `len(text)`, one boundary between each pair of sentences.
+    ///
+    /// The `locale` argument is accepted for forward compatibility
+    /// with per-locale tailorings; Phase 5 applies the UAX #29
+    /// default rules regardless of the tag.
+    segment-sentences: func(text: string, locale: locale) -> list<u32>;
+}
+
+/// Introspection: which locales does the linked component actually
+/// cover?
+///
+/// Phase 5 ships a single locale-neutral default pack; the returned
+/// list carries the root-locale marker `""` and nothing else. Future
+/// phases populating per-locale tailorings will grow this list.
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover. Phase 5
+    /// ships the root-locale marker only.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a locale-
+    /// specific pack (rather than falling through to the default).
+    /// Phase 5 always uses the default; this function returns `true`
+    /// for every input for forward compatibility with future
+    /// tailorings.
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every segmentation component exports.
+world segment-world {
+    export types;
+    export segment;
+    export capabilities;
+}
