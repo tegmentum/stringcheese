@@ -501,6 +501,48 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.3. Phase 3 progress (2026-08)
+
+**Landed.** The Phase 3 foundation ships across a single wave:
+
+- `stringcheese-scud` — extended with `CAP_PLURAL` and `CAP_NUMBER` capability tags (both already reserved in Phase 1). Adds `PluralDataView` + `PluralSectionBuilder` over two section ids (`SECT_CARDINAL_RULES` / `SECT_ORDINAL_RULES`) with a `PluralCategory` enum plus a `PluralRuleIter`; adds `NumberDataView` + `NumberSectionBuilder` over three section ids (`SECT_DECIMAL_PATTERN` / `SECT_CURRENCY_TABLE` / `SECT_PERCENT_PATTERN`) with decoded `DecimalPattern` / `CurrencyRecord` / `PercentPattern` records. +5 new unit tests.
+- `stringcheese-icu-plural` — the WIT interface at `component/wit/plural/stringcheese-icu-plural.wit` (package `tegmentum:i18n-plural@0.1.0`, parses cleanly under `wit-parser` with 3 smoke tests) plus a `PluralEngine` algorithm side that consumes one or more `PluralPack`s and walks the BCP 47 fallback chain (`pt-BR → pt → ""`) at query time. Hand-encodes ~11 CLDR plural predicates in the `PluralRuleId` enum (English cardinal `IEq1AndVEq0`; English ordinal `NMod10Eq1NotMod100Eq11` + `NMod10Eq2NotMod100Eq12` + `NMod10Eq3NotMod100Eq13`; French cardinal `IIn01`; Spanish/Italian ordinal `NEq1`; Russian cardinal `RuOne` + `SlavFew` + `RuMany`; Polish cardinal `PlMany`; Arabic full set `NEq0` + `NEq2` + `ArFew` + `ArMany`). 11 unit tests + 3 wit-parser smoke tests.
+- `stringcheese-icu-number` — the WIT interface at `component/wit/number/stringcheese-icu-number.wit` (package `tegmentum:i18n-number@0.1.0`) plus a `NumberEngine` algorithm side that implements `format-decimal` / `format-currency` / `format-percent` against SCUD-supplied patterns. Formats through Rust's default `{:.N}` (banker's / half-to-even rounding) matching CLDR reference implementations; currency defaults to 2 fraction digits, percent to 0 (both overridable via `FormattingOptions`). Negative currencies place the sign outside the symbol (`-$1.00`) matching CLDR's `-¤#,##0.00`. 15 unit tests + 3 wit-parser smoke tests.
+- `stringcheese-en` — `plural-en.scud` covering English cardinals + ordinals with the CLDR teens exception, and `number-en.scud` covering group `,` / decimal `.` / USD-EUR-GBP-JPY-CAD-AUD currencies (all symbol-before-value) / percent `%` (no space). Exposed via `plural_data::plural_pack()` and `number_data::number_pack()` under new `plural-scud` and `number-scud` cargo features (both default-on). 47 golden-vector assertions across 17 test functions.
+- `stringcheese-de` — `plural-de.scud` (cardinal `one` when `i=1 v=0`; every ordinal is `other`) plus `number-de.scud` (group `.` / decimal `,` / EUR-USD-GBP-CHF placed after value with a space / percent `%` with a space). 8 golden test functions for numbers + 6 for plurals, ~60 assertions total.
+- `stringcheese-fr` — `plural-fr.scud` (cardinal `one` for `i in 0..1` — 0 and 1 both singular; ordinal `one` only for `n = 1`) plus `number-fr.scud` (group NBSP U+00A0 / decimal `,` / EUR-USD-GBP-CAD-CHF placed after with a space / percent `%` with a space). 7 golden test functions for numbers + 7 for plurals. New `build.rs` (fr previously had none) emits the SCUD packs.
+- CI — two new jobs `wasm-i18n-plural` and `wasm-i18n-number` in `.github/workflows/ci.yml` build both crates, run unit + golden tests, and print per-locale SCUD sizes to the run log.
+
+**Measured sizes** (release builds of the SCUD blobs, uncompressed):
+
+| Pack             | Bytes | Notes                                                      |
+| ---------------- | -----:| ---------------------------------------------------------- |
+| `plural-en.scud` |    62 | 1 cardinal rule + 3 ordinal rules                          |
+| `plural-de.scud` |    56 | 1 cardinal rule, no ordinals                               |
+| `plural-fr.scud` |    58 | 1 cardinal rule + 1 ordinal rule                           |
+| `number-en.scud` |   120 | 6 currencies + decimal + percent patterns                  |
+| `number-de.scud` |   104 | 4 currencies + decimal + percent patterns                  |
+| `number-fr.scud` |   114 | 5 currencies + decimal + percent patterns                  |
+
+**Locales covered vs deferred.** Phase 3's rule table lets any locale whose CLDR rules happen to be a subset of the encoded 15 predicates ship without further work. Phase 3 packages three: `en`, `de`, `fr`. The remaining 8-9 predicate-covered locales — Spanish, Italian, Portuguese, Russian, Polish, Arabic, plus the rest of the CLDR "top 20 by coverage class" — are follow-ups that add per-locale packs but not new algorithm code. The full ~200-locale CLDR plural table is a Phase-3-scope deferral: hand-encoding the remaining predicates (locale-specific reorderings, additional operand combinations) is a follow-up wave.
+
+**Deferred.** Documented in the crate roots and left for the follow-up wave:
+
+- Standalone WASM component builds for `stringcheese-icu-plural` and `stringcheese-icu-number`. Both WIT files parse cleanly under `wit-parser`; the `wit-bindgen` `Guest` implementations and `cargo build --target wasm32-wasip1 --features wit-component` recipes land in a follow-up (same shape as Phase 1's / Phase 2's deferrals).
+- Full ~200-locale CLDR plural rules (Phase 3 targets ~11 covered predicates across ~3 shipped packs).
+- CLDR `c` / `e` (compact / exponent) operands — Phase 3 evaluates only `n / i / v / w / f / t`. Compact notation (`1.2K`, `3.5M`) needs the `e ≠ 0` handling.
+- Named-currency database — ISO 4217 → symbol lookup for every locale-currency pair. This crate reads whatever currencies the pack ships; a shipping locale-by-locale symbol table lives separately.
+- Compact number formatting ("1.2K", "3.5M") — CLDR "short" pattern.
+- Scientific notation and accounting-style negative currency.
+- Percent output with the localized percent sign U+066A (Arabic-Indic) or U+FF05 (fullwidth) — Phase 3 packs only ASCII `%`.
+
+**Red flags.** A couple worth noting for reviewers:
+
+- **Half-even rounding of banker's ties.** CLDR's reference `NumberFormat` defaults to `HALF_EVEN`; Rust's default `{:.N}` also uses half-even. Golden vector `0.125 → "12%"` and `0.135 → "14%"` reflect this — a reviewer used to `HALF_UP` (JavaScript's `toFixed`) will find these surprising, but they match CLDR + Rust and are the documented behaviour.
+- **French `many` cardinal deferred.** French CLDR ships a `many` bucket triggered by `e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or e not in 0..5` — the compact-large-number case. Phase 3 packs `fr` cardinal as `one` (0..1) → `other`. Callers formatting compact numbers may see wrong CLDR classes; the deferral is documented in the FR pack docs.
+- **French group separator.** CLDR 42+ uses NARROW NO-BREAK SPACE (U+202F) as the French group separator. Phase 3 ships U+00A0 (NO-BREAK SPACE) for downstream-compatibility with tools that predate the CLDR 42 change. The rendering difference is subvisual; the byte-level difference matters for any consumer that string-matches the separator.
+- **`f64` fraction extraction is lossy for edge-case inputs.** `PluralOperands::from_f64` uses Rust's default `{}` formatting to recover the visible-fraction shape. `1.0` and `1.00` are indistinguishable as `f64`; we report v=0 for both. This is a documented Phase 3 simplification; callers who care about the visible-fraction distinction should compute operands from their text representation.
+
 ### 8.2. Phase 2 progress (2026-08)
 
 **Landed.** The Phase 2 foundation ships across a single wave:

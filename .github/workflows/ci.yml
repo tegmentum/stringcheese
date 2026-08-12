@@ -966,6 +966,164 @@ jobs:
           find target -name 'collation-de.scud' -exec ls -l {} \; | head -1
 
   # ------------------------------------------------------------------
+  # WIT-i18n Phase 3 plural-rules smoke — SCUD-pack size + golden
+  # vectors for en / de / fr.
+  # ------------------------------------------------------------------
+  wasm-i18n-plural:
+    name: WIT-i18n plural-rules (SCUD size + golden)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-plural-stable
+
+      - name: Build the icu-plural crate + three language packs
+        run: |
+          cargo build \
+            -p stringcheese-scud \
+            -p stringcheese-icu-plural \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
+            --all-features \
+            --locked
+
+      - name: Run icu-plural unit + wit-parser tests
+        run: |
+          cargo test \
+            -p stringcheese-icu-plural \
+            --all-features \
+            --locked \
+            -- --nocapture
+
+      - name: Run English plural golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-en \
+            --features plural-scud \
+            --locked \
+            --test plural_golden_en \
+            -- --nocapture
+
+      - name: Run German plural golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-de \
+            --features plural-scud \
+            --locked \
+            --test plural_golden_de \
+            -- --nocapture
+
+      - name: Run French plural golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-fr \
+            --features plural-scud \
+            --locked \
+            --test plural_golden_fr \
+            -- --nocapture
+
+      - name: Report per-locale plural SCUD sizes
+        run: |
+          set -euo pipefail
+          cargo build \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
+            --features stringcheese-en/plural-scud,stringcheese-de/plural-scud,stringcheese-fr/plural-scud \
+            --locked >/dev/null
+          find target -name 'plural-en.scud' -exec ls -l {} \; | head -1
+          find target -name 'plural-de.scud' -exec ls -l {} \; | head -1
+          find target -name 'plural-fr.scud' -exec ls -l {} \; | head -1
+
+  # ------------------------------------------------------------------
+  # WIT-i18n Phase 3 number-formatting smoke — SCUD-pack size +
+  # golden vectors for en / de / fr.
+  # ------------------------------------------------------------------
+  wasm-i18n-number:
+    name: WIT-i18n number-formatting (SCUD size + golden)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-number-stable
+
+      - name: Build the icu-number crate + three language packs
+        run: |
+          cargo build \
+            -p stringcheese-scud \
+            -p stringcheese-icu-number \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
+            --all-features \
+            --locked
+
+      - name: Run icu-number unit + wit-parser tests
+        run: |
+          cargo test \
+            -p stringcheese-icu-number \
+            --all-features \
+            --locked \
+            -- --nocapture
+
+      - name: Run English number golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-en \
+            --features number-scud \
+            --locked \
+            --test number_golden_en \
+            -- --nocapture
+
+      - name: Run German number golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-de \
+            --features number-scud \
+            --locked \
+            --test number_golden_de \
+            -- --nocapture
+
+      - name: Run French number golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-fr \
+            --features number-scud \
+            --locked \
+            --test number_golden_fr \
+            -- --nocapture
+
+      - name: Report per-locale number SCUD sizes
+        run: |
+          set -euo pipefail
+          cargo build \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
+            --features stringcheese-en/number-scud,stringcheese-de/number-scud,stringcheese-fr/number-scud \
+            --locked >/dev/null
+          find target -name 'number-en.scud' -exec ls -l {} \; | head -1
+          find target -name 'number-de.scud' -exec ls -l {} \; | head -1
+          find target -name 'number-fr.scud' -exec ls -l {} \; | head -1
+
+  # ------------------------------------------------------------------
   # WIT-i18n Phase 1 case-mapping componentised WASM smoke.
   # ------------------------------------------------------------------
   wasm-i18n-case-component:
