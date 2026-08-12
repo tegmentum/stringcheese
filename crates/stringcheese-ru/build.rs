@@ -19,9 +19,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{russian_cardinals, russian_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_CASE, CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
+    CollationSectionBuilder, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
+    SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_EXPANSIONS,
+    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD,
+    SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -32,6 +34,16 @@ const CLDR_VERSION: &str = "44.1";
 
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
+
+    let case_path = out_dir.join("case-ru.scud");
+    let case_bytes = build_case_ru_scud();
+    fs::write(&case_path, &case_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", case_path.display()));
+
+    let coll_path = out_dir.join("collation-ru.scud");
+    let coll_bytes = build_collation_ru_scud();
+    fs::write(&coll_path, &coll_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", coll_path.display()));
 
     let plural_path = out_dir.join("plural-ru.scud");
     let plural_bytes = build_plural_ru_scud();
@@ -44,6 +56,100 @@ fn main() {
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the case-ru SCUD pack in memory.
+///
+/// Russian uses the default Unicode case-mapping rules for the
+/// Cyrillic block — no locale-specific tailoring the way Turkish
+/// requires for the dotted / dotless-I.
+///
+/// Coverage:
+///
+/// * **ASCII a-z ↔ A-Z** — 52 simple pairs plus 26 folds. Same
+///   rationale as every other pack: uniform pack-hit ratios and
+///   correct behaviour on Latin transliterations mixed into
+///   Cyrillic text.
+/// * **Modern Russian alphabet (U+0410..=U+042F / U+0430..=U+044F)**
+///   — 32 uppercase/lowercase pairs (А..Я / а..я, excluding the
+///   irregular Ё/ё at U+0401 / U+0451).
+/// * **Ё ↔ ё (U+0401 ↔ U+0451)** — the one Cyrillic letter with a
+///   non-adjacent case pair.
+/// * **German ß (U+00DF)** — full uppercase to "SS" and full fold
+///   to "ss". Belt-and-braces so a composed engine sees the
+///   expansion regardless of which pack the query resolves through.
+fn build_case_ru_scud() -> Vec<u8> {
+    let mut c = CaseSectionBuilder::new();
+
+    // ASCII a-z ↔ A-Z.
+    for ch in 'a'..='z' {
+        let up = ch.to_ascii_uppercase();
+        c.push_simple_lower(up as u32, ch as u32);
+        c.push_simple_upper(ch as u32, up as u32);
+        c.push_simple_fold(up as u32, ch as u32);
+    }
+
+    // Modern Cyrillic uppercase A (U+0410) to Я (U+042F) map to
+    // lowercase a (U+0430) to я (U+044F) at +0x20 offset.
+    for upper in 0x0410u32..=0x042Fu32 {
+        let lower = upper + 0x20;
+        c.push_simple_lower(upper, lower);
+        c.push_simple_upper(lower, upper);
+        c.push_simple_fold(upper, lower);
+    }
+
+    // Ё (U+0401) ↔ ё (U+0451) — the one Cyrillic letter with an
+    // irregular case pair (not part of the U+0410 block).
+    c.push_simple_lower(0x0401, 0x0451);
+    c.push_simple_upper(0x0451, 0x0401);
+    c.push_simple_fold(0x0401, 0x0451);
+
+    // German ß / ẞ — belt-and-braces for composed-engine behaviour.
+    c.push_full_upper(0x00DF, &[0x0053, 0x0053]); // ß → SS
+    c.push_full_fold(0x00DF, &[0x0073, 0x0073]); // ß → ss
+    c.push_full_fold(0x1E9E, &[0x0073, 0x0073]); // ẞ → ss
+    c.push_simple_lower(0x1E9E, 0x00DF);
+
+    let mut w = ScudWriter::new(CAP_CASE, CLDR_VERSION, Some("ru"));
+    w.append_section(SECT_SIMPLE_LOWER, &c.simple_lower_bytes());
+    w.append_section(SECT_SIMPLE_UPPER, &c.simple_upper_bytes());
+    w.append_section(SECT_SIMPLE_FOLD, &c.simple_fold_bytes());
+    w.append_section(SECT_FULL_UPPER, &c.full_upper_bytes());
+    w.append_section(SECT_FULL_FOLD, &c.full_fold_bytes());
+    w.finish()
+}
+
+/// Build the collation-ru SCUD pack in memory.
+///
+/// CLDR's Russian collation for the modern alphabet is close to
+/// DUCET-root ordering — the Cyrillic block sorts by codepoint
+/// order (Ё inserted between Е and Ж), and feruca handles this
+/// correctly out of the box.
+///
+/// # Phase 2 deferral
+///
+/// The Russian **case-second variant** — uppercase-first vs
+/// lowercase-first ordering at tertiary strength (CLDR ships two
+/// variants for `ru`) — is a documented Phase 2 `CollationEngine`
+/// deferral. The shipped pack uses the default lowercase-first
+/// direction (matching feruca's DUCET-root). Selecting the
+/// uppercase-first variant requires an options-section extension
+/// plus algorithm changes to consume it. See
+/// `docs/design/wit-i18n.md` § 8.2.
+fn build_collation_ru_scud() -> Vec<u8> {
+    let mut c = CollationSectionBuilder::new();
+
+    // German ß expansion — uniform composed-engine behaviour.
+    c.push_expansion(0x00DF, &[0x0073, 0x0073]);
+    c.push_expansion(0x1E9E, &[0x0053, 0x0053]);
+
+    c.set_default_strength(2); // Tertiary
+    c.set_case_insensitive(false);
+
+    let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("ru"));
+    w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+    w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+    w.finish()
 }
 
 /// Build the plural-ru SCUD pack in memory.

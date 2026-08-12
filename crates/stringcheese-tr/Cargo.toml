@@ -36,11 +36,26 @@ alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
 # `stringcheese-en`; without it the CasePack helper is stripped by
 # the workspace's default-features=false posture.
 case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
+# Ship the collation-tr.scud pack (WIT-i18n Phase 2 collation
+# tailoring data for Turkish). Adds a `collation_data` module
+# exposing `COLLATION_TR_SCUD: &'static [u8]` and a helper for
+# constructing a `stringcheese_icu_collation::CollationPack`.
+#
+# Turkish's primary-distinct dotted-i / dotless-ı ordering (`... h
+# ı i j ...`) is a **documented Phase 2 CollationEngine deferral**
+# — the shipped engine's primary_fold ASCII-lowercases and then
+# delegates to feruca (CLDR-root), where `i` and `ı` share a
+# primary weight. The pack still ships options + a small
+# expansion table (ß → ss, so a Turkish text quoting a German
+# loanword collates identically to the English/German packs).
+# See `docs/design/wit-i18n.md` § 8.2 for the deferral rationale.
+collation-scud = ["dep:stringcheese-icu-collation", "stringcheese-icu-collation/alloc"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
 stringcheese-icu-case = { workspace = true, optional = true }
+stringcheese-icu-collation = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the case-tr.scud pack. Same shape as

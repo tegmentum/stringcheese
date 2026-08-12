@@ -136,6 +136,8 @@ extern crate alloc;
 pub mod case_data;
 #[cfg(feature = "alloc")]
 pub mod case_fold;
+#[cfg(feature = "collation-scud")]
+pub mod collation_data;
 #[cfg(feature = "alloc")]
 pub mod phonetic;
 #[cfg(feature = "alloc")]
