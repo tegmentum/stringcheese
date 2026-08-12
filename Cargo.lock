@@ -2639,8 +2639,11 @@ name = "stringcheese-es"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -3040,8 +3043,11 @@ name = "stringcheese-pt"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
