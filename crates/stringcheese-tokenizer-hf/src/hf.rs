@@ -121,7 +121,7 @@ use crate::post_processor::{
 };
 use crate::pre_tokenizer::{
     GPT2_PATTERN, Metaspace, PreTokenizer, PreTokenizerCompileError, PreTokenizerSequence,
-    PrependScheme, RegexPreTokenizer,
+    PrependScheme, RegexPreTokenizer, SplitDelimiterBehavior,
 };
 
 // ---------------------------------------------------------------------
@@ -216,22 +216,67 @@ pub struct HfTokenizerConfig {
 
 /// One entry in `added_tokens`.
 ///
-/// Only the fields we act on are typed; the rest of the HF schema
-/// (`normalized`, `single_word`, `lstrip`, `rstrip`) is captured under
-/// [`Self::extra`] so callers can still inspect them.
+/// The fields the crate acts on at conversion time — `id`, `content`,
+/// `special`, `normalized`, `lstrip`, `rstrip` — are typed; anything
+/// else in the entry (`single_word`, forward-compatible schema
+/// additions) is captured under [`Self::extra`] so callers can still
+/// inspect them.
+///
+/// # HF-parity semantics of the flag fields
+///
+/// * `normalized: false` (HF's default for special tokens) — the token
+///   surface is matched against the RAW input, before the normalizer
+///   runs.
+/// * `normalized: true` (HF's default for non-special added tokens) —
+///   the token surface is matched against the NORMALIZED region,
+///   after per-region normalization runs.
+/// * `special: true` — the token is registered on the tokenizer's
+///   special-token roster (controls the `add_special_tokens`
+///   post-processor slot). `special: false` entries are still
+///   matched-and-emitted at their assigned id, but never counted as
+///   "special" by downstream consumers.
+/// * `lstrip: true` — any whitespace immediately preceding the
+///   matched surface is absorbed into the match span (and thus
+///   removed from the preceding between-tokens region).
+/// * `rstrip: true` — any whitespace immediately following the
+///   matched surface is absorbed into the match span (and thus
+///   removed from the next between-tokens region).
+///
+/// The four flags compose; see
+/// [`stringcheese_tokenizer::Tokenizer::encode`] for how the produced
+/// [`crate::BpeTokenizer`] honours them at the two-phase match points.
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the four flags mirror Hugging Face's on-disk AddedToken schema byte for byte; \
+              collapsing them into an enum would break serde parity with real tokenizer.json blobs"
+)]
 pub struct HfAddedToken {
     /// The token id — the numeric value emitted by the tokenizer when
     /// [`Self::content`] appears in the input.
     pub id: TokenId,
     /// The surface string of the token (`"<|endoftext|>"`, `"<pad>"`).
     pub content: String,
-    /// If `true`, the token bypasses the BPE merge loop and is emitted
-    /// as [`Self::id`] whenever [`Self::content`] appears literally in
-    /// the input. If missing from the JSON, defaults to `false`.
+    /// If `true`, the token bypasses the BPE merge loop and is
+    /// registered on the tokenizer's special-token roster. If missing
+    /// from the JSON, defaults to `false`.
     #[serde(default)]
     pub special: bool,
+    /// If `true`, the surface is matched AFTER per-region
+    /// normalization; if `false`, matched against the raw input. HF's
+    /// on-disk default is `true` — the field is required in almost
+    /// every real `tokenizer.json` blob.
+    #[serde(default = "default_true")]
+    pub normalized: bool,
+    /// If `true`, any leading whitespace immediately before the
+    /// matched surface is absorbed into the match span.
+    #[serde(default)]
+    pub lstrip: bool,
+    /// If `true`, any trailing whitespace immediately after the
+    /// matched surface is absorbed into the match span.
+    #[serde(default)]
+    pub rstrip: bool,
     /// Anything else in the entry — kept for caller inspection.
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
@@ -634,8 +679,20 @@ pub enum HfPreTokenizer {
     /// [`WordPiecePreTokenizer::WhitespaceSplit`](crate::wordpiece::WordPiecePreTokenizer::WhitespaceSplit).
     /// Rejected by [`to_bpe_tokenizer`].
     WhitespaceSplit(serde_json::Value),
-    /// Punctuation splitter. Deferred.
-    Punctuation(serde_json::Value),
+    /// Hugging Face `Punctuation` — split on every Unicode-punctuation
+    /// character. Deserialises the (optional) `"behavior"` string into
+    /// a typed [`HfSplitDelimiterBehavior`]; HF's default (bare
+    /// `{"type":"Punctuation"}`) is [`HfSplitDelimiterBehavior::Isolated`].
+    /// Materialises at [`to_bpe_tokenizer`] time via the multi-stage
+    /// pipeline in [`crate::PreTokenizerRegex::Punctuation`]. Falcon-7B
+    /// ships `Punctuation(Contiguous)` as the leading stage of its
+    /// pre-tokenizer sequence.
+    Punctuation {
+        /// The delimiter-behaviour string — `"isolated"` / `"contiguous"` /
+        /// `"removed"` / `"merged_with_previous"` / `"merged_with_next"`.
+        #[serde(default)]
+        behavior: HfSplitDelimiterBehavior,
+    },
     /// SentencePiece-style Metaspace pre-tokenizer — the shape used by
     /// Llama, Mistral, T5, and XLM-RoBERTa. Parsed into typed fields
     /// (see [`Self::Metaspace::replacement`] /
@@ -668,8 +725,16 @@ pub enum HfPreTokenizer {
     /// [`WordPiecePreTokenizer::Bert`](crate::wordpiece::WordPiecePreTokenizer::Bert).
     /// Rejected by [`to_bpe_tokenizer`].
     BertPreTokenizer(serde_json::Value),
-    /// Digit-run splitter. Deferred.
-    Digits(serde_json::Value),
+    /// Hugging Face `Digits` — split runs of digits. Materialises at
+    /// [`to_bpe_tokenizer`] time via
+    /// [`crate::PreTokenizerRegex::Digits`]. Falcon-7B ships
+    /// `Digits { individual_digits: false }` after `ByteLevel`.
+    Digits {
+        /// If `true`, every digit becomes its own piece. If `false`
+        /// (HF's default), digit runs are kept as single pieces.
+        #[serde(default)]
+        individual_digits: bool,
+    },
     /// Unicode-script splitter. Deferred.
     UnicodeScripts(serde_json::Value),
     /// Fixed-length splitter. Deferred.
@@ -859,6 +924,81 @@ const fn default_true() -> bool {
 /// space mark.
 const fn default_metaspace_replacement() -> char {
     Metaspace::DEFAULT_REPLACEMENT
+}
+
+/// Behaviour for a split-by-pattern pre-tokenizer stage — HF's
+/// on-disk [`SplitDelimiterBehavior`](https://docs.rs/tokenizers/latest/tokenizers/enum.SplitDelimiterBehavior.html)
+/// serialisation.
+///
+/// Accepts both HF's `PascalCase` encoding (`"Contiguous"` etc. — the
+/// shape real `tokenizer.json` blobs ship, produced by HF's own
+/// `#[derive(Serialize)]`) and its `snake_case` cousin
+/// (`"contiguous"` etc.) — some tools normalise on the way out.
+/// Default is [`Self::Isolated`], HF's own default and what a bare
+/// `{"type":"Punctuation"}` block picks up.
+///
+/// Materialises via [`Self::to_runtime`] into a
+/// [`crate::pre_tokenizer::SplitDelimiterBehavior`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum HfSplitDelimiterBehavior {
+    /// Drop matches; keep only non-match regions.
+    Removed,
+    /// Matches become their own pieces. HF's default.
+    #[default]
+    Isolated,
+    /// Matches glue onto the preceding piece.
+    MergedWithPrevious,
+    /// Matches glue onto the following piece.
+    MergedWithNext,
+    /// Adjacent matches collapse into a single piece.
+    Contiguous,
+}
+
+impl<'de> serde::Deserialize<'de> for HfSplitDelimiterBehavior {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Accept the ambient PascalCase (what HF's own
+        // `#[derive(Serialize)]` emits on the wire — matching every
+        // shipped tokenizer.json we've inspected) *and* snake_case
+        // (what upstream Python tools sometimes normalise to). Rejects
+        // anything else with a diagnostic listing the accepted forms.
+        let s = <alloc::borrow::Cow<'de, str> as serde::Deserialize>::deserialize(d)?;
+        match s.as_ref() {
+            "Removed" | "removed" => Ok(Self::Removed),
+            "Isolated" | "isolated" => Ok(Self::Isolated),
+            "MergedWithPrevious" | "merged_with_previous" => Ok(Self::MergedWithPrevious),
+            "MergedWithNext" | "merged_with_next" => Ok(Self::MergedWithNext),
+            "Contiguous" | "contiguous" => Ok(Self::Contiguous),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &[
+                    "Removed",
+                    "Isolated",
+                    "MergedWithPrevious",
+                    "MergedWithNext",
+                    "Contiguous",
+                ],
+            )),
+        }
+    }
+}
+
+impl HfSplitDelimiterBehavior {
+    /// Reduce this on-disk value to the runtime enum
+    /// [`crate::pre_tokenizer::SplitDelimiterBehavior`].
+    #[must_use]
+    pub const fn to_runtime(self) -> SplitDelimiterBehavior {
+        match self {
+            Self::Removed => SplitDelimiterBehavior::Removed,
+            Self::Isolated => SplitDelimiterBehavior::Isolated,
+            Self::MergedWithPrevious => SplitDelimiterBehavior::MergedWithPrevious,
+            Self::MergedWithNext => SplitDelimiterBehavior::MergedWithNext,
+            Self::Contiguous => SplitDelimiterBehavior::Contiguous,
+        }
+    }
 }
 
 /// The prepend policy for a [`HfPreTokenizer::Metaspace`] block.
@@ -1882,6 +2022,35 @@ fn resolve_bpe_byte_fallback_ids(
     Ok(resolved)
 }
 
+/// Build the added-vocabulary map that
+/// [`BpeTokenizer::with_added_vocab`] consumes, from an HF
+/// `added_tokens[*]` array.
+///
+/// Every entry is folded in — both `special: true` chat markers (BOS,
+/// EOS, `<|endoftext|>`, `<|end|>`) and `special: false` compression /
+/// stopword entries (Phi-2's 3+-space whitespace-run ids, Phi-3-mini's
+/// `</s>` with `rstrip: true`). The per-entry
+/// [`crate::bpe::AddedTokenFlags`] carry each surface's
+/// `normalized` / `lstrip` / `rstrip` / `special` flags so the
+/// encode-side two-phase matcher honours them at the right point in
+/// the extract-and-normalize pipeline.
+fn build_added_vocab(entries: &[HfAddedToken]) -> BTreeMap<String, crate::bpe::AddedTokenFlags> {
+    let mut out: BTreeMap<String, crate::bpe::AddedTokenFlags> = BTreeMap::new();
+    for at in entries {
+        out.insert(
+            at.content.clone(),
+            crate::bpe::AddedTokenFlags {
+                id: at.id,
+                normalized: at.normalized,
+                lstrip: at.lstrip,
+                rstrip: at.rstrip,
+                special: at.special,
+            },
+        );
+    }
+    out
+}
+
 /// Materialise an [`HfTokenizerConfig`] as a runnable [`BpeTokenizer`].
 ///
 /// See the module-level documentation for the full support matrix.
@@ -1987,18 +2156,14 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
         Some(pt) => extract_pre_tokenizer(pt)?,
     };
 
-    // Special tokens — added_tokens with special == true.
-    let mut specials: BTreeMap<String, TokenId> = BTreeMap::new();
-    for at in &config.added_tokens {
-        if at.special {
-            specials.insert(at.content.clone(), at.id);
-        }
-    }
+    // Added vocabulary — see [`build_added_vocab`] for the flag
+    // routing rules.
+    let added_vocab = build_added_vocab(&config.added_tokens);
 
     // Assemble.
     let mut tok = BpeTokenizer::from_parts(merges, vocab);
-    if !specials.is_empty() {
-        tok = tok.with_special_tokens(specials);
+    if !added_vocab.is_empty() {
+        tok = tok.with_added_vocab(added_vocab);
     }
 
     // Byte-fallback — the `SentencePiece` mechanism that reroutes the
@@ -2033,6 +2198,9 @@ pub fn to_bpe_tokenizer(config: &HfTokenizerConfig) -> Result<BpeTokenizer, HfCo
                 None
             };
             tok = tok.with_pre_tokenizer(PreTokenizerRegex::byte_level(add_prefix_space, split));
+        }
+        PreTokPipeline::General(sequence_or_stage) => {
+            tok = tok.with_pre_tokenizer(sequence_or_stage);
         }
     }
 
@@ -2567,6 +2735,14 @@ fn extract_wordlevel_pre_tokenizer(
             type_name: "ByteLevel".to_string(),
             reason: "ByteLevel pre-tokenizers are for byte-level BPE, not WordLevel",
         }),
+        HfPreTokenizer::Punctuation { .. } => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "Punctuation".to_string(),
+            reason: "Punctuation pre-tokenizer is a BPE-side combinator; WordLevel uses whitespace / punctuation",
+        }),
+        HfPreTokenizer::Digits { .. } => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "Digits".to_string(),
+            reason: "Digits pre-tokenizer is a BPE-side combinator; WordLevel uses whitespace / punctuation",
+        }),
         other => {
             if let Some(err) = deferred_pre_tokenizer_reason(other) {
                 Err(err)
@@ -2618,9 +2794,17 @@ fn extract_wordpiece_pre_tokenizer(
             type_name: "ByteLevel".to_string(),
             reason: "ByteLevel pre-tokenizers are for byte-level BPE, not WordPiece",
         }),
+        HfPreTokenizer::Punctuation { .. } => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "Punctuation".to_string(),
+            reason: "Punctuation pre-tokenizer is a BPE-side combinator; WordPiece uses whitespace + punctuation",
+        }),
+        HfPreTokenizer::Digits { .. } => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: "Digits".to_string(),
+            reason: "Digits pre-tokenizer is a BPE-side combinator; WordPiece uses whitespace + punctuation",
+        }),
         other => {
-            // Everything else (Punctuation, Metaspace, ...) surfaces
-            // its usual deferred-feature error.
+            // Everything else (Metaspace, ...) surfaces its usual
+            // deferred-feature error.
             if let Some(err) = deferred_pre_tokenizer_reason(other) {
                 Err(err)
             } else {
@@ -4067,6 +4251,12 @@ enum PreTokPipeline {
         use_regex: bool,
         inner_regex: Option<String>,
     },
+    /// A general multi-stage sequence. Falcon-family checkpoints ship
+    /// `Sequence[Punctuation, ByteLevel, Digits, Split(Regex)]` which
+    /// materialises here — the two simpler shapes above stay in place
+    /// so their fast paths and their existing test coverage do not
+    /// change. See [`sequence_to_pipeline`] for the routing rules.
+    General(crate::bpe::PreTokenizerRegex),
 }
 
 /// Walk a [`HfPreTokenizer`] value and reduce it to a runnable
@@ -4093,6 +4283,15 @@ fn extract_pre_tokenizer(pt: &HfPreTokenizer) -> Result<PreTokPipeline, HfConver
             inner_regex: None,
         }),
         HfPreTokenizer::Sequence { pretokenizers } => sequence_to_pipeline(pretokenizers),
+        // Bare Punctuation / Digits (outside a Sequence): materialise
+        // via the general multi-stage pipeline. Wrapping them as a
+        // one-child sequence keeps the runtime path uniform.
+        HfPreTokenizer::Punctuation { behavior } => Ok(PreTokPipeline::General(
+            crate::bpe::PreTokenizerRegex::punctuation(behavior.to_runtime()),
+        )),
+        HfPreTokenizer::Digits { individual_digits } => Ok(PreTokPipeline::General(
+            crate::bpe::PreTokenizerRegex::digits(*individual_digits),
+        )),
         // Deferred variants: return a targeted error.
         other => {
             if let Some(err) = deferred_pre_tokenizer_reason(other) {
@@ -4122,15 +4321,52 @@ fn split_to_pipeline(split: &HfSplitPreTokenizer) -> Result<PreTokPipeline, HfCo
 
 /// Reduce a `Sequence` pre-tokenizer's children into a pipeline.
 ///
-/// See [`extract_pre_tokenizer`] for the acceptance rules.
+/// Recognises three levels of shape:
+///
+/// * Empty sequence → [`PreTokPipeline::None`].
+/// * One or two entries in the "byte-level fast-path" shape (either a
+///   lone `Split(Regex)`, a lone `ByteLevel(...)`, or a pair of one
+///   each) → the pre-existing [`PreTokPipeline::Regex`] /
+///   [`PreTokPipeline::ByteLevel`] cases. Preserved so the shipped
+///   fast paths and their test coverage don't change.
+/// * Anything else that only uses supported combinators (Punctuation,
+///   Digits, Split, `ByteLevel`) → [`PreTokPipeline::General`], a runtime
+///   `PreTokenizerRegex::Sequence` that applies every child in order.
+///   Falcon-family checkpoints ship
+///   `Sequence[Punctuation, ByteLevel, Digits, Split(Regex)]`, which
+///   lands here.
 fn sequence_to_pipeline(children: &[HfPreTokenizer]) -> Result<PreTokPipeline, HfConversionError> {
     if children.is_empty() {
         return Ok(PreTokPipeline::None);
     }
 
-    // Partition children into (byte_level, split, deferred) buckets.
-    // Nested Sequences are rejected up-front to keep the case
-    // enumeration finite.
+    // Fast path: exactly one or two "primary" children (ByteLevel /
+    // Split), no combinators. Preserves the pre-existing shapes.
+    if children.len() <= 2
+        && children
+            .iter()
+            .all(|c| matches!(c, HfPreTokenizer::ByteLevel(_) | HfPreTokenizer::Split(_)))
+    {
+        return sequence_to_pipeline_fast_path(children);
+    }
+
+    // General path: build a multi-stage runtime pipeline. Every child
+    // must reduce to a runtime `PreTokenizerRegex` stage.
+    let mut stages = Vec::with_capacity(children.len());
+    for child in children {
+        stages.push(hf_child_to_runtime_stage(child)?);
+    }
+    Ok(PreTokPipeline::General(
+        crate::bpe::PreTokenizerRegex::sequence(stages),
+    ))
+}
+
+/// The pre-existing "byte-level fast path" for Sequences of at most
+/// two ByteLevel/Split children — see [`sequence_to_pipeline`] for the
+/// rationale.
+fn sequence_to_pipeline_fast_path(
+    children: &[HfPreTokenizer],
+) -> Result<PreTokPipeline, HfConversionError> {
     let mut byte_level: Option<&HfByteLevelPreTokenizer> = None;
     let mut split: Option<&HfSplitPreTokenizer> = None;
     for child in children {
@@ -4151,20 +4387,9 @@ fn sequence_to_pipeline(children: &[HfPreTokenizer]) -> Result<PreTokPipeline, H
                 }
                 split = Some(s);
             }
-            HfPreTokenizer::Sequence { .. } => {
-                return Err(HfConversionError::UnsupportedByteLevelSequence {
-                    reason: "nested Sequence pre-tokenizers are not supported",
-                });
-            }
-            other => {
-                if let Some(err) = deferred_pre_tokenizer_reason(other) {
-                    return Err(err);
-                }
-                return Err(HfConversionError::UnsupportedPreTokenizer {
-                    type_name: "unknown".to_string(),
-                    reason: "unhandled pre_tokenizer variant inside Sequence",
-                });
-            }
+            _ => unreachable!(
+                "sequence_to_pipeline_fast_path invoked with a non-ByteLevel/Split child"
+            ),
         }
     }
 
@@ -4189,6 +4414,87 @@ fn sequence_to_pipeline(children: &[HfPreTokenizer]) -> Result<PreTokPipeline, H
     }
 }
 
+/// Reduce a single HF pre-tokenizer child into a runtime stage. Used
+/// only by the general-path `Sequence` builder; rejects nested
+/// `Sequence`s to keep the case enumeration finite (in practice no
+/// shipped `tokenizer.json` blob nests them).
+fn hf_child_to_runtime_stage(
+    pt: &HfPreTokenizer,
+) -> Result<crate::bpe::PreTokenizerRegex, HfConversionError> {
+    use crate::bpe::PreTokenizerRegex as PTR;
+    match pt {
+        HfPreTokenizer::ByteLevel(bl) => {
+            // Preserve HF's `use_regex` semantics: when `true` and no
+            // inner regex is supplied, wire in the canonical GPT-2
+            // pattern (matching the [`PreTokPipeline::ByteLevel`] fast
+            // path).
+            let split = if bl.use_regex {
+                Some(RegexPreTokenizer::new(GPT2_PATTERN)?)
+            } else {
+                None
+            };
+            Ok(PTR::byte_level(bl.add_prefix_space, split))
+        }
+        HfPreTokenizer::Split(s) => match &s.pattern {
+            HfPattern::Regex(pat) => {
+                let regex = RegexPreTokenizer::new(pat.clone())?;
+                let behavior = s
+                    .behavior
+                    .as_deref()
+                    .map(hf_split_behavior_from_str)
+                    .transpose()?
+                    .unwrap_or(SplitDelimiterBehavior::Isolated);
+                Ok(PTR::split(regex, behavior))
+            }
+            HfPattern::String(_) => {
+                Err(HfConversionError::UnsupportedPattern { variant: "String" })
+            }
+        },
+        HfPreTokenizer::Punctuation { behavior } => Ok(PTR::punctuation(behavior.to_runtime())),
+        HfPreTokenizer::Digits { individual_digits } => Ok(PTR::digits(*individual_digits)),
+        HfPreTokenizer::Sequence { .. } => Err(HfConversionError::UnsupportedByteLevelSequence {
+            reason: "nested Sequence pre-tokenizers are not supported",
+        }),
+        other => {
+            if let Some(err) = deferred_pre_tokenizer_reason(other) {
+                Err(err)
+            } else {
+                Err(HfConversionError::UnsupportedPreTokenizer {
+                    type_name: "unknown".to_string(),
+                    reason: "unhandled pre_tokenizer variant inside Sequence",
+                })
+            }
+        }
+    }
+}
+
+/// Parse HF's on-disk `SplitDelimiterBehavior` string (as it appears on
+/// `Split { behavior: "..." }`, which uses `PascalCase` in real
+/// `tokenizer.json` blobs — `"Isolated"`, `"Contiguous"`, etc.) into
+/// the runtime enum.
+fn hf_split_behavior_from_str(s: &str) -> Result<SplitDelimiterBehavior, HfConversionError> {
+    // Accept both PascalCase (what real tokenizer.json blobs ship for
+    // Split.behavior — matching HF's Rust `Display`) and snake_case
+    // (what HfSplitDelimiterBehavior itself uses on the wire for
+    // Punctuation.behavior). Real Falcon-7B ships PascalCase; Split's
+    // JSON representation is PascalCase across every real blob we've
+    // inspected. Both paths are cheap and this defends against
+    // divergent HF releases.
+    match s {
+        "Removed" | "removed" => Ok(SplitDelimiterBehavior::Removed),
+        "Isolated" | "isolated" => Ok(SplitDelimiterBehavior::Isolated),
+        "MergedWithPrevious" | "merged_with_previous" => {
+            Ok(SplitDelimiterBehavior::MergedWithPrevious)
+        }
+        "MergedWithNext" | "merged_with_next" => Ok(SplitDelimiterBehavior::MergedWithNext),
+        "Contiguous" | "contiguous" => Ok(SplitDelimiterBehavior::Contiguous),
+        other => Err(HfConversionError::UnsupportedPreTokenizer {
+            type_name: alloc::format!("Split(behavior = {other:?})"),
+            reason: "unrecognised SplitDelimiterBehavior string",
+        }),
+    }
+}
+
 /// Map an [`HfPreTokenizer`] to a specific "deferred" error if it is a
 /// known-unsupported variant. Returns `None` for `Split`, `ByteLevel`,
 /// and `Sequence` (all of which are handled inline by
@@ -4197,10 +4503,11 @@ fn deferred_pre_tokenizer_reason(pt: &HfPreTokenizer) -> Option<HfConversionErro
     let (type_name, reason) = match pt {
         HfPreTokenizer::Split(_)
         | HfPreTokenizer::Sequence { .. }
-        | HfPreTokenizer::ByteLevel(_) => return None,
+        | HfPreTokenizer::ByteLevel(_)
+        | HfPreTokenizer::Punctuation { .. }
+        | HfPreTokenizer::Digits { .. } => return None,
         HfPreTokenizer::Whitespace(_) => ("Whitespace", "deferred to a later landing"),
         HfPreTokenizer::WhitespaceSplit(_) => ("WhitespaceSplit", "deferred to a later landing"),
-        HfPreTokenizer::Punctuation(_) => ("Punctuation", "deferred to a later landing"),
         HfPreTokenizer::Metaspace { .. } => (
             "Metaspace",
             "SentencePiece Metaspace is not supported on the current model \
@@ -4213,7 +4520,6 @@ fn deferred_pre_tokenizer_reason(pt: &HfPreTokenizer) -> Option<HfConversionErro
             ("CharDelimiterSplit", "deferred to a later landing")
         }
         HfPreTokenizer::BertPreTokenizer(_) => ("BertPreTokenizer", "deferred to a later landing"),
-        HfPreTokenizer::Digits(_) => ("Digits", "deferred to a later landing"),
         HfPreTokenizer::UnicodeScripts(_) => ("UnicodeScripts", "deferred to a later landing"),
         HfPreTokenizer::FixedLength(_) => ("FixedLength", "deferred to a later landing"),
     };
@@ -4682,12 +4988,15 @@ mod tests {
     }
 
     #[test]
-    fn added_non_special_tokens_land_in_vocab_only() {
-        // A non-special added token is expected to already be in
-        // model.vocab; the parser inserts it either way and does not
-        // mark it as a special. `<pad>` in this config gets id 42 but
-        // is *not* matched literally in input — a plain "<" character
-        // would tokenize to its byte value.
+    fn added_non_special_tokens_land_in_added_vocab() {
+        // Non-special added tokens now enter the added-vocab table and
+        // are matched literally in the input — mirroring Hugging Face's
+        // `added_vocabulary::extract_and_normalize` pipeline. Before
+        // the Wave-17 added-vocab-flags landing they were silently
+        // dropped from the matcher (only fed to the vocab), so a
+        // surface like `<pad>` fell into the BPE loop and only
+        // resolved by accident when the vocab happened to store its
+        // bytes as a single entry.
         let json = r#"{
             "added_tokens": [
                 {"id": 42, "content": "<pad>", "special": false}
@@ -4700,8 +5009,10 @@ mod tests {
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
         let tok = to_bpe_tokenizer(&config).unwrap();
-        // No specials registered.
-        assert!(tok.special_tokens().is_empty());
+        // The surface is registered on the added-vocab map — matched
+        // literally at encode time — but is NOT flagged as special,
+        // so `special_mask` is `false` when it appears in the input.
+        assert_eq!(tok.special_tokens().get("<pad>"), Some(&42));
         // Vocabulary contains the added token by its bytes.
         assert_eq!(tok.vocab().id(b"<pad>"), Some(42));
     }
@@ -5221,7 +5532,7 @@ mod tests {
     }
 
     #[test]
-    fn added_tokens_extra_fields_are_captured() {
+    fn added_tokens_typed_and_extra_fields_are_captured() {
         let json = r#"{
             "added_tokens": [
                 {
@@ -5229,7 +5540,7 @@ mod tests {
                     "content": "<x>",
                     "special": true,
                     "single_word": true,
-                    "lstrip": false,
+                    "lstrip": true,
                     "rstrip": false,
                     "normalized": false
                 }
@@ -5238,8 +5549,15 @@ mod tests {
         }"#;
         let config = parse_tokenizer_json(json).unwrap();
         let at = &config.added_tokens[0];
+        // Typed flags: lstrip / rstrip / normalized are promoted out
+        // of the `extra` map and honoured at conversion time — see
+        // `HfAddedToken` for the semantics.
+        assert!(at.lstrip);
+        assert!(!at.rstrip);
+        assert!(!at.normalized);
+        assert!(at.special);
+        // `single_word` remains in `extra` (parsed but not acted on).
         assert!(at.extra.contains_key("single_word"));
-        assert!(at.extra.contains_key("lstrip"));
         assert_eq!(
             at.extra.get("single_word"),
             Some(&serde_json::Value::Bool(true))

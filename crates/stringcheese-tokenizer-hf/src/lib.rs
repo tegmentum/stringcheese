@@ -138,12 +138,12 @@ pub mod hf;
 
 #[cfg(feature = "alloc")]
 pub use bpe::{
-    BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, DisallowedSpecials, PreTokenizerRegex,
-    TokenId, VocabularyBuilderError,
+    AddedTokenFlags, BpeMergeTable, BpeTokenizer, BpeVocabulary, Decoder, DisallowedSpecials,
+    PreTokenizerRegex, TokenId, VocabularyBuilderError,
 };
 
 #[cfg(feature = "std")]
 pub use pre_tokenizer::{
     GPT2_PATTERN, Metaspace, PreTokenizer, PreTokenizerCompileError, PreTokenizerSequence,
-    PrependScheme, RegexPreTokenizer, TIKTOKEN_CANONICAL_PATTERN,
+    PrependScheme, RegexPreTokenizer, SplitDelimiterBehavior, TIKTOKEN_CANONICAL_PATTERN,
 };

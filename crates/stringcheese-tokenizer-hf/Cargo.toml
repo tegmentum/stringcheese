@@ -16,7 +16,7 @@ default = ["std"]
 # Also enables the regex-based pre-tokenizer (see
 # `src/pre_tokenizer.rs`), which requires the `fancy-regex` backend
 # and hence a full `std` environment.
-std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std", "dep:fancy-regex"]
+std = ["alloc", "stringcheese-core/std", "stringcheese-tokenizer/std", "dep:fancy-regex", "dep:unicode-general-category"]
 # When enabled, the crate exposes its heap-allocating public surface.
 # The BPE algorithm inherently allocates (per-word piece sequences,
 # vocabulary tables, merge maps); the crate compiles to an empty
