@@ -9,6 +9,15 @@ repository.workspace = true
 description = "Chinese (Simplified) language pack for the StringCheese toolkit: ~80-entry stopword list, character-level tokenizer (dictionary-free — every CJK Han scalar becomes its own token; Latin/digit runs stay together), identity stemmer (Chinese has no inflection), and a Hanyu Pinyin (tone-mark-stripped) phonetic encoder over a curated ~350-entry high-frequency Han character table. Implements stringcheese-lang::Language. Full word-segmentation via jieba / thulac / pkuseg-scale dictionaries is deferred; the base pack stays wasm-friendly and offline-first."
 categories = ["text-processing", "internationalization"]
 keywords = ["chinese", "mandarin", "pinyin", "tokenizer", "stopwords"]
+build = "build.rs"
+
+# Ship the build.rs so downstream can regenerate SCUD packs against
+# the shipped rules.
+include = [
+    "build.rs",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -22,10 +31,30 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # constants alone (enough to link against on embedded targets that
 # only want the stopword table or the character classifier).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the plural-zh.scud pack (WIT-i18n Phase 3 plural-rule data
+# for Chinese cardinals). Chinese has no grammatical number so every
+# input classifies as `other`; the pack still ships to make
+# `PluralEngine::supports("zh")` return true and to advertise CLDR
+# version provenance. Requires the plural crate's `std` feature.
+plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
+# Ship the number-zh.scud pack (WIT-i18n Phase 3 number-formatting
+# data for Chinese — Simplified conventions).
+number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+# WIT-i18n plural / number capability crates. Optional; pulled in
+# under the corresponding `-scud` features.
+stringcheese-icu-plural = { workspace = true, optional = true }
+stringcheese-icu-number = { workspace = true, optional = true }
+
+[build-dependencies]
+# Build-time codegen for the plural-zh / number-zh SCUD packs.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
+# Build-time re-use of the plural crate's `PluralRuleId` opcodes and
+# per-locale helper functions.
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

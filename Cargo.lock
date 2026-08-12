@@ -2436,8 +2436,11 @@ name = "stringcheese-ar"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -2827,8 +2830,11 @@ name = "stringcheese-ja"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -2996,8 +3002,11 @@ name = "stringcheese-pl"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]
@@ -3023,8 +3032,11 @@ name = "stringcheese-ru"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
  "stringcheese-sr",
  "stringcheese-uk",
 ]
@@ -3227,8 +3239,11 @@ name = "stringcheese-zh"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]

@@ -594,6 +594,80 @@ pub mod builder {
     pub fn french_ordinals(b: &mut PluralSectionBuilder) {
         b.push_ordinal(PluralCategory::One, PluralRuleId::NEq1.as_u8());
     }
+
+    /// Russian cardinal rules (CLDR 44 `plurals.xml`):
+    ///
+    /// * `one` when `v = 0 and i % 10 = 1 and i % 100 != 11`
+    ///   ([`PluralRuleId::RuOne`]).
+    /// * `few` when `v = 0 and i % 10 in 2..4 and i % 100 not in 12..14`
+    ///   ([`PluralRuleId::SlavFew`]).
+    /// * `many` when `v = 0 and (i % 10 = 0 or i % 10 in 5..9 or
+    ///   i % 100 in 11..14)` ([`PluralRuleId::RuMany`]).
+    /// * `other` otherwise (all fractional inputs; the compact-large
+    ///   `many` bucket is deferred with Phase 3's `e`-operand gap).
+    pub fn russian_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::One, PluralRuleId::RuOne.as_u8());
+        b.push_cardinal(PluralCategory::Few, PluralRuleId::SlavFew.as_u8());
+        b.push_cardinal(PluralCategory::Many, PluralRuleId::RuMany.as_u8());
+    }
+
+    /// Russian ordinals: CLDR ships `other` only. The helper pushes
+    /// nothing.
+    pub fn russian_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Polish cardinal rules (CLDR 44 `plurals.xml`):
+    ///
+    /// * `one` when `i = 1 and v = 0` ([`PluralRuleId::IEq1AndVEq0`]).
+    /// * `few` when `v = 0 and i % 10 in 2..4 and i % 100 not in 12..14`
+    ///   ([`PluralRuleId::SlavFew`]).
+    /// * `many` when `v = 0 and ((i != 1 and i % 10 in 0..1) or
+    ///   i % 10 in 5..9 or i % 100 in 12..14)`
+    ///   ([`PluralRuleId::PlMany`]).
+    /// * `other` otherwise (all fractional inputs).
+    pub fn polish_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::One, PluralRuleId::IEq1AndVEq0.as_u8());
+        b.push_cardinal(PluralCategory::Few, PluralRuleId::SlavFew.as_u8());
+        b.push_cardinal(PluralCategory::Many, PluralRuleId::PlMany.as_u8());
+    }
+
+    /// Polish ordinals: CLDR ships `other` only. The helper pushes
+    /// nothing.
+    pub fn polish_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Arabic cardinal rules (CLDR 44 `plurals.xml`) — the
+    /// six-category maximum:
+    ///
+    /// * `zero` when `n = 0` ([`PluralRuleId::NEq0`]).
+    /// * `one` when `n = 1` ([`PluralRuleId::NEq1`]).
+    /// * `two` when `n = 2` ([`PluralRuleId::NEq2`]).
+    /// * `few` when `n % 100 in 3..10` ([`PluralRuleId::ArFew`]).
+    /// * `many` when `n % 100 in 11..99` ([`PluralRuleId::ArMany`]).
+    /// * `other` otherwise.
+    pub fn arabic_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::Zero, PluralRuleId::NEq0.as_u8());
+        b.push_cardinal(PluralCategory::One, PluralRuleId::NEq1.as_u8());
+        b.push_cardinal(PluralCategory::Two, PluralRuleId::NEq2.as_u8());
+        b.push_cardinal(PluralCategory::Few, PluralRuleId::ArFew.as_u8());
+        b.push_cardinal(PluralCategory::Many, PluralRuleId::ArMany.as_u8());
+    }
+
+    /// Arabic ordinals: CLDR ships `other` only. The helper pushes
+    /// nothing.
+    pub fn arabic_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Chinese cardinals: CLDR ships `other` only — Chinese lacks
+    /// grammatical number. The helper pushes nothing.
+    pub fn chinese_cardinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Chinese ordinals: `other` only. The helper pushes nothing.
+    pub fn chinese_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Japanese cardinals: CLDR ships `other` only — Japanese lacks
+    /// grammatical number. The helper pushes nothing.
+    pub fn japanese_cardinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Japanese ordinals: `other` only. The helper pushes nothing.
+    pub fn japanese_ordinals(_b: &mut PluralSectionBuilder) {}
 }
 
 // -----------------------------------------------------------------------

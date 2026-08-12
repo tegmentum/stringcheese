@@ -9,6 +9,15 @@ repository.workspace = true
 description = "Japanese language pack for the StringCheese toolkit: ~100-150-word stopword list, character-type-based tokenizer (dictionary-free), Kunrei-shiki (ISO 3602) romanization phonetic hookup, and a minimal polite/plural stemmer. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["japanese", "tokenizer", "romanization", "kunrei", "stopwords"]
+build = "build.rs"
+
+# Ship the build.rs so downstream can regenerate SCUD packs against
+# the shipped rules.
+include = [
+    "build.rs",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -22,10 +31,30 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # constants alone (enough to link against on embedded targets that
 # only want the stopword table or the character classifier).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the plural-ja.scud pack (WIT-i18n Phase 3 plural-rule data
+# for Japanese cardinals). Japanese has no grammatical number so
+# every input classifies as `other`; the pack still ships so
+# `PluralEngine::supports("ja")` returns true and the CLDR version
+# provenance is recorded. Requires the plural crate's `std` feature.
+plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
+# Ship the number-ja.scud pack (WIT-i18n Phase 3 number-formatting
+# data for Japanese).
+number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+# WIT-i18n plural / number capability crates. Optional; pulled in
+# under the corresponding `-scud` features.
+stringcheese-icu-plural = { workspace = true, optional = true }
+stringcheese-icu-number = { workspace = true, optional = true }
+
+[build-dependencies]
+# Build-time codegen for the plural-ja / number-ja SCUD packs.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
+# Build-time re-use of the plural crate's `PluralRuleId` opcodes and
+# per-locale helper functions.
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 
