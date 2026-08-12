@@ -513,6 +513,14 @@ Each phase is independently releasable; a caller who needs only case mapping nev
 - `stringcheese-fr` — `plural-fr.scud` (cardinal `one` for `i in 0..1` — 0 and 1 both singular; ordinal `one` only for `n = 1`) plus `number-fr.scud` (group NBSP U+00A0 / decimal `,` / EUR-USD-GBP-CAD-CHF placed after with a space / percent `%` with a space). 7 golden test functions for numbers + 7 for plurals. New `build.rs` (fr previously had none) emits the SCUD packs.
 - CI — two new jobs `wasm-i18n-plural` and `wasm-i18n-number` in `.github/workflows/ci.yml` build both crates, run unit + golden tests, and print per-locale SCUD sizes to the run log.
 
+**Wave 2 — 5 additional SCUD packs (2026-08).** A data-only round extending the Phase 3 packs from {en, de, fr} to {en, de, fr, ru, pl, ar, zh, ja} without changing algorithms. The algorithm crate's `PluralRuleId` opcode set already covered every one of these; this round wires per-locale `plural_data` / `number_data` modules, `build.rs` codegen, and golden-vector suites into the existing `stringcheese-<lang>` packs behind opt-in `plural-scud` / `number-scud` features (matching en/de/fr). The `stringcheese-icu-plural::builder` module grows helper functions (`russian_cardinals`, `polish_cardinals`, `arabic_cardinals`, `chinese_cardinals`, `japanese_cardinals`, plus matching `_ordinals` counterparts) so every pack's `build.rs` uses the same declarative surface.
+
+- `stringcheese-ru` — `plural-ru.scud` (Slavic three-way: `one` when `v=0 and i%10=1 and i%100!=11`, `few` when `v=0 and i%10 in 2..4 and i%100 not in 12..14`, `many` when `v=0 and (i%10=0 or i%10 in 5..9 or i%100 in 11..14)`) plus `number-ru.scud` (group NBSP U+00A0 / decimal `,` / RUB-USD-EUR-GBP after value with space / percent `%` with space). 8 plural + 10 number golden test functions, 100+ assertions total.
+- `stringcheese-pl` — `plural-pl.scud` (three-way: `one` only for `i=1 v=0`, `few` shares Russian's `SlavFew`, `many` uses `PlMany` predicate) plus `number-pl.scud` (group NBSP / decimal `,` / PLN-USD-EUR-GBP after value with space / percent `%` **without** space — Polish is the odd shipped locale here). 8 plural + 10 number golden test functions.
+- `stringcheese-ar` — `plural-ar.scud`, the **maximum-category-count** pack: exercises every one of the six CLDR plural categories (`zero`, `one`, `two`, `few`, `many`, `other`); `PluralCategory::Zero` end-to-end through the `PluralEngine` verified. `number-ar.scud` uses the `latn` numbering-system default (Western digits): group `,` / decimal `.` / SAR-USD-EUR-AED before value with space / percent `%` with no space. 11 plural + 10 number golden test functions (Arabic hits the task's 30-vector floor for six-bucket locales).
+- `stringcheese-zh` — `plural-zh.scud` (empty rule table; every input classifies as `other` — Chinese lacks grammatical number in CLDR) plus `number-zh.scud` (group `,` / decimal `.` / CNY-USD-EUR-HKD before value with no space / percent `%` with no space). 8 plural + 10 number golden test functions.
+- `stringcheese-ja` — `plural-ja.scud` (empty rule table like `zh`) plus `number-ja.scud` (group `,` / decimal `.` / JPY-USD-EUR-CNY before value with no space / percent `%` with no space). 8 plural + 11 number golden test functions; the Japanese suite adds an explicit `currency_jpy_zero_fraction_override` case documenting how a caller opts into culturally-correct 0-fraction yen output.
+
 **Measured sizes** (release builds of the SCUD blobs, uncompressed):
 
 | Pack             | Bytes | Notes                                                      |
@@ -520,21 +528,37 @@ Each phase is independently releasable; a caller who needs only case mapping nev
 | `plural-en.scud` |    62 | 1 cardinal rule + 3 ordinal rules                          |
 | `plural-de.scud` |    56 | 1 cardinal rule, no ordinals                               |
 | `plural-fr.scud` |    58 | 1 cardinal rule + 1 ordinal rule                           |
+| `plural-ru.scud` |    60 | 3 cardinal rules, no ordinals                              |
+| `plural-pl.scud` |    60 | 3 cardinal rules, no ordinals                              |
+| `plural-ar.scud` |    64 | 5 cardinal rules (max-category), no ordinals               |
+| `plural-zh.scud` |    54 | 0 rules — every input falls through to `other`             |
+| `plural-ja.scud` |    54 | 0 rules — every input falls through to `other`             |
 | `number-en.scud` |   120 | 6 currencies + decimal + percent patterns                  |
 | `number-de.scud` |   104 | 4 currencies + decimal + percent patterns                  |
 | `number-fr.scud` |   114 | 5 currencies + decimal + percent patterns                  |
+| `number-ru.scud` |   105 | 4 currencies + decimal + percent patterns                  |
+| `number-pl.scud` |   105 | 4 currencies + decimal + percent patterns                  |
+| `number-ar.scud` |   119 | 4 currencies + decimal + percent patterns                  |
+| `number-zh.scud` |   106 | 4 currencies + decimal + percent patterns                  |
+| `number-ja.scud` |   107 | 4 currencies + decimal + percent patterns                  |
 
-**Locales covered vs deferred.** Phase 3's rule table lets any locale whose CLDR rules happen to be a subset of the encoded 15 predicates ship without further work. Phase 3 packages three: `en`, `de`, `fr`. The remaining 8-9 predicate-covered locales — Spanish, Italian, Portuguese, Russian, Polish, Arabic, plus the rest of the CLDR "top 20 by coverage class" — are follow-ups that add per-locale packs but not new algorithm code. The full ~200-locale CLDR plural table is a Phase-3-scope deferral: hand-encoding the remaining predicates (locale-specific reorderings, additional operand combinations) is a follow-up wave.
+(Measurements taken from `find target -name '<pack>' -exec ls -l {} \;` after a `cargo build --features <pack>-scud`.)
+
+**Locales covered vs deferred.** Phase 3's rule table lets any locale whose CLDR rules happen to be a subset of the encoded 15 predicates ship without further work. Wave 2 above brings the shipped set to **eight** locales: `en`, `de`, `fr`, `ru`, `pl`, `ar`, `zh`, `ja`. The remaining predicate-covered locales — Spanish, Italian, Portuguese (the Latin-adjacent trio) — are follow-ups that add per-locale packs but not new algorithm code. The full ~200-locale CLDR plural table remains a Phase-3-scope deferral: hand-encoding the remaining predicates (locale-specific reorderings, additional operand combinations) is a follow-up wave.
 
 **Deferred.** Documented in the crate roots and left for the follow-up wave:
 
 - Standalone WASM component builds for `stringcheese-icu-plural` and `stringcheese-icu-number`. Both WIT files parse cleanly under `wit-parser`; the `wit-bindgen` `Guest` implementations and `cargo build --target wasm32-wasip1 --features wit-component` recipes land in a follow-up (same shape as Phase 1's / Phase 2's deferrals).
-- Full ~200-locale CLDR plural rules (Phase 3 targets ~11 covered predicates across ~3 shipped packs).
+- Full ~200-locale CLDR plural rules (Phase 3 targets ~11 covered predicates across the shipped `en`, `de`, `fr`, `ru`, `pl`, `ar`, `zh`, `ja` packs).
+- `es`, `it`, `pt` SCUD packs — the Latin-adjacent trio. Algorithm-supported (Spanish/Italian ordinal `NEq1`, Portuguese cardinal `IIn01`); only data + a `build.rs` + golden vectors are missing.
 - CLDR `c` / `e` (compact / exponent) operands — Phase 3 evaluates only `n / i / v / w / f / t`. Compact notation (`1.2K`, `3.5M`) needs the `e ≠ 0` handling.
 - Named-currency database — ISO 4217 → symbol lookup for every locale-currency pair. This crate reads whatever currencies the pack ships; a shipping locale-by-locale symbol table lives separately.
 - Compact number formatting ("1.2K", "3.5M") — CLDR "short" pattern.
 - Scientific notation and accounting-style negative currency.
 - Percent output with the localized percent sign U+066A (Arabic-Indic) or U+FF05 (fullwidth) — Phase 3 packs only ASCII `%`.
+- **Arabic RTL bidi handling.** `number-ar.scud` emits logical-order strings; a downstream shaper is responsible for the visual reversal Arabic contexts expect.
+- **Arabic-Indic (`arab` U+0660..U+0669) / Persian-extended (`arabext` U+06F0..U+06F9) digit shapes.** The Arabic pack ships the `latn` numbering system (Western digits `0..9`); alternate digit tables need a SCUD extension or a per-numbering-system pack. Additional numbering systems (`deva`, `thai`, etc.) share the same deferral.
+- **Per-currency fraction-digit defaults.** JPY-style zero-fraction currencies (JPY, KRW, ISK, …) format as `¥1,234.56` by default under the current engine because `format_currency` forces 2 fraction digits regardless of the currency code. Callers who want the culturally-correct output pass `FormattingOptions { min_fraction: Some(0), max_fraction: Some(0), … }`. The Japanese pack docs and the `currency_jpy_zero_fraction_override` golden test document the workaround.
 
 **Red flags.** A couple worth noting for reviewers:
 
