@@ -2749,6 +2749,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-icu-collation-component"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-de",
+ "stringcheese-en",
+ "stringcheese-icu-collation",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen-rt",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
 name = "stringcheese-id"
 version = "0.1.0"
 dependencies = [
