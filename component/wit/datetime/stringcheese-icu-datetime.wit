@@ -1,0 +1,146 @@
+// StringCheese ICU alternative — date/time-formatting capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the date/time-formatting surface: locale-sensitive
+// date, time, and combined date/time formatting per the CLDR default
+// short/medium/long/full patterns for the Proleptic Gregorian
+// calendar. See `docs/design/wit-i18n.md` § 2.5 for the design
+// commentary and § 8.4 for Phase 4's delivery notes.
+//
+// The interface follows the tegmentum:i18n-* shape used by the
+// plural and number packages: a small set of interfaces, a
+// `capabilities` interface for introspection, and a `world` binding
+// them together.
+//
+// Time-zone-naive by design (Phase 4 non-goal): the input ISO
+// strings are interpreted in whatever offset the caller provides
+// (or as local time when unqualified); no zone conversion is
+// performed. See § 8.4 of the design doc for the deferred set
+// (non-Gregorian calendars, skeleton-based formatting, relative
+// time, interval formatting).
+
+package tegmentum:i18n-datetime@0.1.0;
+
+/// Shared types. Split into its own interface so the `datetime`
+/// and `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "de", "fr", "pt-BR".
+    /// The empty string denotes the CLDR root locale.
+    type locale = string;
+
+    /// The four CLDR-standard length classes shared by dates and
+    /// times. Maps to the `dateFormats` and `timeFormats` length
+    /// keys in CLDR's `gregorian.json`.
+    enum date-length {
+        /// Shortest form (e.g. `"9/22/24"` en / `"22.09.24"` de).
+        short,
+        /// Default "medium" form (e.g. `"Sep 22, 2024"`).
+        medium,
+        /// Verbose form (e.g. `"September 22, 2024"`).
+        long,
+        /// Most verbose form (e.g. `"Sunday, September 22, 2024"`).
+        full,
+    }
+
+    /// Same length classes reused for the time component.
+    /// Semantically equal to `date-length`; declared separately so a
+    /// caller cannot pass the wrong axis to the wrong parameter.
+    enum time-length {
+        /// e.g. `"5:03 PM"` / `"17:03"`.
+        short,
+        /// e.g. `"5:03:04 PM"` / `"17:03:04"`.
+        medium,
+        /// e.g. `"5:03:04 PM"` (English CLDR treats medium and long
+        /// identically in the shipped Phase 4 pack).
+        long,
+        /// e.g. `"5:03:04 PM"`.
+        full,
+    }
+
+    /// Errors surfaced by the date/time interface. Date/time
+    /// formatting is total on valid ISO-8601 input; failure modes
+    /// are structural or reflect a malformed input string.
+    variant datetime-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        invalid-locale(string),
+        /// No pack was loaded for the requested locale and no
+        /// fallback in the CLDR chain resolved.
+        locale-unavailable(string),
+        /// The `iso-date`, `iso-time`, or `iso-datetime` input was
+        /// not a well-formed ISO-8601 string. Payload carries the
+        /// offending input for diagnostic surfacing.
+        invalid-input(string),
+        /// The parsed input represented an out-of-range value
+        /// (e.g. `2024-02-30`, `25:00:00`). Payload names the
+        /// specific field.
+        out-of-range(string),
+    }
+}
+
+/// The core date/time-formatting surface.
+///
+/// Every function takes an ISO-8601 input string plus a locale
+/// tag and a length class, and returns the CLDR-pattern-driven
+/// rendering. The functions are time-zone-naive: whatever offset
+/// (or lack thereof) the input carries is preserved literally.
+interface datetime {
+    use types.{locale, date-length, time-length, datetime-error};
+
+    /// Format an ISO-8601 date-only string (`"YYYY-MM-DD"`).
+    ///
+    /// Returns a string rendered against the locale's date pattern
+    /// at the requested length. See the CLDR pattern reference for
+    /// the exact tokens each pack ships:
+    /// <https://cldr.unicode.org/translation/date-time-1/date-time-patterns>.
+    format-date: func(
+        iso-date: string,
+        locale: locale,
+        length: date-length,
+    ) -> result<string, datetime-error>;
+
+    /// Format an ISO-8601 time-of-day string
+    /// (`"HH:MM:SS"` or `"HH:MM:SS.sss"`).
+    ///
+    /// Returns a string rendered against the locale's time pattern
+    /// at the requested length. Milliseconds in the input are
+    /// discarded — Phase 4 does not render sub-second precision.
+    format-time: func(
+        iso-time: string,
+        locale: locale,
+        length: time-length,
+    ) -> result<string, datetime-error>;
+
+    /// Format a combined ISO-8601 date-time string
+    /// (`"YYYY-MM-DDTHH:MM:SS"`, optionally with `Z` or `±HH:MM`).
+    ///
+    /// Returns `"<date> <time>"` concatenation using the two
+    /// selected length classes. Timezone information carried by
+    /// the input is discarded — the shipped Phase 4 pack has no
+    /// timezone-aware behaviour.
+    format-datetime: func(
+        iso-datetime: string,
+        locale: locale,
+        date-length: date-length,
+        time-length: time-length,
+    ) -> result<string, datetime-error>;
+}
+
+/// Introspection: which locales does the linked component actually
+/// cover?
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a pack
+    /// (rather than falling through to root).
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every date/time component exports.
+world datetime-world {
+    export types;
+    export datetime;
+    export capabilities;
+}
