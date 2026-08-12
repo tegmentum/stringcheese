@@ -18,9 +18,12 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use stringcheese_icu_plural::builder::{english_cardinals, english_ordinals};
 use stringcheese_scud::{
-    CAP_CASE, CAP_COLLATION, CaseSectionBuilder, CollationSectionBuilder, SECT_COLLATION_OPTIONS,
-    SECT_EXPANSIONS, SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER,
+    CAP_CASE, CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder, CollationSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
+    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_EXPANSIONS, SECT_FULL_FOLD, SECT_FULL_UPPER,
+    SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER,
     SECT_SIMPLE_UPPER, ScudWriter,
 };
 
@@ -46,8 +49,65 @@ fn main() {
     fs::write(&collation_path, &collation_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", collation_path.display()));
 
+    let plural_path = out_dir.join("plural-en.scud");
+    let plural_bytes = build_plural_en_scud();
+    fs::write(&plural_path, &plural_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", plural_path.display()));
+
+    let number_path = out_dir.join("number-en.scud");
+    let number_bytes = build_number_en_scud();
+    fs::write(&number_path, &number_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
+
     println!("cargo:rerun-if-changed={rules}");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the plural-en SCUD pack in memory.
+///
+/// English plural rules (CLDR 44.1, `plurals.xml`):
+///
+/// * Cardinal `one` when `i = 1 and v = 0` (integer 1), else `other`.
+/// * Ordinal `one` when `n % 10 = 1 and n % 100 != 11` (1st, 21st,
+///   101st …).
+/// * Ordinal `two` when `n % 10 = 2 and n % 100 != 12` (2nd, 22nd …).
+/// * Ordinal `few` when `n % 10 = 3 and n % 100 != 13` (3rd, 23rd …).
+/// * Ordinal `other` otherwise (4th, 5th … 11th, 12th, 13th …).
+fn build_plural_en_scud() -> Vec<u8> {
+    let mut b = PluralSectionBuilder::new();
+    english_cardinals(&mut b);
+    english_ordinals(&mut b);
+    let mut w = ScudWriter::new(CAP_PLURAL, CLDR_VERSION, Some("en"));
+    w.append_section(SECT_CARDINAL_RULES, &b.cardinal_bytes());
+    w.append_section(SECT_ORDINAL_RULES, &b.ordinal_bytes());
+    w.finish()
+}
+
+/// Build the number-en SCUD pack in memory.
+///
+/// English number formatting (CLDR 44.1, `en.xml`):
+///
+/// * Group separator `,`, decimal separator `.`.
+/// * Decimal default: 0 min, 3 max fraction digits (pattern
+///   `#,##0.###`).
+/// * Percent: symbol `%` after the value, no space.
+/// * Currency: USD `$`, EUR `€`, GBP `£`, JPY `¥`, CAD `CA$`,
+///   AUD `A$` — all placed before the value with no space.
+fn build_number_en_scud() -> Vec<u8> {
+    let mut n = NumberSectionBuilder::new();
+    n.set_decimal_pattern(",", ".", 0, 3, 3, 3);
+    n.push_currency("USD", "$", false, false);
+    n.push_currency("EUR", "\u{20AC}", false, false);
+    n.push_currency("GBP", "\u{00A3}", false, false);
+    n.push_currency("JPY", "\u{00A5}", false, false);
+    n.push_currency("CAD", "CA$", false, false);
+    n.push_currency("AUD", "A$", false, false);
+    n.set_percent("%", true, false);
+    let mut w = ScudWriter::new(CAP_NUMBER, CLDR_VERSION, Some("en"));
+    w.append_section(SECT_DECIMAL_PATTERN, &n.decimal_bytes());
+    w.append_section(SECT_CURRENCY_TABLE, &n.currency_bytes());
+    w.append_section(SECT_PERCENT_PATTERN, &n.percent_bytes());
+    w.finish()
 }
 
 /// Build the case-en SCUD pack in memory.

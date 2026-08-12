@@ -2552,6 +2552,8 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "stringcheese-icu-collation",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
@@ -2619,6 +2621,8 @@ dependencies = [
  "proptest",
  "stringcheese-icu-case",
  "stringcheese-icu-collation",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-lang-gen",
  "stringcheese-phonetic",
@@ -2675,8 +2679,11 @@ name = "stringcheese-fr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
  "stringcheese-lang",
  "stringcheese-phonetic",
+ "stringcheese-scud",
 ]
 
 [[package]]

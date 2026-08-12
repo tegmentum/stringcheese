@@ -210,6 +210,13 @@ impl<'a> NumberEngine<'a> {
     /// Same set as [`format_decimal`](Self::format_decimal), plus
     /// [`NumberError::UnknownCurrency`] if the pack does not
     /// include the requested ISO 4217 code.
+    ///
+    /// # Negative-value composition
+    ///
+    /// Negative currencies place the sign *outside* the symbol —
+    /// `-$1.00` rather than `$-1.00` — matching CLDR's default
+    /// pattern `-¤#,##0.00`. Format the absolute value first, then
+    /// compose sign + (symbol + body).
     pub fn format_currency(
         &self,
         value: f64,
@@ -239,13 +246,22 @@ impl<'a> NumberEngine<'a> {
             max_fraction: Some(options.max_fraction.unwrap_or(2)),
             use_grouping: options.use_grouping,
         };
-        let body = format_decimal_with(value, &pattern, cur_opts);
-        Ok(compose_symbol(
+        let negative = value.is_sign_negative() && value != 0.0;
+        let body = format_decimal_with(value.abs(), &pattern, cur_opts);
+        let composed = compose_symbol(
             &body,
             record.symbol,
             record.symbol_after,
             record.symbol_spaced,
-        ))
+        );
+        if negative {
+            let mut out = String::with_capacity(composed.len() + 1);
+            out.push('-');
+            out.push_str(&composed);
+            Ok(out)
+        } else {
+            Ok(composed)
+        }
     }
 
     /// Format `value` as a percentage under the given locale.

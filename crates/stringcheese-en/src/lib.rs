@@ -159,6 +159,10 @@ pub mod collation_data;
 pub mod collator;
 #[cfg(feature = "alloc")]
 pub mod contraction;
+#[cfg(feature = "number-scud")]
+pub mod number_data;
+#[cfg(feature = "plural-scud")]
+pub mod plural_data;
 #[cfg(feature = "alloc")]
 pub mod porter;
 #[cfg(feature = "alloc")]
