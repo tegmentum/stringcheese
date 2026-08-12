@@ -2552,6 +2552,7 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "stringcheese-icu-collation",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2621,6 +2622,7 @@ dependencies = [
  "proptest",
  "stringcheese-icu-case",
  "stringcheese-icu-collation",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2679,6 +2681,7 @@ name = "stringcheese-fr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2762,6 +2765,29 @@ dependencies = [
  "stringcheese-de",
  "stringcheese-en",
  "stringcheese-icu-collation",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen-rt",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-datetime"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-datetime-component"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-de",
+ "stringcheese-en",
+ "stringcheese-fr",
+ "stringcheese-icu-datetime",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",

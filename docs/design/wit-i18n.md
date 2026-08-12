@@ -501,6 +501,45 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.4. Phase 4 progress (2026-08)
+
+**Landed.** The Phase 4 foundation ships across a single wave:
+
+- `stringcheese-scud` — extended with `CAP_DATETIME` (already reserved in Phase 1) plus eight new section ids (`SECT_DATE_PATTERNS` / `SECT_TIME_PATTERNS` / `SECT_MONTH_NAMES` / `SECT_MONTH_ABBR` / `SECT_WEEKDAY_NAMES` / `SECT_WEEKDAY_ABBR` / `SECT_AM_PM` / `SECT_ERA_NAMES`) with a `DateTimeLength` enum (`Short | Medium | Long | Full`), a `DateTimeDataView` zero-copy view, and a `DateTimeSectionBuilder` writer. Section wire formats are index-based (dates/times: four consecutive length-prefixed strings) or `u16`-counted (months/weekdays), matching the small-table shapes Phase 4 needs. +4 new unit tests.
+- `stringcheese-icu-datetime` — the WIT interface at `component/wit/datetime/stringcheese-icu-datetime.wit` (package `tegmentum:i18n-datetime@0.1.0`, parses cleanly under `wit-parser` with 3 smoke tests) plus a `DateTimeEngine` algorithm side that consumes one or more `DateTimePack`s and walks the BCP 47 fallback chain (`fr-CA → fr → ""`) at query time. Ships a self-contained CLDR pattern interpreter recognising `y`/`yy`/`yyyy`/`M`/`MM`/`MMM`/`MMMM`/`d`/`dd`/`E`/`EEEE`/`H`/`HH`/`h`/`hh`/`m`/`mm`/`s`/`ss`/`a`/`G` plus CLDR quoted literals (`'text'`, `''`). Date math is self-contained: leap-year via the classic Gregorian rule, weekday via Zeller's congruence. No `chrono` / `jiff` / `time` dep — the wasm component stays lean. 24 unit tests + 3 wit-parser smoke tests.
+- `stringcheese-icu-datetime-component` — the WASM component wrapper that carries the `datetime-world` world across the wasm boundary, mirroring the `stringcheese-icu-collation-component` template's shape (dual `cdylib` + `rlib`, `wit-component` feature gate on `wit-bindgen-rt`, pre-generated `src/bindings.rs` from `wit-bindgen rust --runtime-path wit_bindgen_rt`, in-process `wasmtime::component::bindgen!` smoke tests). The shipped `.wasm` embeds `datetime-{en,de,fr}.scud` so the componentised binary is drivable end-to-end. 7 wasmtime smoke tests cover `format-date` (en/de/fr short/medium/full), `format-time` (English 12-hour AM/PM), `format-datetime` (combined), `supported-locales`, and `supports` (BCP 47 fallback via `fr-CA → fr`).
+- `stringcheese-en` — `datetime-en.scud` with the CLDR default patterns (`M/d/y` short, `MMM d, y` medium, `MMMM d, y` long, `EEEE, MMMM d, y` full for dates; `h:mm a` short + `h:mm:ss a` medium/long/full for times), full + abbreviated month/weekday names, `AM`/`PM` markers, `BC`/`AD` eras. Exposed via `datetime_data::datetime_pack()` under a new `datetime-scud` feature (default-on). 10 golden test functions covering short/medium/long/full dates, 12-hour AM/PM edge cases (midnight, noon, 12:30 PM), combined datetime, BCP 47 fallback, and out-of-range input rejection.
+- `stringcheese-de` — `datetime-de.scud` (`dd.MM.y` short/medium, `d. MMMM y` long, `EEEE, d. MMMM y` full; 24-hour throughout; German month + weekday names with `März`, `Sonntag`, …; `v. Chr.`/`n. Chr.` eras). 8 golden test functions.
+- `stringcheese-fr` — `datetime-fr.scud` (`dd/MM/y` short, `d MMM y` medium, `d MMMM y` long, `EEEE d MMMM y` full; 24-hour throughout; French month + weekday names all lowercase per CLDR; `av. J.-C.`/`ap. J.-C.` eras). 8 golden test functions.
+- CI — two new jobs `wasm-i18n-datetime` and `wasm-i18n-datetime-component` in `.github/workflows/ci.yml`. The datetime-component crate is added to the wasm-runtime `--exclude` list for the same duplicate-export-symbol reason the case-component and collation-component crates are excluded.
+
+**Measured sizes** (release builds of the SCUD blobs, uncompressed):
+
+| Pack               | Bytes | Notes                                                              |
+| ------------------ | -----:| ------------------------------------------------------------------ |
+| `datetime-en.scud` |   415 | 4 date + 4 time patterns, 12 full + 12 abbr months, 7 + 7 weekdays |
+| `datetime-de.scud` |   436 | Same shape plus German umlauts + `März` / `Chr.` eras              |
+| `datetime-fr.scud` |   445 | Same shape plus French lowercase month/weekday names               |
+
+**Wasm component sizes** (measured locally, aarch64 macOS, `--release`, wasmtime 26 / wasm-tools 1.254): raw module 91 586 B, componentised 114 442 B. Larger than the icu-case component (~112 KiB componentised) by roughly 2 KiB, entirely accounted for by the three embedded SCUD packs.
+
+**Locales covered vs deferred.** Phase 4 ships packs for `en`, `de`, and `fr` (matching Phase 3's initial locale set). The remaining ~200 CLDR locales are follow-ups that add per-locale packs but not new algorithm code — the pattern interpreter and Gregorian arithmetic already cover any Gregorian-calendar locale that uses the shipped token set.
+
+**Deferred.** Documented in the crate roots and left for the follow-up wave:
+
+- **Non-Gregorian calendars** (Buddhist, Hebrew, Islamic, Japanese). The WIT interface is calendar-agnostic — a future capability tag could ship parallel `SECT_MONTH_NAMES` variants under an Islamic pack — but Phase 4's engine hardcodes Gregorian arithmetic. Adding a calendar is a new algorithm-side crate plus a new SCUD capability tag; the WIT interface does not need to break.
+- **Timezone conversion.** Phase 4 is time-zone-naive: the input ISO string's offset (or lack thereof) is discarded by the formatter. Zone-aware formatting is a separate WIT interface (`stringcheese-icu-datetime-tz@0.1.0`) that takes an IANA TZDB name and returns the offset-adjusted rendering; the release cadence of TZDB makes this a distinct maintenance surface.
+- **Skeleton-based formatting** — CLDR skeletons (`"yMMMd"` → auto-pick the closest pattern) fall out of a per-locale skeleton table, which is not shipped here. Phase 4 uses only the fixed short/medium/long/full lengths.
+- **Relative time formatting** ("3 hours ago") and **interval formatting** ("Mar 3 – Mar 5") are separate concerns handled by different WIT interfaces.
+- **Localised era-style alternatives** — CLDR's `GGGGG` (narrow era) and `GGGG` (era name in full: `"Anno Domini"` vs `"AD"`) are not shipped; Phase 4 renders `G`/`GG`/`GGG` as the abbreviated form and leaves narrow / wide variants for a follow-up expansion of `SECT_ERA_NAMES`.
+
+**Red flags.** A couple worth noting for reviewers:
+
+- **Zeller's congruence handles the Gregorian calendar directly.** The formula in `weekday()` uses the "Sunday = 0" convention baked in via a fixed offset from Zeller's own "Saturday = 0" output. Cross-checked against five hand-verified reference dates (2024-09-22 Sunday, 2024-01-01 Monday, 2000-02-29 Tuesday, 1969-07-20 Sunday, 1776-07-04 Thursday) plus the leap-year matrix (`is_leap_year` accepts 2024, 2000, 2400; rejects 1900, 2100). The formula is textbook (Wikipedia's [Zeller's congruence](https://en.wikipedia.org/wiki/Zeller%27s_congruence) page); the only subtlety is the January/February shift into months 13/14 of the previous year, which is done inline.
+- **Epoch boundaries.** The `year` field is a signed `i32`, so the calendar covers everything from year -2 147 483 648 to year 2 147 483 647 — but Gregorian is *proleptic*: it extends the Gregorian rules backwards past 1582 into the pre-Gregorian world. Callers formatting historical dates before 1582 get output that would not agree with a period-appropriate Julian rendering; this is the standard Proleptic Gregorian trade-off and is called out in the crate docs. The era token `G` renders `BC` for `year ≤ 0` (astronomical convention: year 0 = 1 BC, year -1 = 2 BC).
+- **Timezone-naive assumption.** The `iso-datetime` parser accepts (and silently discards) `Z`, `+HH:MM`, and `-HH:MM` suffixes. A caller who forgets that the formatter is zone-naive may see wall-clock output that differs from what they expected — most obviously, `"2024-09-22T23:00:00Z"` formatted for a locale a user reads in `America/Los_Angeles` renders as `"2024-09-22 11:00 PM"` (UTC wall-clock) rather than the local `"2024-09-22 4:00 PM"`. This is the documented Phase 4 behaviour; a future zone-aware crate is the correct fix for callers who need it.
+- **CLDR pattern token subset.** Phase 4 recognises the tokens the shipped short/medium/long/full patterns actually use. Unknown letters (`Q` quarter, `L` standalone month, `c` standalone weekday, `w` week-of-year, `z` timezone name, `Z` timezone offset, `X`/`x` ISO-8601 timezone, `V` timezone id) fall through as literals — a conservative choice for forward compatibility. A pack that ships a pattern using an unrecognised token gets that token emitted verbatim in the output; a maintainer adding a new locale should validate the output against a reference implementation before assuming the token is covered.
+
 ### 8.3. Phase 3 progress (2026-08)
 
 **Landed.** The Phase 3 foundation ships across a single wave:
