@@ -139,6 +139,10 @@ extern crate alloc;
 pub mod hepburn;
 #[cfg(feature = "alloc")]
 pub mod normalize;
+#[cfg(feature = "number-scud")]
+pub mod number_data;
+#[cfg(feature = "plural-scud")]
+pub mod plural_data;
 #[cfg(feature = "alloc")]
 pub mod romaji;
 #[cfg(feature = "alloc")]
