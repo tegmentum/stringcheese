@@ -99,6 +99,8 @@ pub use stringcheese_scud::{PluralCategory, ScudError};
 /// | [`ArFew`](Self::ArFew)              |    13 | ar cardinal `few`                   |
 /// | [`ArMany`](Self::ArMany)            |    14 | ar cardinal `many`                  |
 /// | [`IEq1`](Self::IEq1)                |    15 | integer `one` (v ignored)           |
+/// | [`EsItPtCardinalMany`](Self::EsItPtCardinalMany) | 16 | es/it/pt cardinal `many` (million bucket) |
+/// | [`ItOrdinalMany`](Self::ItOrdinalMany) | 17 | it ordinal `many` (n in {8, 11, 80, 800}) |
 ///
 /// Rule ids outside the shipped set evaluate to `false`, so an
 /// unknown pack entry silently falls through to the next rule and
@@ -142,6 +144,22 @@ pub enum PluralRuleId {
     /// `i = 1` — English-like `one` when the caller does not care
     /// about `v`.
     IEq1 = 15,
+    /// `v = 0 and i != 0 and i % 1000000 = 0` — Spanish, Italian,
+    /// and Portuguese cardinal `many` bucket (CLDR 42+ addition for
+    /// the compact-large-number case). Phase 3 evaluates only the
+    /// `v = 0 and i != 0 and i % 1000000 = 0` sub-clause of the full
+    /// CLDR rule `e = 0 and i != 0 and i % 1000000 = 0 and v = 0 or
+    /// e != 0..5`; the `e ≠ 0` compact-notation branch stays deferred
+    /// with Phase 3's `e`-operand gap. Effect: only exact million-
+    /// multiples (`1_000_000`, `2_000_000`, `1_000_000_000`, …)
+    /// classify as `many`; a caller shipping compact-notation values
+    /// like `1.5c6 → 1_500_000` sees `other` under Phase 3 packs.
+    EsItPtCardinalMany = 16,
+    /// `n in {8, 11, 80, 800}` — Italian ordinal `many` bucket. The
+    /// four values are exact-equality checks on `n` (CLDR ships only
+    /// `@integer 8, 11, 80, 800` samples; fractional inputs stay in
+    /// `other`).
+    ItOrdinalMany = 17,
 }
 
 impl PluralRuleId {
@@ -342,6 +360,18 @@ pub fn evaluate_rule(rule_id: u8, op: &PluralOperands) -> bool {
         13 => op.v == 0 && (3..=10).contains(&(n_int % 100)),
         14 => op.v == 0 && (11..=99).contains(&(n_int % 100)),
         15 => op.i == 1,
+        // Spanish/Italian/Portuguese cardinal `many`: the shipped
+        // sub-clause of the full CLDR rule (compact `e ≠ 0` branch
+        // deferred with the Phase 3 e-operand gap). `i != 0` guards
+        // against 0 matching `0 % 1_000_000 == 0`.
+        16 => op.v == 0 && op.i != 0 && op.i.is_multiple_of(1_000_000),
+        // Italian ordinal `many`: exact equality on n against the
+        // four CLDR-sampled values {8, 11, 80, 800}. The `v = 0`
+        // guard keeps fractional inputs like `800.5` in `other`
+        // (they truncate to `n_int == 800` but their visible
+        // fraction distinguishes them from the CLDR-sampled integer
+        // set).
+        17 => op.v == 0 && matches!(n_int, 8 | 11 | 80 | 800),
         _ => false,
     }
 }
@@ -668,6 +698,92 @@ pub mod builder {
 
     /// Japanese ordinals: `other` only. The helper pushes nothing.
     pub fn japanese_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Spanish cardinal rules (CLDR 44 `plurals.xml`,
+    /// `<pluralRules locales="es">`):
+    ///
+    /// * `one` when `n = 1` ([`PluralRuleId::NEq1`]) — Spanish uses
+    ///   value-equality on `n`, so both integer `1` and decimal
+    ///   `1.0` classify as `one`.
+    /// * `many` — Phase 3 evaluates the shipped sub-clause
+    ///   `v = 0 and i != 0 and i % 1000000 = 0`
+    ///   ([`PluralRuleId::EsItPtCardinalMany`]); the compact `e ≠ 0`
+    ///   branch stays deferred with Phase 3's `e`-operand gap.
+    /// * `other` otherwise.
+    pub fn spanish_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::One, PluralRuleId::NEq1.as_u8());
+        b.push_cardinal(
+            PluralCategory::Many,
+            PluralRuleId::EsItPtCardinalMany.as_u8(),
+        );
+    }
+
+    /// Spanish ordinals: CLDR 44 ships `other` only for Spanish
+    /// ordinals. The helper pushes nothing.
+    pub fn spanish_ordinals(_b: &mut PluralSectionBuilder) {}
+
+    /// Italian cardinal rules (CLDR 44 `plurals.xml`, Italian shares
+    /// the multi-locale `<pluralRules locales="ast ca de en et fi fy
+    /// gl ia io it ji lij nl sc scn sv sw ur yi">` block):
+    ///
+    /// * `one` when `i = 1 and v = 0`
+    ///   ([`PluralRuleId::IEq1AndVEq0`]) — Italian differs from
+    ///   Spanish here (Spanish uses `n = 1`, Italian uses `i = 1 and
+    ///   v = 0`); decimals like `1.0` land in `other`, not `one`.
+    /// * `many` — same sub-clause as Spanish/Portuguese
+    ///   ([`PluralRuleId::EsItPtCardinalMany`]).
+    /// * `other` otherwise.
+    ///
+    /// Ships as a builder helper for the future `stringcheese-it`
+    /// language pack; the crate does not yet exist in the workspace
+    /// (see the Phase 3 progress notes in `docs/design/wit-i18n.md`
+    /// § 8.3).
+    pub fn italian_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::One, PluralRuleId::IEq1AndVEq0.as_u8());
+        b.push_cardinal(
+            PluralCategory::Many,
+            PluralRuleId::EsItPtCardinalMany.as_u8(),
+        );
+    }
+
+    /// Italian ordinal rules (CLDR 44 `ordinals.xml`,
+    /// `<pluralRules locales="it sc scn">`):
+    ///
+    /// * `many` when `n in {8, 11, 80, 800}`
+    ///   ([`PluralRuleId::ItOrdinalMany`]) — the four values with
+    ///   distinct Italian ordinal marking (`ottavo → 8º`,
+    ///   `undicesimo → 11º`, `ottantesimo → 80º`, `ottocentesimo →
+    ///   800º`).
+    /// * `other` otherwise.
+    ///
+    /// Ships as a builder helper for the future `stringcheese-it`
+    /// language pack (see the Phase 3 progress notes).
+    pub fn italian_ordinals(b: &mut PluralSectionBuilder) {
+        b.push_ordinal(PluralCategory::Many, PluralRuleId::ItOrdinalMany.as_u8());
+    }
+
+    /// Portuguese cardinal rules — the task ships one pack under
+    /// `"pt"` matching CLDR 44 `<pluralRules locales="pt_PT">`:
+    ///
+    /// * `one` when `n = 1 and v = 0` (equivalent to `i = 1 and v =
+    ///   0` under the operand tuple — [`PluralRuleId::IEq1AndVEq0`]).
+    ///   Note pt-PT is stricter than default `pt` (which uses
+    ///   `i = 0..1`); pt-BR (`pt`-default in CLDR) is documented as
+    ///   a follow-up deferral.
+    /// * `many` — same sub-clause as Spanish/Italian
+    ///   ([`PluralRuleId::EsItPtCardinalMany`]).
+    /// * `other` otherwise.
+    pub fn portuguese_cardinals(b: &mut PluralSectionBuilder) {
+        b.push_cardinal(PluralCategory::One, PluralRuleId::IEq1AndVEq0.as_u8());
+        b.push_cardinal(
+            PluralCategory::Many,
+            PluralRuleId::EsItPtCardinalMany.as_u8(),
+        );
+    }
+
+    /// Portuguese ordinals: CLDR 44 ships `other` only for
+    /// Portuguese ordinals. The helper pushes nothing.
+    pub fn portuguese_ordinals(_b: &mut PluralSectionBuilder) {}
 }
 
 // -----------------------------------------------------------------------
@@ -850,5 +966,89 @@ mod tests {
         assert_eq!(chain, ["pt-BR", "pt", ""]);
         let chain: alloc::vec::Vec<&str> = walk_fallback_chain("en").collect();
         assert_eq!(chain, ["en", ""]);
+    }
+
+    fn build_es() -> alloc::vec::Vec<u8> {
+        let mut b = PluralSectionBuilder::new();
+        builder::spanish_cardinals(&mut b);
+        builder::spanish_ordinals(&mut b);
+        let mut w = ScudWriter::new(CAP_PLURAL, "44.1", Some("es"));
+        w.append_section(SECT_CARDINAL_RULES, &b.cardinal_bytes());
+        w.append_section(SECT_ORDINAL_RULES, &b.ordinal_bytes());
+        w.finish()
+    }
+
+    fn build_it() -> alloc::vec::Vec<u8> {
+        let mut b = PluralSectionBuilder::new();
+        builder::italian_cardinals(&mut b);
+        builder::italian_ordinals(&mut b);
+        let mut w = ScudWriter::new(CAP_PLURAL, "44.1", Some("it"));
+        w.append_section(SECT_CARDINAL_RULES, &b.cardinal_bytes());
+        w.append_section(SECT_ORDINAL_RULES, &b.ordinal_bytes());
+        w.finish()
+    }
+
+    fn build_pt() -> alloc::vec::Vec<u8> {
+        let mut b = PluralSectionBuilder::new();
+        builder::portuguese_cardinals(&mut b);
+        builder::portuguese_ordinals(&mut b);
+        let mut w = ScudWriter::new(CAP_PLURAL, "44.1", Some("pt"));
+        w.append_section(SECT_CARDINAL_RULES, &b.cardinal_bytes());
+        w.append_section(SECT_ORDINAL_RULES, &b.ordinal_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn spanish_cardinals_have_one_many_other() {
+        let bytes = build_es();
+        let pack = PluralPack::from_scud_bytes(&bytes).unwrap();
+        let e = PluralEngine::new(vec![pack]);
+        assert_eq!(e.plural_cardinal(1.0, "es"), PluralCategory::One);
+        // Spanish uses n = 1, so decimal 1.0 also matches `one`.
+        assert_eq!(e.plural_cardinal(0.0, "es"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(2.0, "es"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(1_000_000.0, "es"), PluralCategory::Many);
+        assert_eq!(e.plural_cardinal(2_000_000.0, "es"), PluralCategory::Many);
+        // Non-million-multiple integers stay `other`.
+        assert_eq!(e.plural_cardinal(1_500_000.0, "es"), PluralCategory::Other);
+    }
+
+    #[test]
+    fn italian_cardinals_have_one_many_other_and_iv_shape() {
+        let bytes = build_it();
+        let pack = PluralPack::from_scud_bytes(&bytes).unwrap();
+        let e = PluralEngine::new(vec![pack]);
+        assert_eq!(e.plural_cardinal(1.0, "it"), PluralCategory::One);
+        assert_eq!(e.plural_cardinal(0.0, "it"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(2.0, "it"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(1_000_000.0, "it"), PluralCategory::Many);
+    }
+
+    #[test]
+    fn italian_ordinal_many_covers_8_11_80_800() {
+        let bytes = build_it();
+        let pack = PluralPack::from_scud_bytes(&bytes).unwrap();
+        let e = PluralEngine::new(vec![pack]);
+        for n in [8.0, 11.0, 80.0, 800.0] {
+            assert_eq!(e.plural_ordinal(n, "it"), PluralCategory::Many, "n={n}");
+        }
+        for n in [0.0, 1.0, 2.0, 7.0, 9.0, 10.0, 12.0, 79.0, 81.0, 800.5] {
+            assert_eq!(e.plural_ordinal(n, "it"), PluralCategory::Other, "n={n}");
+        }
+    }
+
+    #[test]
+    fn portuguese_cardinals_are_pt_pt_strict() {
+        let bytes = build_pt();
+        let pack = PluralPack::from_scud_bytes(&bytes).unwrap();
+        let e = PluralEngine::new(vec![pack]);
+        // pt-PT: `n = 1 and v = 0`. Integer 1 → one.
+        assert_eq!(e.plural_cardinal(1.0, "pt"), PluralCategory::One);
+        // 0 falls to other under pt-PT (unlike default `pt`).
+        assert_eq!(e.plural_cardinal(0.0, "pt"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(2.0, "pt"), PluralCategory::Other);
+        assert_eq!(e.plural_cardinal(1_000_000.0, "pt"), PluralCategory::Many);
+        // Fallback: pt-BR → pt.
+        assert_eq!(e.plural_cardinal(1.0, "pt-BR"), PluralCategory::One);
     }
 }
