@@ -1,0 +1,36 @@
+[package]
+name = "stringcheese-icu-datetime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Date/time-formatting capability of the StringCheese ICU alternative. Renders Gregorian dates, times, and combined date-times against CLDR short/medium/long/full patterns using per-locale data supplied through one or more `stringcheese-scud` datetime packs, and exposes the result through the `tegmentum:i18n-datetime@0.1.0` WIT world. Phase 4 of the WIT-i18n subsystem (docs/design/wit-i18n.md § 8.4)."
+categories = ["text-processing", "internationalization"]
+keywords = ["datetime", "icu", "cldr", "i18n", "unicode"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-scud/std"]
+# When enabled, the crate exposes the full datetime-engine API. Without
+# this feature the crate compiles down to the pack-descriptor types
+# alone.
+alloc = ["stringcheese-scud/alloc"]
+
+[dependencies]
+stringcheese-scud = { workspace = true }
+
+[dev-dependencies]
+# `wit-parser` provides a strong "the WIT file parses cleanly" gate
+# that does not need the wasm toolchain to be installed. Matches
+# the `stringcheese-icu-plural` / `stringcheese-icu-number` crates'
+# approach.
+wit-parser = "0.230"
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true

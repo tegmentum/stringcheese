@@ -72,6 +72,14 @@ plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
 # pack is under 100 bytes. Requires the number crate's `std`
 # feature — same rationale as `plural-scud`.
 number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
+# Ship the datetime-en.scud pack (WIT-i18n Phase 4 date/time-
+# formatting data for English). Adds a `datetime_data` module
+# exposing `DATETIME_EN_SCUD: &'static [u8]` and a helper for
+# constructing a `stringcheese_icu_datetime::DateTimePack`. Enabled
+# by default — the pack is roughly 300 bytes (patterns + month +
+# weekday + AM/PM + era names). Requires the datetime crate's
+# `std` feature — same rationale as `plural-scud`.
+datetime-scud = ["dep:stringcheese-icu-datetime", "stringcheese-icu-datetime/std"]
 # Enables the CLDR-tailored English collator backed by ICU4X's
 # implementation of the Unicode Collation Algorithm. Adds roughly
 # 40 KB of baked collation data plus the ICU4X collator, normalizer,
@@ -124,6 +132,11 @@ stringcheese-icu-plural = { workspace = true, optional = true }
 # small `NumberPack` constructor helper into the crate's public
 # surface.
 stringcheese-icu-number = { workspace = true, optional = true }
+# WIT-i18n date/time-formatting capability crate. Optional; only
+# pulled in when the `datetime-scud` feature is enabled — pulls a
+# small `DateTimePack` constructor helper into the crate's public
+# surface.
+stringcheese-icu-datetime = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the pack's data-driven surface (stopwords,

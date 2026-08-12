@@ -535,6 +535,22 @@ impl<'a> ScudFile<'a> {
         }
         NumberDataView::parse(self.body())
     }
+
+    /// Project the body as a date/time-formatting view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_DATETIME`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`DateTimeDataView`] borrows into this
+    /// [`ScudFile`]'s bytes.
+    pub fn as_datetime_data(&self) -> Result<DateTimeDataView<'a>, ScudError> {
+        if self.capability() != CAP_DATETIME {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_DATETIME,
+                got: self.capability(),
+            });
+        }
+        DateTimeDataView::parse(self.body())
+    }
 }
 
 /// Parse the outer file header (magic through the CLDR/locale
@@ -1553,6 +1569,240 @@ fn read_len_prefixed_str_u8(bytes: &[u8]) -> Option<(&str, &[u8])> {
 }
 
 // -----------------------------------------------------------------------
+// Date/time-formatting view
+// -----------------------------------------------------------------------
+
+/// Section id for the date-pattern table. Bytes `D` `t` `D` `p`.
+///
+/// Wire layout: exactly four consecutive `(u8 len, [u8; len] utf8)`
+/// records in `Short`, `Medium`, `Long`, `Full` order. Each string is
+/// a CLDR pattern using the standard token set (`y`, `yy`, `yyyy`,
+/// `M`, `MM`, `MMM`, `MMMM`, `d`, `dd`, `E`, `EEE`, `EEEE`, etc.).
+pub const SECT_DATE_PATTERNS: [u8; 4] = *b"DtDp";
+
+/// Section id for the time-pattern table. Bytes `D` `t` `T` `p`.
+///
+/// Wire layout: exactly four consecutive `(u8 len, [u8; len] utf8)`
+/// records in `Short`, `Medium`, `Long`, `Full` order. Each string is
+/// a CLDR pattern using `H`, `HH`, `h`, `hh`, `m`, `mm`, `s`, `ss`,
+/// `a`.
+pub const SECT_TIME_PATTERNS: [u8; 4] = *b"DtTp";
+
+/// Section id for the full month-name table. Bytes `D` `t` `M` `n`.
+///
+/// Wire layout: a `u16 count` prefix (always 12 for Gregorian)
+/// followed by 12 `(u8 len, [u8; len] utf8)` records ordered
+/// January .. December (index 1..=12; the reader keys by
+/// `month - 1`).
+pub const SECT_MONTH_NAMES: [u8; 4] = *b"DtMn";
+
+/// Section id for the abbreviated month-name table. Bytes `D` `t`
+/// `M` `a`. Same wire layout as [`SECT_MONTH_NAMES`].
+pub const SECT_MONTH_ABBR: [u8; 4] = *b"DtMa";
+
+/// Section id for the full weekday-name table. Bytes `D` `t` `W` `n`.
+///
+/// Wire layout: a `u16 count` prefix (always 7) followed by 7
+/// `(u8 len, [u8; len] utf8)` records ordered Sunday .. Saturday
+/// (index 0..=6, matching Zeller's-congruence output modulo the
+/// convention shift documented in `stringcheese-icu-datetime`'s
+/// docs).
+pub const SECT_WEEKDAY_NAMES: [u8; 4] = *b"DtWn";
+
+/// Section id for the abbreviated weekday-name table. Bytes `D` `t`
+/// `W` `a`. Same wire layout as [`SECT_WEEKDAY_NAMES`].
+pub const SECT_WEEKDAY_ABBR: [u8; 4] = *b"DtWa";
+
+/// Section id for the AM/PM markers. Bytes `D` `t` `A` `p`.
+///
+/// Wire layout: two consecutive `(u8 len, [u8; len] utf8)` records
+/// in AM, PM order.
+pub const SECT_AM_PM: [u8; 4] = *b"DtAp";
+
+/// Section id for the era-name table. Bytes `D` `t` `E` `r`.
+///
+/// Wire layout: two consecutive `(u8 len, [u8; len] utf8)` records
+/// in BC, AD order.
+pub const SECT_ERA_NAMES: [u8; 4] = *b"DtEr";
+
+/// The CLDR-standard length classes a date or time pattern can carry.
+///
+/// Matches the enum shipped in the WIT interface's `date-length` /
+/// `time-length` types. The wire encoding is `u8` (index into the
+/// 4-entry pattern table).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum DateTimeLength {
+    /// The shortest CLDR pattern (typically `M/d/y` or `HH:mm`).
+    Short = 0,
+    /// The default "medium" CLDR pattern (typically `MMM d, y`).
+    Medium = 1,
+    /// The verbose CLDR pattern (typically `MMMM d, y`).
+    Long = 2,
+    /// The most verbose CLDR pattern (typically `EEEE, MMMM d, y`).
+    Full = 3,
+}
+
+impl DateTimeLength {
+    /// The wire-encoded `u8` value (index into the pattern table).
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Round-trip a `u8` back into the typed enum.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Short),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Long),
+            3 => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
+/// Zero-copy view into a SCUD file's date/time-formatting body.
+///
+/// Every accessor decodes a fixed-shape record on demand from the
+/// underlying section bytes. Lookups are `O(n)` in the number of
+/// entries in the section (at most 12 for months, 7 for weekdays,
+/// 4 for pattern lengths); the sections are small enough that a
+/// linear walk is faster than a binary search's setup overhead.
+#[derive(Debug, Clone, Copy)]
+pub struct DateTimeDataView<'a> {
+    date_patterns: &'a [u8],
+    time_patterns: &'a [u8],
+    month_names: &'a [u8],
+    month_abbr: &'a [u8],
+    weekday_names: &'a [u8],
+    weekday_abbr: &'a [u8],
+    am_pm: &'a [u8],
+    era_names: &'a [u8],
+}
+
+impl<'a> DateTimeDataView<'a> {
+    /// Parse a date/time body into a section-projected view.
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            date_patterns: reader.find(SECT_DATE_PATTERNS)?.unwrap_or(&[]),
+            time_patterns: reader.find(SECT_TIME_PATTERNS)?.unwrap_or(&[]),
+            month_names: reader.find(SECT_MONTH_NAMES)?.unwrap_or(&[]),
+            month_abbr: reader.find(SECT_MONTH_ABBR)?.unwrap_or(&[]),
+            weekday_names: reader.find(SECT_WEEKDAY_NAMES)?.unwrap_or(&[]),
+            weekday_abbr: reader.find(SECT_WEEKDAY_ABBR)?.unwrap_or(&[]),
+            am_pm: reader.find(SECT_AM_PM)?.unwrap_or(&[]),
+            era_names: reader.find(SECT_ERA_NAMES)?.unwrap_or(&[]),
+        })
+    }
+
+    /// The date pattern at the given length, if the pack ships one.
+    #[must_use]
+    pub fn date_pattern(&self, length: DateTimeLength) -> Option<&'a str> {
+        nth_len_prefixed_str(self.date_patterns, length.as_u8() as usize)
+    }
+
+    /// The time pattern at the given length, if the pack ships one.
+    #[must_use]
+    pub fn time_pattern(&self, length: DateTimeLength) -> Option<&'a str> {
+        nth_len_prefixed_str(self.time_patterns, length.as_u8() as usize)
+    }
+
+    /// The full month name for `month` (1..=12), if the pack covers
+    /// it. Returns `None` for `0` or `> 12`.
+    #[must_use]
+    pub fn month_name(&self, month: u8) -> Option<&'a str> {
+        if month == 0 || month > 12 {
+            return None;
+        }
+        nth_counted_str(self.month_names, usize::from(month - 1))
+    }
+
+    /// The abbreviated month name for `month` (1..=12).
+    #[must_use]
+    pub fn month_abbreviation(&self, month: u8) -> Option<&'a str> {
+        if month == 0 || month > 12 {
+            return None;
+        }
+        nth_counted_str(self.month_abbr, usize::from(month - 1))
+    }
+
+    /// The full weekday name for `weekday` (0..=6, where 0 is Sunday
+    /// and 6 is Saturday — matching Zeller's congruence output shifted
+    /// so Sunday-first ordering is the wire convention).
+    #[must_use]
+    pub fn weekday_name(&self, weekday: u8) -> Option<&'a str> {
+        if weekday > 6 {
+            return None;
+        }
+        nth_counted_str(self.weekday_names, usize::from(weekday))
+    }
+
+    /// The abbreviated weekday name for `weekday` (0..=6).
+    #[must_use]
+    pub fn weekday_abbreviation(&self, weekday: u8) -> Option<&'a str> {
+        if weekday > 6 {
+            return None;
+        }
+        nth_counted_str(self.weekday_abbr, usize::from(weekday))
+    }
+
+    /// The AM marker (`"AM"` in most English packs).
+    #[must_use]
+    pub fn am(&self) -> Option<&'a str> {
+        nth_len_prefixed_str(self.am_pm, 0)
+    }
+
+    /// The PM marker (`"PM"` in most English packs).
+    #[must_use]
+    pub fn pm(&self) -> Option<&'a str> {
+        nth_len_prefixed_str(self.am_pm, 1)
+    }
+
+    /// The era name for BC (index 0).
+    #[must_use]
+    pub fn era_bc(&self) -> Option<&'a str> {
+        nth_len_prefixed_str(self.era_names, 0)
+    }
+
+    /// The era name for AD (index 1).
+    #[must_use]
+    pub fn era_ad(&self) -> Option<&'a str> {
+        nth_len_prefixed_str(self.era_names, 1)
+    }
+}
+
+/// Walk `n` consecutive `(u8 len, [u8; len] utf8)` records and return
+/// the string at index `idx`. Returns `None` on truncation, invalid
+/// UTF-8, or when `idx` runs past the end.
+fn nth_len_prefixed_str(bytes: &[u8], idx: usize) -> Option<&str> {
+    let mut cursor = bytes;
+    for i in 0..=idx {
+        let (s, rest) = read_len_prefixed_str_u8(cursor)?;
+        if i == idx {
+            return Some(s);
+        }
+        cursor = rest;
+    }
+    None
+}
+
+/// Like [`nth_len_prefixed_str`] but the section leads with a
+/// `u16 count` prefix.
+fn nth_counted_str(bytes: &[u8], idx: usize) -> Option<&str> {
+    if bytes.len() < 2 {
+        return None;
+    }
+    let count = usize::from(read_u16(&bytes[0..2]));
+    if idx >= count {
+        return None;
+    }
+    nth_len_prefixed_str(&bytes[2..], idx)
+}
+
+// -----------------------------------------------------------------------
 // Writer
 // -----------------------------------------------------------------------
 
@@ -2071,6 +2321,191 @@ fn write_len_prefixed_str_u8(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(&bytes[..usize::from(len)]);
 }
 
+/// Builds the byte-encoded sections that a date/time-formatting SCUD
+/// pack contains.
+///
+/// The builder collects patterns for the four CLDR length classes
+/// (`Short`, `Medium`, `Long`, `Full`) plus month / weekday / era /
+/// AM-PM name tables, and encodes each into a caller-selected SCUD
+/// section. Sections that no caller ever set write out as empty
+/// byte vectors, so a partially-populated pack round-trips through
+/// the reader as `None` for the missing accessors.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct DateTimeSectionBuilder {
+    date_patterns: [Option<alloc::string::String>; 4],
+    time_patterns: [Option<alloc::string::String>; 4],
+    month_names: Option<[alloc::string::String; 12]>,
+    month_abbr: Option<[alloc::string::String; 12]>,
+    weekday_names: Option<[alloc::string::String; 7]>,
+    weekday_abbr: Option<[alloc::string::String; 7]>,
+    am: Option<alloc::string::String>,
+    pm: Option<alloc::string::String>,
+    era_bc: Option<alloc::string::String>,
+    era_ad: Option<alloc::string::String>,
+}
+
+#[cfg(feature = "alloc")]
+impl DateTimeSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the date pattern for the given length. Overwrites any
+    /// previously-set pattern at that length.
+    pub fn set_date_pattern(&mut self, length: DateTimeLength, pattern: &str) {
+        self.date_patterns[usize::from(length.as_u8())] = Some(pattern.into());
+    }
+
+    /// Set the time pattern for the given length.
+    pub fn set_time_pattern(&mut self, length: DateTimeLength, pattern: &str) {
+        self.time_patterns[usize::from(length.as_u8())] = Some(pattern.into());
+    }
+
+    /// Set the full month-name table (January .. December).
+    pub fn set_month_names(&mut self, names: [&str; 12]) {
+        self.month_names = Some(names.map(alloc::string::String::from));
+    }
+
+    /// Set the abbreviated month-name table (Jan .. Dec).
+    pub fn set_month_abbreviations(&mut self, names: [&str; 12]) {
+        self.month_abbr = Some(names.map(alloc::string::String::from));
+    }
+
+    /// Set the full weekday-name table (Sunday .. Saturday).
+    pub fn set_weekday_names(&mut self, names: [&str; 7]) {
+        self.weekday_names = Some(names.map(alloc::string::String::from));
+    }
+
+    /// Set the abbreviated weekday-name table (Sun .. Sat).
+    pub fn set_weekday_abbreviations(&mut self, names: [&str; 7]) {
+        self.weekday_abbr = Some(names.map(alloc::string::String::from));
+    }
+
+    /// Set the AM and PM markers.
+    pub fn set_am_pm(&mut self, am: &str, pm: &str) {
+        self.am = Some(am.into());
+        self.pm = Some(pm.into());
+    }
+
+    /// Set the BC and AD era names.
+    pub fn set_eras(&mut self, bc: &str, ad: &str) {
+        self.era_bc = Some(bc.into());
+        self.era_ad = Some(ad.into());
+    }
+
+    /// Encode the date-patterns section. Writes exactly four
+    /// consecutive length-prefixed strings — an unset length emits
+    /// an empty entry (`u8 0`) so the wire layout stays index-based.
+    /// Returns an empty `Vec` when no date patterns were set at all.
+    #[must_use]
+    pub fn date_patterns_bytes(&self) -> Vec<u8> {
+        if self.date_patterns.iter().all(Option::is_none) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for slot in &self.date_patterns {
+            let s = slot.as_deref().unwrap_or("");
+            write_len_prefixed_str_u8(&mut out, s);
+        }
+        out
+    }
+
+    /// Encode the time-patterns section. Same shape as
+    /// [`date_patterns_bytes`](Self::date_patterns_bytes).
+    #[must_use]
+    pub fn time_patterns_bytes(&self) -> Vec<u8> {
+        if self.time_patterns.iter().all(Option::is_none) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for slot in &self.time_patterns {
+            let s = slot.as_deref().unwrap_or("");
+            write_len_prefixed_str_u8(&mut out, s);
+        }
+        out
+    }
+
+    /// Encode the full month-name section. Returns an empty `Vec` if
+    /// [`set_month_names`](Self::set_month_names) was never called.
+    #[must_use]
+    pub fn month_names_bytes(&self) -> Vec<u8> {
+        encode_counted_strings_12(self.month_names.as_ref())
+    }
+
+    /// Encode the abbreviated month-name section.
+    #[must_use]
+    pub fn month_abbr_bytes(&self) -> Vec<u8> {
+        encode_counted_strings_12(self.month_abbr.as_ref())
+    }
+
+    /// Encode the full weekday-name section.
+    #[must_use]
+    pub fn weekday_names_bytes(&self) -> Vec<u8> {
+        encode_counted_strings_7(self.weekday_names.as_ref())
+    }
+
+    /// Encode the abbreviated weekday-name section.
+    #[must_use]
+    pub fn weekday_abbr_bytes(&self) -> Vec<u8> {
+        encode_counted_strings_7(self.weekday_abbr.as_ref())
+    }
+
+    /// Encode the AM/PM section as two consecutive length-prefixed
+    /// strings.
+    #[must_use]
+    pub fn am_pm_bytes(&self) -> Vec<u8> {
+        let (Some(am), Some(pm)) = (self.am.as_deref(), self.pm.as_deref()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        write_len_prefixed_str_u8(&mut out, am);
+        write_len_prefixed_str_u8(&mut out, pm);
+        out
+    }
+
+    /// Encode the era section as two consecutive length-prefixed
+    /// strings.
+    #[must_use]
+    pub fn era_names_bytes(&self) -> Vec<u8> {
+        let (Some(bc), Some(ad)) = (self.era_bc.as_deref(), self.era_ad.as_deref()) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        write_len_prefixed_str_u8(&mut out, bc);
+        write_len_prefixed_str_u8(&mut out, ad);
+        out
+    }
+}
+
+#[cfg(feature = "alloc")]
+fn encode_counted_strings_12(names: Option<&[alloc::string::String; 12]>) -> Vec<u8> {
+    let Some(names) = names else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    out.extend_from_slice(&12u16.to_le_bytes());
+    for n in names {
+        write_len_prefixed_str_u8(&mut out, n);
+    }
+    out
+}
+
+#[cfg(feature = "alloc")]
+fn encode_counted_strings_7(names: Option<&[alloc::string::String; 7]>) -> Vec<u8> {
+    let Some(names) = names else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    out.extend_from_slice(&7u16.to_le_bytes());
+    for n in names {
+        write_len_prefixed_str_u8(&mut out, n);
+    }
+    out
+}
+
 #[cfg(feature = "alloc")]
 fn encode_pair_table(pairs: &[(u32, u32)]) -> Vec<u8> {
     let mut sorted: Vec<(u32, u32)> = pairs.to_vec();
@@ -2443,6 +2878,109 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         assert!(matches!(
             file.as_number_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    fn build_test_datetime_en_pack() -> Vec<u8> {
+        let mut d = DateTimeSectionBuilder::new();
+        d.set_date_pattern(DateTimeLength::Short, "M/d/y");
+        d.set_date_pattern(DateTimeLength::Medium, "MMM d, y");
+        d.set_date_pattern(DateTimeLength::Long, "MMMM d, y");
+        d.set_date_pattern(DateTimeLength::Full, "EEEE, MMMM d, y");
+        d.set_time_pattern(DateTimeLength::Short, "h:mm a");
+        d.set_time_pattern(DateTimeLength::Medium, "h:mm:ss a");
+        d.set_time_pattern(DateTimeLength::Long, "h:mm:ss a");
+        d.set_time_pattern(DateTimeLength::Full, "h:mm:ss a");
+        d.set_month_names([
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ]);
+        d.set_month_abbreviations([
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ]);
+        d.set_weekday_names([
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+        ]);
+        d.set_weekday_abbreviations(["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+        d.set_am_pm("AM", "PM");
+        d.set_eras("BC", "AD");
+        let mut w = ScudWriter::new(CAP_DATETIME, "44.1", Some("en"));
+        w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+        w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+        w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+        w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+        w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+        w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+        w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+        w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn datetime_pack_round_trips() {
+        let bytes = build_test_datetime_en_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_DATETIME);
+        let view = file.as_datetime_data().unwrap();
+        assert_eq!(view.date_pattern(DateTimeLength::Short), Some("M/d/y"));
+        assert_eq!(view.date_pattern(DateTimeLength::Medium), Some("MMM d, y"));
+        assert_eq!(view.date_pattern(DateTimeLength::Long), Some("MMMM d, y"));
+        assert_eq!(
+            view.date_pattern(DateTimeLength::Full),
+            Some("EEEE, MMMM d, y")
+        );
+        assert_eq!(view.time_pattern(DateTimeLength::Short), Some("h:mm a"));
+        assert_eq!(view.month_name(1), Some("January"));
+        assert_eq!(view.month_name(12), Some("December"));
+        assert_eq!(view.month_abbreviation(3), Some("Mar"));
+        assert_eq!(view.month_name(0), None);
+        assert_eq!(view.month_name(13), None);
+        assert_eq!(view.weekday_name(0), Some("Sunday"));
+        assert_eq!(view.weekday_name(6), Some("Saturday"));
+        assert_eq!(view.weekday_abbreviation(1), Some("Mon"));
+        assert_eq!(view.weekday_name(7), None);
+        assert_eq!(view.am(), Some("AM"));
+        assert_eq!(view.pm(), Some("PM"));
+        assert_eq!(view.era_bc(), Some("BC"));
+        assert_eq!(view.era_ad(), Some("AD"));
+    }
+
+    #[test]
+    fn datetime_length_round_trips() {
+        for len in [
+            DateTimeLength::Short,
+            DateTimeLength::Medium,
+            DateTimeLength::Long,
+            DateTimeLength::Full,
+        ] {
+            assert_eq!(DateTimeLength::from_u8(len.as_u8()), Some(len));
+        }
+        assert_eq!(DateTimeLength::from_u8(9), None);
+    }
+
+    #[test]
+    fn as_datetime_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_datetime_data(),
             Err(ScudError::CapabilityMismatch { .. })
         ));
     }

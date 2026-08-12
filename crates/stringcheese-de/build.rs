@@ -22,9 +22,12 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{german_cardinals, german_ordinals};
 use stringcheese_scud::{
-    CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CollationSectionBuilder, NumberSectionBuilder,
-    PluralSectionBuilder, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE,
-    SECT_DECIMAL_PATTERN, SECT_EXPANSIONS, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, ScudWriter,
+    CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CollationSectionBuilder, DateTimeLength,
+    DateTimeSectionBuilder, NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM,
+    SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS,
+    SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS, SECT_MONTH_ABBR, SECT_MONTH_NAMES,
+    SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR,
+    SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -55,8 +58,92 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-de.scud");
+    let datetime_bytes = build_datetime_de_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed={rules}");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-de SCUD pack in memory.
+///
+/// German date/time formatting (CLDR 44.1, `gregorian.json`):
+///
+/// * Date patterns:
+///   * short — `dd.MM.y` (`22.09.2024`)
+///   * medium — `dd.MM.y` (`22.09.2024`; CLDR's German pack ships
+///     the same pattern at short and medium)
+///   * long — `d. MMMM y` (`22. September 2024`)
+///   * full — `EEEE, d. MMMM y` (`Sonntag, 22. September 2024`)
+/// * Time patterns (German uses 24-hour throughout, no am/pm):
+///   * short — `HH:mm` (`17:03`)
+///   * medium/long/full — `HH:mm:ss` (`17:03:04`)
+/// * Month + weekday names per CLDR German `gregorian.json`.
+/// * AM/PM markers: `AM`, `PM` — shipped for completeness (the
+///   patterns never emit the `a` token).
+/// * Era names: `v. Chr.`, `n. Chr.` (BC, AD in German CLDR).
+fn build_datetime_de_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "dd.MM.y");
+    d.set_date_pattern(DateTimeLength::Medium, "dd.MM.y");
+    d.set_date_pattern(DateTimeLength::Long, "d. MMMM y");
+    d.set_date_pattern(DateTimeLength::Full, "EEEE, d. MMMM y");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    d.set_month_names([
+        "Januar",
+        "Februar",
+        "M\u{00E4}rz",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+    ]);
+    d.set_month_abbreviations([
+        "Jan.",
+        "Feb.",
+        "M\u{00E4}rz",
+        "Apr.",
+        "Mai",
+        "Juni",
+        "Juli",
+        "Aug.",
+        "Sept.",
+        "Okt.",
+        "Nov.",
+        "Dez.",
+    ]);
+    d.set_weekday_names([
+        "Sonntag",
+        "Montag",
+        "Dienstag",
+        "Mittwoch",
+        "Donnerstag",
+        "Freitag",
+        "Samstag",
+    ]);
+    d.set_weekday_abbreviations(["So.", "Mo.", "Di.", "Mi.", "Do.", "Fr.", "Sa."]);
+    d.set_am_pm("AM", "PM");
+    d.set_eras("v. Chr.", "n. Chr.");
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("de"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-de SCUD pack in memory.
