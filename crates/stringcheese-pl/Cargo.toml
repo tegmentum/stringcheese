@@ -9,6 +9,15 @@ repository.workspace = true
 description = "Polish language pack for the StringCheese toolkit: ~280-word stopword list, light suffix-stripping Polish stemmer in the Snowball style (there is no widely-adopted reference `polish.sbl`; the module strips common nominal / adjectival / verbal / adverbial suffixes on `Vec<char>` indices with an RV floor), whitespace-and-punctuation tokenizer that treats every Polish letter (`ą ć ę ł ń ó ś ź ż`) as word-internal, and a PHONEX-Polish Soundex-shape phonetic encoder with Polish-tuned preprocessing (`sz→S`, `cz→C`, `rz→R`, `ó→u`, nasal `ą/ę → a/e`, `ż/ź` merge, `ń→N`, `ć→C`, `ś→S`, `ł→L`). Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["polish", "stemmer", "stopwords", "phonex", "phonetic"]
+build = "build.rs"
+
+# Ship the build.rs so downstream can regenerate SCUD packs against
+# the shipped rules.
+include = [
+    "build.rs",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -22,10 +31,34 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the plural-pl.scud pack (WIT-i18n Phase 3 plural-rule data
+# for Polish cardinals). Adds a `plural_data` module exposing
+# `PLURAL_PL_SCUD: &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_plural::PluralPack`. Enabled through `--features
+# plural-scud`; the pack is under 60 bytes. Requires the plural
+# crate's `std` feature because plural classification uses `f64::trunc`
+# / `f64::abs`.
+plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
+# Ship the number-pl.scud pack (WIT-i18n Phase 3 number-formatting
+# data for Polish). Adds a `number_data` module exposing
+# `NUMBER_PL_SCUD: &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_number::NumberPack`.
+number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+# WIT-i18n plural / number capability crates. Optional; pulled in
+# under the corresponding `-scud` features.
+stringcheese-icu-plural = { workspace = true, optional = true }
+stringcheese-icu-number = { workspace = true, optional = true }
+
+[build-dependencies]
+# Build-time codegen for the plural-pl / number-pl SCUD packs.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
+# Build-time re-use of the plural crate's `PluralRuleId` opcodes and
+# per-locale helper functions.
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 
