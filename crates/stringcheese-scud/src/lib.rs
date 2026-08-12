@@ -503,6 +503,38 @@ impl<'a> ScudFile<'a> {
         }
         CollationDataView::parse(self.body())
     }
+
+    /// Project the body as a plural-rules view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_PLURAL`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`PluralDataView`] borrows into this
+    /// [`ScudFile`]'s bytes.
+    pub fn as_plural_data(&self) -> Result<PluralDataView<'a>, ScudError> {
+        if self.capability() != CAP_PLURAL {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_PLURAL,
+                got: self.capability(),
+            });
+        }
+        PluralDataView::parse(self.body())
+    }
+
+    /// Project the body as a number-formatting view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_NUMBER`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`NumberDataView`] borrows into this
+    /// [`ScudFile`]'s bytes.
+    pub fn as_number_data(&self) -> Result<NumberDataView<'a>, ScudError> {
+        if self.capability() != CAP_NUMBER {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_NUMBER,
+                got: self.capability(),
+            });
+        }
+        NumberDataView::parse(self.body())
+    }
 }
 
 /// Parse the outer file header (magic through the CLDR/locale
@@ -1158,6 +1190,369 @@ impl<'a> CollationDataView<'a> {
 }
 
 // -----------------------------------------------------------------------
+// Plural-rules view
+// -----------------------------------------------------------------------
+
+/// Section id for the cardinal plural-rules table. Bytes `P` `l` `C` `a`.
+///
+/// Wire layout: a `u16 count` prefix followed by `count` fixed-width
+/// `(u8 category, u8 rule_id)` entries in the order the runtime should
+/// evaluate them. Rule ids are opaque to the loader — the algorithm
+/// crate interprets them against a hand-encoded predicate table.
+/// See [`PluralCategory`] for the category encoding.
+pub const SECT_CARDINAL_RULES: [u8; 4] = *b"PlCa";
+/// Section id for the ordinal plural-rules table. Same wire layout as
+/// [`SECT_CARDINAL_RULES`]. Bytes `P` `l` `O` `r`.
+pub const SECT_ORDINAL_RULES: [u8; 4] = *b"PlOr";
+
+/// CLDR plural categories per UTS #35 § 5. The wire encoding matches
+/// the order in which CLDR lists them so a `u8` round-trips through
+/// [`PluralCategory::from_u8`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum PluralCategory {
+    /// The `zero` category — used by Arabic, Latvian, and a handful of
+    /// other locales for `n == 0`.
+    Zero = 0,
+    /// The `one` category — the singular in most European languages.
+    One = 1,
+    /// The `two` category — used by Arabic, Hebrew, Welsh, etc.
+    Two = 2,
+    /// The `few` category — Slavic languages typically use this for
+    /// small-count paucals.
+    Few = 3,
+    /// The `many` category — used by French for large numbers and by
+    /// Polish/Russian/etc. for the "many" bucket.
+    Many = 4,
+    /// The `other` category — the fallback bucket every locale
+    /// defines.
+    Other = 5,
+}
+
+impl PluralCategory {
+    /// Round-trip a `u8` category back into the typed enum.
+    #[must_use]
+    pub fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Zero),
+            1 => Some(Self::One),
+            2 => Some(Self::Two),
+            3 => Some(Self::Few),
+            4 => Some(Self::Many),
+            5 => Some(Self::Other),
+            _ => None,
+        }
+    }
+
+    /// The wire-encoded `u8` value for this category.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// The CLDR string name of this category (`"zero"`, `"one"`,
+    /// `"two"`, `"few"`, `"many"`, `"other"`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Zero => "zero",
+            Self::One => "one",
+            Self::Two => "two",
+            Self::Few => "few",
+            Self::Many => "many",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Zero-copy view into a SCUD file's plural-rules body.
+///
+/// Every accessor is `O(1)` — cardinal and ordinal tables are looked
+/// up by iterating their small entry list (at most a few entries per
+/// locale). The runtime interprets each `(category, rule_id)` pair
+/// against a hand-encoded predicate table; the wire format keeps
+/// SCUD itself independent of the predicate implementation so a
+/// future format change to richer rule expressions is
+/// backwards-compatible.
+#[derive(Debug, Clone, Copy)]
+pub struct PluralDataView<'a> {
+    /// Ordered `(category, rule_id)` entries for cardinals.
+    cardinals: &'a [u8],
+    /// Ordered `(category, rule_id)` entries for ordinals.
+    ordinals: &'a [u8],
+}
+
+impl<'a> PluralDataView<'a> {
+    /// Parse a plural body into a section-projected view.
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            cardinals: reader.find(SECT_CARDINAL_RULES)?.unwrap_or(&[]),
+            ordinals: reader.find(SECT_ORDINAL_RULES)?.unwrap_or(&[]),
+        })
+    }
+
+    /// Iterate cardinal `(category, rule_id)` pairs in evaluation
+    /// order.
+    ///
+    /// The caller evaluates each rule against the operand tuple; the
+    /// first rule whose predicate matches wins. If no rule matches,
+    /// the caller returns [`PluralCategory::Other`].
+    pub fn cardinal_rules(&self) -> PluralRuleIter<'a> {
+        PluralRuleIter::from_section(self.cardinals)
+    }
+
+    /// Iterate ordinal `(category, rule_id)` pairs.
+    pub fn ordinal_rules(&self) -> PluralRuleIter<'a> {
+        PluralRuleIter::from_section(self.ordinals)
+    }
+
+    /// True iff the pack carries at least one cardinal rule.
+    #[must_use]
+    pub fn has_cardinal_rules(&self) -> bool {
+        self.cardinals.len() > 2
+    }
+
+    /// True iff the pack carries at least one ordinal rule.
+    #[must_use]
+    pub fn has_ordinal_rules(&self) -> bool {
+        self.ordinals.len() > 2
+    }
+}
+
+/// Iterator over the `(category, rule_id)` pairs in a plural-rules
+/// table. Cloneable but not `Copy` — same reasoning as
+/// [`SectionIter`].
+#[derive(Debug, Clone)]
+pub struct PluralRuleIter<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> PluralRuleIter<'a> {
+    /// Wrap a section body (with its `u16 count` prefix) as an
+    /// iterator over its `(category, rule_id)` pairs.
+    fn from_section(bytes: &'a [u8]) -> Self {
+        // Skip the count prefix; the iterator drives from the
+        // remaining `(u8, u8)` pairs.
+        let remaining = if bytes.len() >= 2 { &bytes[2..] } else { &[] };
+        Self { remaining }
+    }
+}
+
+impl Iterator for PluralRuleIter<'_> {
+    type Item = (PluralCategory, u8);
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.remaining.len() >= 2 {
+            let cat_raw = self.remaining[0];
+            let rule_id = self.remaining[1];
+            self.remaining = &self.remaining[2..];
+            if let Some(cat) = PluralCategory::from_u8(cat_raw) {
+                return Some((cat, rule_id));
+            }
+        }
+        None
+    }
+}
+
+// -----------------------------------------------------------------------
+// Number-formatting view
+// -----------------------------------------------------------------------
+
+/// Section id for the decimal formatting patterns table. Bytes `N` `m` `D` `p`.
+///
+/// Wire layout: a fixed 8-byte record of `(u8 group_separator_len,
+/// [u8; up to 4] group_separator, u8 decimal_separator_len, [u8; up
+/// to 4] decimal_separator, u8 min_fraction, u8 max_fraction, u8
+/// primary_grouping, u8 secondary_grouping)`. The separators are
+/// UTF-8 bytes (up to 4 each) so a wide code point like NBSP (2 UTF-8
+/// bytes) or FIGURE SPACE (3 UTF-8 bytes) fits. Practically every
+/// CLDR default separator is 1-3 UTF-8 bytes.
+pub const SECT_DECIMAL_PATTERN: [u8; 4] = *b"NmDp";
+
+/// Section id for the currency-symbol / format table. Bytes `N` `m` `C` `y`.
+///
+/// Wire layout: a `u16 count` prefix followed by `count` records
+/// of `(u8 code_len, [u8; code_len] iso_code, u8 symbol_len, [u8;
+/// symbol_len] symbol_utf8, u8 pattern_flags)`. `pattern_flags`
+/// encodes the currency-symbol placement (bit 0: 1 = after value; 0 =
+/// before) and the whether a space separates them (bit 1: 1 = yes;
+/// 0 = no).
+pub const SECT_CURRENCY_TABLE: [u8; 4] = *b"NmCy";
+
+/// Section id for the percent-format pattern. Bytes `N` `m` `P` `c`.
+///
+/// Wire layout: `(u8 symbol_len, [u8; symbol_len] symbol_utf8, u8
+/// pattern_flags)` where `pattern_flags` encodes placement (bit 0)
+/// and space (bit 1) like [`SECT_CURRENCY_TABLE`].
+pub const SECT_PERCENT_PATTERN: [u8; 4] = *b"NmPc";
+
+/// Zero-copy view into a SCUD file's number-formatting body.
+///
+/// Every accessor decodes a fixed-shape record on demand from the
+/// underlying section bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct NumberDataView<'a> {
+    decimal: &'a [u8],
+    currency: &'a [u8],
+    percent: &'a [u8],
+}
+
+/// A decoded decimal formatting pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecimalPattern<'a> {
+    /// Group (thousands) separator, UTF-8 encoded.
+    pub group_separator: &'a str,
+    /// Decimal separator, UTF-8 encoded.
+    pub decimal_separator: &'a str,
+    /// Minimum fraction digits to render.
+    pub min_fraction: u8,
+    /// Maximum fraction digits to render.
+    pub max_fraction: u8,
+    /// Primary grouping (digits between the decimal point and the
+    /// first group separator). Typically 3.
+    pub primary_grouping: u8,
+    /// Secondary grouping (digits between subsequent separators).
+    /// Typically 3; 2 in Indian numbering.
+    pub secondary_grouping: u8,
+}
+
+/// A decoded currency-symbol record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CurrencyRecord<'a> {
+    /// ISO 4217 currency code (`"USD"`, `"EUR"`, `"GBP"`).
+    pub iso_code: &'a str,
+    /// The localised currency symbol, UTF-8 encoded.
+    pub symbol: &'a str,
+    /// True when the symbol appears after the value (`"1,00 €"`
+    /// rather than `"$1.00"`).
+    pub symbol_after: bool,
+    /// True when a space separates the value from the symbol.
+    pub symbol_spaced: bool,
+}
+
+/// A decoded percent-format record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PercentPattern<'a> {
+    /// The percent symbol, UTF-8 encoded (`"%"` in most locales;
+    /// `"٪"` for the Arabic-Indic system).
+    pub symbol: &'a str,
+    /// True when the symbol appears after the value.
+    pub symbol_after: bool,
+    /// True when a space separates the value from the symbol.
+    pub symbol_spaced: bool,
+}
+
+impl<'a> NumberDataView<'a> {
+    /// Parse a number body into a section-projected view.
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            decimal: reader.find(SECT_DECIMAL_PATTERN)?.unwrap_or(&[]),
+            currency: reader.find(SECT_CURRENCY_TABLE)?.unwrap_or(&[]),
+            percent: reader.find(SECT_PERCENT_PATTERN)?.unwrap_or(&[]),
+        })
+    }
+
+    /// Decode the pack's decimal formatting pattern. Returns `None`
+    /// if the pack ships no decimal pattern.
+    #[must_use]
+    pub fn decimal_pattern(&self) -> Option<DecimalPattern<'a>> {
+        let bytes = self.decimal;
+        let (group, rest) = read_len_prefixed_str_u8(bytes)?;
+        let (decimal, rest) = read_len_prefixed_str_u8(rest)?;
+        if rest.len() < 4 {
+            return None;
+        }
+        Some(DecimalPattern {
+            group_separator: group,
+            decimal_separator: decimal,
+            min_fraction: rest[0],
+            max_fraction: rest[1],
+            primary_grouping: rest[2],
+            secondary_grouping: rest[3],
+        })
+    }
+
+    /// Look up a currency record by ISO 4217 code (`"USD"`, `"EUR"`,
+    /// `"JPY"`). Returns `None` when the pack ships no entry.
+    #[must_use]
+    pub fn currency(&self, iso_code: &str) -> Option<CurrencyRecord<'a>> {
+        self.iter_currencies()
+            .find(|record| record.iso_code == iso_code)
+    }
+
+    /// Iterate every currency record in the pack.
+    pub fn iter_currencies(&self) -> CurrencyIter<'a> {
+        // Skip the u16 count prefix; the iterator drives from the
+        // remaining bytes.
+        let remaining = if self.currency.len() >= 2 {
+            &self.currency[2..]
+        } else {
+            &[]
+        };
+        CurrencyIter { remaining }
+    }
+
+    /// Decode the pack's percent-format pattern.
+    #[must_use]
+    pub fn percent_pattern(&self) -> Option<PercentPattern<'a>> {
+        let bytes = self.percent;
+        let (symbol, rest) = read_len_prefixed_str_u8(bytes)?;
+        if rest.is_empty() {
+            return None;
+        }
+        let flags = rest[0];
+        Some(PercentPattern {
+            symbol,
+            symbol_after: (flags & 0x01) != 0,
+            symbol_spaced: (flags & 0x02) != 0,
+        })
+    }
+}
+
+/// Iterator over the currency records in a [`NumberDataView`].
+///
+/// Cloneable but not `Copy` — same reasoning as [`SectionIter`].
+#[derive(Debug, Clone)]
+pub struct CurrencyIter<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> Iterator for CurrencyIter<'a> {
+    type Item = CurrencyRecord<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let (code, rest) = read_len_prefixed_str_u8(self.remaining)?;
+        let (symbol, rest) = read_len_prefixed_str_u8(rest)?;
+        if rest.is_empty() {
+            self.remaining = &[];
+            return None;
+        }
+        let flags = rest[0];
+        self.remaining = &rest[1..];
+        Some(CurrencyRecord {
+            iso_code: code,
+            symbol,
+            symbol_after: (flags & 0x01) != 0,
+            symbol_spaced: (flags & 0x02) != 0,
+        })
+    }
+}
+
+/// Read a `(u8 len, [u8; len])` UTF-8 string from `bytes`. Returns
+/// `None` on truncation or invalid UTF-8.
+fn read_len_prefixed_str_u8(bytes: &[u8]) -> Option<(&str, &[u8])> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let len = usize::from(bytes[0]);
+    if bytes.len() < 1 + len {
+        return None;
+    }
+    let s = core::str::from_utf8(&bytes[1..=len]).ok()?;
+    Some((s, &bytes[1 + len..]))
+}
+
+// -----------------------------------------------------------------------
 // Writer
 // -----------------------------------------------------------------------
 
@@ -1454,6 +1849,228 @@ impl CollationSectionBuilder {
     }
 }
 
+/// Builds the byte-encoded sections that a plural-rules SCUD pack
+/// contains. Preserves push order so the algorithm crate can drive
+/// evaluation in CLDR-listed order (`zero → one → two → few → many
+/// → other`, with locale-specific reordering allowed).
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct PluralSectionBuilder {
+    cardinals: Vec<(PluralCategory, u8)>,
+    ordinals: Vec<(PluralCategory, u8)>,
+}
+
+#[cfg(feature = "alloc")]
+impl PluralSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a cardinal `(category, rule_id)` entry.
+    pub fn push_cardinal(&mut self, category: PluralCategory, rule_id: u8) {
+        self.cardinals.push((category, rule_id));
+    }
+
+    /// Push an ordinal `(category, rule_id)` entry.
+    pub fn push_ordinal(&mut self, category: PluralCategory, rule_id: u8) {
+        self.ordinals.push((category, rule_id));
+    }
+
+    /// Encode the cardinal-rules table as SCUD-format bytes.
+    #[must_use]
+    pub fn cardinal_bytes(&self) -> Vec<u8> {
+        encode_plural_table(&self.cardinals)
+    }
+
+    /// Encode the ordinal-rules table as SCUD-format bytes.
+    #[must_use]
+    pub fn ordinal_bytes(&self) -> Vec<u8> {
+        encode_plural_table(&self.ordinals)
+    }
+}
+
+#[cfg(feature = "alloc")]
+fn encode_plural_table(entries: &[(PluralCategory, u8)]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + entries.len() * 2);
+    let count = u16::try_from(entries.len()).unwrap_or(u16::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for (cat, rule) in entries {
+        out.push(cat.as_u8());
+        out.push(*rule);
+    }
+    out
+}
+
+/// Builds the byte-encoded sections that a number-formatting SCUD
+/// pack contains.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct NumberSectionBuilder {
+    decimal: Option<DecimalPatternOwned>,
+    currencies: Vec<CurrencyRecordOwned>,
+    percent: Option<PercentPatternOwned>,
+}
+
+/// Owned form of [`DecimalPattern`], used by [`NumberSectionBuilder`]
+/// at build time.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+struct DecimalPatternOwned {
+    group_separator: alloc::string::String,
+    decimal_separator: alloc::string::String,
+    min_fraction: u8,
+    max_fraction: u8,
+    primary_grouping: u8,
+    secondary_grouping: u8,
+}
+
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+struct CurrencyRecordOwned {
+    iso_code: alloc::string::String,
+    symbol: alloc::string::String,
+    symbol_after: bool,
+    symbol_spaced: bool,
+}
+
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+struct PercentPatternOwned {
+    symbol: alloc::string::String,
+    symbol_after: bool,
+    symbol_spaced: bool,
+}
+
+#[cfg(feature = "alloc")]
+impl NumberSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the pack's decimal formatting pattern.
+    ///
+    /// `group_separator` and `decimal_separator` are stored as UTF-8
+    /// bytes; each must fit in 255 bytes (the on-wire length is
+    /// `u8`), which is more than any realistic separator needs.
+    pub fn set_decimal_pattern(
+        &mut self,
+        group_separator: &str,
+        decimal_separator: &str,
+        min_fraction: u8,
+        max_fraction: u8,
+        primary_grouping: u8,
+        secondary_grouping: u8,
+    ) {
+        self.decimal = Some(DecimalPatternOwned {
+            group_separator: group_separator.into(),
+            decimal_separator: decimal_separator.into(),
+            min_fraction,
+            max_fraction,
+            primary_grouping,
+            secondary_grouping,
+        });
+    }
+
+    /// Add a currency record.
+    pub fn push_currency(
+        &mut self,
+        iso_code: &str,
+        symbol: &str,
+        symbol_after: bool,
+        symbol_spaced: bool,
+    ) {
+        self.currencies.push(CurrencyRecordOwned {
+            iso_code: iso_code.into(),
+            symbol: symbol.into(),
+            symbol_after,
+            symbol_spaced,
+        });
+    }
+
+    /// Set the pack's percent format.
+    pub fn set_percent(&mut self, symbol: &str, symbol_after: bool, symbol_spaced: bool) {
+        self.percent = Some(PercentPatternOwned {
+            symbol: symbol.into(),
+            symbol_after,
+            symbol_spaced,
+        });
+    }
+
+    /// Encode the decimal pattern section. Returns an empty `Vec` if
+    /// no pattern was set.
+    #[must_use]
+    pub fn decimal_bytes(&self) -> Vec<u8> {
+        let Some(d) = &self.decimal else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        write_len_prefixed_str_u8(&mut out, &d.group_separator);
+        write_len_prefixed_str_u8(&mut out, &d.decimal_separator);
+        out.push(d.min_fraction);
+        out.push(d.max_fraction);
+        out.push(d.primary_grouping);
+        out.push(d.secondary_grouping);
+        out
+    }
+
+    /// Encode the currency table section. Returns an empty `Vec` if
+    /// no currencies were pushed.
+    #[must_use]
+    pub fn currency_bytes(&self) -> Vec<u8> {
+        if self.currencies.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let count = u16::try_from(self.currencies.len()).unwrap_or(u16::MAX);
+        out.extend_from_slice(&count.to_le_bytes());
+        for c in &self.currencies {
+            write_len_prefixed_str_u8(&mut out, &c.iso_code);
+            write_len_prefixed_str_u8(&mut out, &c.symbol);
+            let mut flags: u8 = 0;
+            if c.symbol_after {
+                flags |= 0x01;
+            }
+            if c.symbol_spaced {
+                flags |= 0x02;
+            }
+            out.push(flags);
+        }
+        out
+    }
+
+    /// Encode the percent-format section. Returns an empty `Vec` if
+    /// no percent format was set.
+    #[must_use]
+    pub fn percent_bytes(&self) -> Vec<u8> {
+        let Some(p) = &self.percent else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        write_len_prefixed_str_u8(&mut out, &p.symbol);
+        let mut flags: u8 = 0;
+        if p.symbol_after {
+            flags |= 0x01;
+        }
+        if p.symbol_spaced {
+            flags |= 0x02;
+        }
+        out.push(flags);
+        out
+    }
+}
+
+#[cfg(feature = "alloc")]
+fn write_len_prefixed_str_u8(out: &mut Vec<u8>, s: &str) {
+    let bytes = s.as_bytes();
+    let len = u8::try_from(bytes.len()).unwrap_or(u8::MAX);
+    out.push(len);
+    out.extend_from_slice(&bytes[..usize::from(len)]);
+}
+
 #[cfg(feature = "alloc")]
 fn encode_pair_table(pairs: &[(u32, u32)]) -> Vec<u8> {
     let mut sorted: Vec<(u32, u32)> = pairs.to_vec();
@@ -1713,6 +2330,119 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         assert!(matches!(
             file.as_collation_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    fn build_test_plural_en_pack() -> Vec<u8> {
+        let mut p = PluralSectionBuilder::new();
+        // English cardinals: `one` when i == 1 && v == 0, else other.
+        p.push_cardinal(PluralCategory::One, 1);
+        // English ordinals: one (n % 10 == 1 && n % 100 != 11),
+        //                   two (n % 10 == 2 && n % 100 != 12),
+        //                   few (n % 10 == 3 && n % 100 != 13),
+        //                   other otherwise.
+        p.push_ordinal(PluralCategory::One, 10);
+        p.push_ordinal(PluralCategory::Two, 11);
+        p.push_ordinal(PluralCategory::Few, 12);
+        let mut w = ScudWriter::new(CAP_PLURAL, "44.1", Some("en"));
+        w.append_section(SECT_CARDINAL_RULES, &p.cardinal_bytes());
+        w.append_section(SECT_ORDINAL_RULES, &p.ordinal_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn plural_pack_round_trips() {
+        let bytes = build_test_plural_en_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_PLURAL);
+        assert_eq!(file.locale(), Some("en"));
+        let view = file.as_plural_data().unwrap();
+        let cardinals: Vec<_> = view.cardinal_rules().collect();
+        assert_eq!(cardinals, alloc::vec![(PluralCategory::One, 1)]);
+        let ordinals: Vec<_> = view.ordinal_rules().collect();
+        assert_eq!(
+            ordinals,
+            alloc::vec![
+                (PluralCategory::One, 10),
+                (PluralCategory::Two, 11),
+                (PluralCategory::Few, 12),
+            ]
+        );
+        assert!(view.has_cardinal_rules());
+        assert!(view.has_ordinal_rules());
+    }
+
+    #[test]
+    fn plural_category_round_trips() {
+        for c in [
+            PluralCategory::Zero,
+            PluralCategory::One,
+            PluralCategory::Two,
+            PluralCategory::Few,
+            PluralCategory::Many,
+            PluralCategory::Other,
+        ] {
+            assert_eq!(PluralCategory::from_u8(c.as_u8()), Some(c));
+        }
+        assert_eq!(PluralCategory::from_u8(99), None);
+    }
+
+    fn build_test_number_en_pack() -> Vec<u8> {
+        let mut n = NumberSectionBuilder::new();
+        n.set_decimal_pattern(",", ".", 0, 3, 3, 3);
+        n.push_currency("USD", "$", false, false);
+        n.push_currency("EUR", "\u{20AC}", true, true);
+        n.set_percent("%", true, false);
+        let mut w = ScudWriter::new(CAP_NUMBER, "44.1", Some("en"));
+        w.append_section(SECT_DECIMAL_PATTERN, &n.decimal_bytes());
+        w.append_section(SECT_CURRENCY_TABLE, &n.currency_bytes());
+        w.append_section(SECT_PERCENT_PATTERN, &n.percent_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn number_pack_round_trips() {
+        let bytes = build_test_number_en_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_NUMBER);
+        let view = file.as_number_data().unwrap();
+        let d = view.decimal_pattern().unwrap();
+        assert_eq!(d.group_separator, ",");
+        assert_eq!(d.decimal_separator, ".");
+        assert_eq!(d.primary_grouping, 3);
+        assert_eq!(d.secondary_grouping, 3);
+        assert_eq!(d.max_fraction, 3);
+        let usd = view.currency("USD").unwrap();
+        assert_eq!(usd.symbol, "$");
+        assert!(!usd.symbol_after);
+        assert!(!usd.symbol_spaced);
+        let eur = view.currency("EUR").unwrap();
+        assert_eq!(eur.symbol, "\u{20AC}");
+        assert!(eur.symbol_after);
+        assert!(eur.symbol_spaced);
+        assert!(view.currency("XXX").is_none());
+        let p = view.percent_pattern().unwrap();
+        assert_eq!(p.symbol, "%");
+        assert!(p.symbol_after);
+    }
+
+    #[test]
+    fn as_plural_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_plural_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn as_number_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_number_data(),
             Err(ScudError::CapabilityMismatch { .. })
         ));
     }

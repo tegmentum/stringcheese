@@ -9,6 +9,14 @@ repository.workspace = true
 description = "French language pack for the StringCheese toolkit: ~200-word stopword list, Snowball French stemmer, elision-aware tokenizer, and PHONEX phonetic hookup. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["french", "stemmer", "snowball", "stopwords", "phonex"]
+build = "build.rs"
+
+# Ship the build.rs so downstream can regenerate SCUD packs.
+include = [
+    "build.rs",
+    "src/**/*.rs",
+    "Cargo.toml",
+]
 
 [features]
 default = ["std"]
@@ -22,10 +30,32 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the plural-fr.scud pack (WIT-i18n Phase 3 plural-rule data
+# for French). Adds a `plural_data` module exposing `PLURAL_FR_SCUD:
+# &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_plural::PluralPack`. Requires the plural crate's
+# `std` feature because plural classification uses `f64::trunc` /
+# `f64::abs`.
+plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
+# Ship the number-fr.scud pack (WIT-i18n Phase 3 number-formatting
+# data for French). Adds a `number_data` module exposing
+# `NUMBER_FR_SCUD: &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_number::NumberPack`.
+number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+# WIT-i18n plural / number capability crates. Optional; pulled in
+# under the corresponding `-scud` features.
+stringcheese-icu-plural = { workspace = true, optional = true }
+stringcheese-icu-number = { workspace = true, optional = true }
+
+[build-dependencies]
+# Build-time codegen for the plural-fr / number-fr SCUD packs.
+stringcheese-scud = { workspace = true, features = ["alloc"] }
+# Build-time re-use of plural predicate opcodes and helpers.
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

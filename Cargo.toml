@@ -87,6 +87,8 @@ members = [
     "crates/stringcheese-icu-case-component",
     "crates/stringcheese-icu-collation",
     "crates/stringcheese-icu-collation-component",
+    "crates/stringcheese-icu-plural",
+    "crates/stringcheese-icu-number",
 ]
 exclude = [
     "fuzz",
@@ -232,6 +234,8 @@ stringcheese-icu-case = { version = "0.1.0", path = "crates/stringcheese-icu-cas
 stringcheese-icu-case-component = { version = "0.1.0", path = "crates/stringcheese-icu-case-component", default-features = false }
 stringcheese-icu-collation = { version = "0.1.0", path = "crates/stringcheese-icu-collation", default-features = false }
 stringcheese-icu-collation-component = { version = "0.1.0", path = "crates/stringcheese-icu-collation-component", default-features = false }
+stringcheese-icu-plural = { version = "0.1.0", path = "crates/stringcheese-icu-plural", default-features = false }
+stringcheese-icu-number = { version = "0.1.0", path = "crates/stringcheese-icu-number", default-features = false }
 
 [profile.release]
 lto = "thin"

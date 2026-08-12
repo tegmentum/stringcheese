@@ -130,8 +130,12 @@ pub use generated::CAPABILITIES;
 pub mod collation_data;
 #[cfg(feature = "alloc")]
 pub mod collator;
+#[cfg(feature = "number-scud")]
+pub mod number_data;
 #[cfg(feature = "alloc")]
 pub mod phonetic;
+#[cfg(feature = "plural-scud")]
+pub mod plural_data;
 #[cfg(feature = "alloc")]
 pub mod snowball;
 pub mod stopwords;

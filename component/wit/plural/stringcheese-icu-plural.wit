@@ -1,0 +1,96 @@
+// StringCheese ICU alternative — plural-rules capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the plural-classification surface: given a
+// number and a locale, return the CLDR plural category the number
+// falls into. See `docs/design/wit-i18n.md` § 2.3 for the design
+// commentary and § 8.3 for Phase 3's delivery notes.
+//
+// The interface follows the tegmentum:i18n-* shape used by the
+// case-mapping and collation packages: a small set of interfaces,
+// a `capabilities` interface for introspection, and a `world`
+// binding them together.
+//
+// The algorithm side of the plural capability (the wasm component
+// that exports this world) contains no locale data — it consumes
+// plural-data from a language-pack component. See § 3.2 of the
+// design doc for the composition story.
+
+package tegmentum:i18n-plural@0.1.0;
+
+/// Shared types. Split into its own interface so the `plural` and
+/// `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "pt-BR", "zh-Hant-HK", "ar-EG".
+    /// The empty string denotes the CLDR root locale.
+    type locale = string;
+
+    /// CLDR plural categories per UTS #35 § 5. Every locale
+    /// defines `other`; the remaining categories are opt-in per
+    /// locale.
+    enum plural-category {
+        /// Used by Arabic, Latvian, and a handful of other locales
+        /// for `n == 0`.
+        zero,
+        /// The singular in most European languages.
+        one,
+        /// Used by Arabic, Hebrew, Welsh, etc. for `n == 2`.
+        two,
+        /// Small-count paucal (Slavic 2-4, etc.).
+        few,
+        /// Large-count bucket (French, Russian, Polish, etc.).
+        many,
+        /// The fallback bucket every locale defines.
+        other,
+    }
+
+    /// Errors surfaced by the plural interface. Plural
+    /// classification is total on valid input; failure modes are
+    /// structural.
+    variant plural-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        invalid-locale(string),
+        /// No pack was loaded for the requested locale and no
+        /// fallback in the CLDR chain resolved.
+        locale-unavailable(string),
+    }
+}
+
+/// The core plural-classification surface. Passing locale `""`
+/// requests the CLDR root locale (English-like `one`/`other`).
+interface plural {
+    use types.{locale, plural-category, plural-error};
+
+    /// Classify `n` as a cardinal number under the given locale.
+    ///
+    /// Returns the CLDR category the number falls into. A locale
+    /// without a specialised plural pack falls through to root
+    /// (English-like `one`/`other`).
+    plural-cardinal: func(n: f64, locale: locale) -> result<plural-category, plural-error>;
+
+    /// Classify `n` as an ordinal number under the given locale.
+    ///
+    /// English distinguishes `one` (1st, 21st), `two` (2nd), `few`
+    /// (3rd); most locales are `other` for every ordinal.
+    plural-ordinal: func(n: f64, locale: locale) -> result<plural-category, plural-error>;
+}
+
+/// Introspection: which locales does the linked component actually
+/// cover?
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a pack
+    /// (rather than falling through to root).
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every plural component exports.
+world plural-world {
+    export types;
+    export plural;
+    export capabilities;
+}

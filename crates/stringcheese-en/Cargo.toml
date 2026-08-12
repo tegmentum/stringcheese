@@ -57,6 +57,21 @@ case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
 # because the workspace declares `default-features = false` on the
 # workspace dep.
 collation-scud = ["dep:stringcheese-icu-collation", "stringcheese-icu-collation/alloc"]
+# Ship the plural-en.scud pack (WIT-i18n Phase 3 plural-rule data
+# for English cardinals and ordinals). Adds a `plural_data` module
+# exposing `PLURAL_EN_SCUD: &'static [u8]` and a helper for
+# constructing a `stringcheese_icu_plural::PluralPack`. Enabled by
+# default — the pack is under 30 bytes. Requires the plural
+# crate's `std` feature because plural classification uses `f64`
+# transcendental methods (`trunc`, `abs`) that only exist on std.
+plural-scud = ["dep:stringcheese-icu-plural", "stringcheese-icu-plural/std"]
+# Ship the number-en.scud pack (WIT-i18n Phase 3 number-formatting
+# data for English). Adds a `number_data` module exposing
+# `NUMBER_EN_SCUD: &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_number::NumberPack`. Enabled by default — the
+# pack is under 100 bytes. Requires the number crate's `std`
+# feature — same rationale as `plural-scud`.
+number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 # Enables the CLDR-tailored English collator backed by ICU4X's
 # implementation of the Unicode Collation Algorithm. Adds roughly
 # 40 KB of baked collation data plus the ICU4X collator, normalizer,
@@ -100,6 +115,15 @@ stringcheese-icu-case = { workspace = true, optional = true }
 # so downstream users can hand the SCUD blob to a `CollationEngine`
 # without reaching for `stringcheese-icu-collation` directly.
 stringcheese-icu-collation = { workspace = true, optional = true }
+# WIT-i18n plural-rules capability crate. Optional; only pulled in
+# when the `plural-scud` feature is enabled — pulls a small
+# `PluralPack` constructor helper into the crate's public surface.
+stringcheese-icu-plural = { workspace = true, optional = true }
+# WIT-i18n number-formatting capability crate. Optional; only
+# pulled in when the `number-scud` feature is enabled — pulls a
+# small `NumberPack` constructor helper into the crate's public
+# surface.
+stringcheese-icu-number = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the pack's data-driven surface (stopwords,
@@ -114,6 +138,14 @@ stringcheese-lang-gen = { workspace = true }
 # during codegen — the shipped binary contains only the encoded
 # blob, not the writer machinery.
 stringcheese-scud = { workspace = true, features = ["alloc"] }
+# Build-time re-use of the plural crate's PluralRuleId opcodes and
+# per-locale helper functions (avoids re-encoding rule ids by
+# their raw u8 in every language pack). Runtime dep is separately
+# gated behind the `plural-scud` feature. Uses `std` here because
+# build.rs always runs on the host with std available; downstream
+# (runtime) callers still control std/no-std via the `plural-scud`
+# feature's transitive deps.
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 

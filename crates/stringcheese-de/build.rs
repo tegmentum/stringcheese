@@ -20,8 +20,11 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+use stringcheese_icu_plural::builder::{german_cardinals, german_ordinals};
 use stringcheese_scud::{
-    CAP_COLLATION, CollationSectionBuilder, SECT_COLLATION_OPTIONS, SECT_EXPANSIONS, ScudWriter,
+    CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CollationSectionBuilder, NumberSectionBuilder,
+    PluralSectionBuilder, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE,
+    SECT_DECIMAL_PATTERN, SECT_EXPANSIONS, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -42,8 +45,59 @@ fn main() {
     fs::write(&collation_path, &collation_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", collation_path.display()));
 
+    let plural_path = out_dir.join("plural-de.scud");
+    let plural_bytes = build_plural_de_scud();
+    fs::write(&plural_path, &plural_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", plural_path.display()));
+
+    let number_path = out_dir.join("number-de.scud");
+    let number_bytes = build_number_de_scud();
+    fs::write(&number_path, &number_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
+
     println!("cargo:rerun-if-changed={rules}");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the plural-de SCUD pack in memory.
+///
+/// German plural rules (CLDR 44.1, `plurals.xml`):
+///
+/// * Cardinal `one` when `i = 1 and v = 0`, else `other`.
+/// * Ordinal: everything is `other` (German does not distinguish
+///   ordinal plural forms in CLDR).
+fn build_plural_de_scud() -> Vec<u8> {
+    let mut b = PluralSectionBuilder::new();
+    german_cardinals(&mut b);
+    german_ordinals(&mut b);
+    let mut w = ScudWriter::new(CAP_PLURAL, CLDR_VERSION, Some("de"));
+    w.append_section(SECT_CARDINAL_RULES, &b.cardinal_bytes());
+    w.append_section(SECT_ORDINAL_RULES, &b.ordinal_bytes());
+    w.finish()
+}
+
+/// Build the number-de SCUD pack in memory.
+///
+/// German number formatting (CLDR 44.1, `de.xml`):
+///
+/// * Group separator `.` (point!), decimal separator `,` (comma).
+/// * Decimal default: 0 min, 3 max fraction digits.
+/// * Percent: symbol `%` after the value with a space (`50 %`).
+/// * Currency: EUR `€`, USD `$`, GBP `£` all placed after the
+///   value with a space (`1.234,56 €`).
+fn build_number_de_scud() -> Vec<u8> {
+    let mut n = NumberSectionBuilder::new();
+    n.set_decimal_pattern(".", ",", 0, 3, 3, 3);
+    n.push_currency("EUR", "\u{20AC}", true, true);
+    n.push_currency("USD", "$", true, true);
+    n.push_currency("GBP", "\u{00A3}", true, true);
+    n.push_currency("CHF", "CHF", true, true);
+    n.set_percent("%", true, true);
+    let mut w = ScudWriter::new(CAP_NUMBER, CLDR_VERSION, Some("de"));
+    w.append_section(SECT_DECIMAL_PATTERN, &n.decimal_bytes());
+    w.append_section(SECT_CURRENCY_TABLE, &n.currency_bytes());
+    w.append_section(SECT_PERCENT_PATTERN, &n.percent_bytes());
+    w.finish()
 }
 
 /// Build the collation-de SCUD pack in memory.
