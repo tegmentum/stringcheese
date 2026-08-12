@@ -1,0 +1,114 @@
+// StringCheese ICU alternative — number-formatting capability.
+//
+// One of six WIT packages that make up the `stringcheese-icu-*`
+// family. This is the number-formatting surface: locale-sensitive
+// decimal, currency, and percent formatting per CLDR default
+// patterns. See `docs/design/wit-i18n.md` § 2.4 for the design
+// commentary and § 8.3 for Phase 3's delivery notes.
+//
+// The interface follows the tegmentum:i18n-* shape used by the
+// case-mapping and collation packages: a small set of interfaces,
+// a `capabilities` interface for introspection, and a `world`
+// binding them together.
+
+package tegmentum:i18n-number@0.1.0;
+
+/// Shared types. Split into its own interface so the `number` and
+/// `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "de", "fr", "pt-BR".
+    type locale = string;
+
+    /// ISO 4217 currency code: "USD", "EUR", "GBP", "JPY".
+    type currency-code = string;
+
+    /// Errors surfaced by the number-formatting interface. Number
+    /// formatting is total on finite input; failure modes are
+    /// structural or involve non-finite input.
+    variant number-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        invalid-locale(string),
+        /// No pack was loaded for the requested locale and no
+        /// fallback in the CLDR chain resolved.
+        locale-unavailable(string),
+        /// The requested currency code is not covered by the
+        /// pack.
+        unknown-currency(string),
+        /// The input was non-finite (`NaN`, `+Inf`, `-Inf`).
+        non-finite,
+    }
+
+    /// Optional formatting options that override CLDR defaults.
+    /// Every field is optional (encoded as a
+    /// `option<...>`); an absent field defers to the pack's
+    /// default.
+    record formatting-options {
+        /// Minimum fraction digits to render. Defaults to the
+        /// pack's `min-fraction`.
+        min-fraction: option<u8>,
+        /// Maximum fraction digits to render. Defaults to the
+        /// pack's `max-fraction`.
+        max-fraction: option<u8>,
+        /// Whether to use grouping (thousands) separators.
+        /// Defaults to true.
+        use-grouping: option<bool>,
+    }
+}
+
+/// The core number-formatting surface.
+interface number {
+    use types.{locale, currency-code, formatting-options, number-error};
+
+    /// Format `value` as a decimal number under the given locale.
+    ///
+    /// Uses the CLDR default decimal pattern `#,##0.###` — 3 max
+    /// fraction digits, group at every 3 integer digits, no
+    /// leading zeros.
+    format-decimal: func(
+        value: f64,
+        locale: locale,
+        options: formatting-options,
+    ) -> result<string, number-error>;
+
+    /// Format `value` as a currency amount under the given locale.
+    ///
+    /// Uses the CLDR default currency pattern `¤#,##0.00` — 2
+    /// fraction digits, symbol placement per the locale (`$1.00`
+    /// vs `1,00 €`).
+    format-currency: func(
+        value: f64,
+        currency: currency-code,
+        locale: locale,
+        options: formatting-options,
+    ) -> result<string, number-error>;
+
+    /// Format `value` as a percentage under the given locale.
+    ///
+    /// `value` is the fraction (`0.5` → `"50%"`). Uses the CLDR
+    /// default percent pattern `#,##0%`.
+    format-percent: func(
+        value: f64,
+        locale: locale,
+        options: formatting-options,
+    ) -> result<string, number-error>;
+}
+
+/// Introspection: which locales does the linked component actually
+/// cover?
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a pack
+    /// (rather than falling through to root).
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every number-formatting component exports.
+world number-world {
+    export types;
+    export number;
+    export capabilities;
+}

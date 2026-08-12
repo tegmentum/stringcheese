@@ -2749,6 +2749,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-icu-number"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-plural"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
 name = "stringcheese-id"
 version = "0.1.0"
 dependencies = [
