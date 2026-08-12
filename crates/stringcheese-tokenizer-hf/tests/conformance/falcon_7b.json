@@ -1,0 +1,342 @@
+{
+  "checkpoint": "falcon-7b",
+  "source": "transformers.AutoTokenizer.from_pretrained('tiiuae/falcon-7b', use_fast=True).encode(input) - reference tokenizer.json is the one that ships in the upstream repo. transformers 5.14.1 / tokenizers 0.22.2.",
+  "note": "Falcon-7b ships a byte-level BPE tokenizer over a 65024-entry vocabulary with no normalizer and no post-processor. Its pre-tokenizer is a Sequence combining Punctuation(Contiguous), ByteLevel(add_prefix_space=false), Digits(individual_digits=false), and Split(pattern=Regex('[0-9][0-9][0-9]')) — a distinct shape from GPT-2 / Qwen2 that exercises the Sequence pre-tokenizer path and the Punctuation / Digits / Split combinators end to end. Adds 12 special tokens (>>TITLE<<, >>ABSTRACT<<, >>INTRODUCTION<<, ..., <|endoftext|>). The 20 cases span empty / ASCII prose / code / CJK / Cyrillic / Hebrew / Arabic / Devanagari / emoji / whitespace / long inputs / Falcon-specific special surface forms. Reference ids come from transformers.AutoTokenizer against the shipped tokenizer.json - pass criterion is byte-for-byte parity.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "Hello",
+      "expected_ids": [
+        9856
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        9856,
+        23,
+        1079,
+        12
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        487,
+        1942,
+        6537,
+        27224,
+        25607,
+        648,
+        248,
+        16569,
+        3696,
+        25
+      ],
+      "note": "ascii-sentence"
+    },
+    {
+      "input": "def add(a, b):\n    return a + b\n",
+      "expected_ids": [
+        3071,
+        737,
+        19,
+        76,
+        23,
+        262,
+        2045,
+        742,
+        1161,
+        241,
+        204,
+        22,
+        262,
+        193
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        17379,
+        1316,
+        1152,
+        204,
+        102,
+        2722,
+        11315,
+        43573,
+        5752,
+        4199,
+        204,
+        104
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        170,
+        133,
+        238,
+        3997,
+        133
+      ],
+      "note": "chinese-2char"
+    },
+    {
+      "input": "今天天气很好，我们一起去公园散步吧。",
+      "expected_ids": [
+        48925,
+        7858,
+        17147,
+        171,
+        134,
+        214,
+        3997,
+        133,
+        181,
+        132,
+        218,
+        9141,
+        31965,
+        8155,
+        11528,
+        53971,
+        39364,
+        21748,
+        17963,
+        1258
+      ],
+      "note": "chinese-prose"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        24111,
+        9310
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "Привет, как дела?",
+      "expected_ids": [
+        150,
+        237,
+        9310,
+        18945,
+        122,
+        37770,
+        23,
+        34752,
+        60940,
+        40390,
+        47005,
+        6279,
+        42
+      ],
+      "note": "russian-prose"
+    },
+    {
+      "input": "שלום",
+      "expected_ids": [
+        157,
+        114,
+        157,
+        234,
+        57070,
+        235
+      ],
+      "note": "hebrew-2byte"
+    },
+    {
+      "input": "مر",
+      "expected_ids": [
+        29663,
+        28996
+      ],
+      "note": "arabic-2byte"
+    },
+    {
+      "input": "नमस",
+      "expected_ids": [
+        10735,
+        113,
+        10735,
+        118,
+        10735,
+        128
+      ],
+      "note": "devanagari-3byte"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        20589,
+        206
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        20589,
+        206,
+        52240,
+        215,
+        58824
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "Hello 你好 مرحبا Привет 🌍",
+      "expected_ids": [
+        9856,
+        62116,
+        133,
+        238,
+        3997,
+        133,
+        64951,
+        28996,
+        158,
+        239,
+        59390,
+        15040,
+        5052,
+        237,
+        9310,
+        18945,
+        122,
+        37770,
+        61693,
+        219
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "   leading   inner   trailing   ",
+      "expected_ids": [
+        258,
+        3736,
+        258,
+        8010,
+        258,
+        35668,
+        466
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters.",
+      "expected_ids": [
+        1140,
+        304,
+        241,
+        4318,
+        38874,
+        18259,
+        23,
+        325,
+        241,
+        2278,
+        546,
+        272,
+        14315,
+        275,
+        241,
+        822,
+        17453,
+        23,
+        1309,
+        314,
+        272,
+        729,
+        275,
+        241,
+        4162,
+        25,
+        2071,
+        1278,
+        2245,
+        248,
+        7364,
+        379,
+        5209,
+        275,
+        963,
+        241,
+        546,
+        724,
+        314,
+        313,
+        545,
+        772,
+        10203,
+        241,
+        27605,
+        23,
+        414,
+        4318,
+        304,
+        485,
+        779,
+        6375,
+        272,
+        248,
+        10568,
+        275,
+        248,
+        8180,
+        4441,
+        23,
+        325,
+        332,
+        304,
+        3558,
+        345,
+        248,
+        60551,
+        2891,
+        275,
+        596,
+        532,
+        379,
+        599,
+        275,
+        525,
+        17103,
+        25
+      ],
+      "note": "long-prose-paragraph"
+    },
+    {
+      "input": "<|endoftext|>",
+      "expected_ids": [
+        11
+      ],
+      "note": "endoftext-surface-form-raw"
+    },
+    {
+      "input": ">>TITLE<< My Paper >>ABSTRACT<< A short abstract.",
+      "expected_ids": [
+        0,
+        1814,
+        10531,
+        204,
+        1,
+        317,
+        1866,
+        12192,
+        25
+      ],
+      "note": "falcon-domain-title-surface-form-raw"
+    }
+  ]
+}

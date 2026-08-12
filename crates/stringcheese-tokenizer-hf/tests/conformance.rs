@@ -413,6 +413,9 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "phi_3_mini_4k_instruct.json",
     "gemma_2b.json",
     "t5_base.json",
+    "phi_2.json",
+    "gemma_7b.json",
+    "falcon_7b.json",
 ];
 
 #[test]
@@ -695,4 +698,53 @@ fn conformance_gemma_2b() {
 )]
 fn conformance_t5_base() {
     run_fixture("t5_base.json", "t5-base");
+}
+
+// Real microsoft/phi-2 tokenizer.json — GPT-2-family byte-level BPE
+// with no normalizer, a ByteLevel pre-tokenizer/post-processor/decoder
+// chain, and no SentencePiece byte_fallback (the byte-to-char mapping
+// is what covers non-vocab bytes). Distinct from Phi-3-mini
+// (Llama-family character-BPE + byte_fallback + Prepend normalizer);
+// same model family (Phi) but a different tokenizer shape entirely.
+// Reference ids come from `transformers.AutoTokenizer.from_pretrained(
+// 'microsoft/phi-2')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_phi_2() {
+    run_fixture("phi_2.json", "phi-2");
+}
+
+// Real google/gemma-7b tokenizer.json — same SentencePiece-BPE shape
+// as gemma-2b: byte-identical vocabulary, added_tokens, normalizer,
+// pre_tokenizer, post_processor and decoder (the upstream
+// tokenizer.json blobs themselves differ in file layout only). A
+// distinct fixture is kept so a regression against either the 2b or
+// 7b real vocab surfaces as a separately-labelled failure line.
+// Local vocab is fetched via the ungated `unsloth/gemma-7b` mirror.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_gemma_7b() {
+    run_fixture("gemma_7b.json", "gemma-7b");
+}
+
+// Real tiiuae/falcon-7b tokenizer.json — byte-level BPE with a
+// Sequence pre-tokenizer combining Punctuation(Contiguous),
+// ByteLevel, Digits and Split(Regex="[0-9][0-9][0-9]"). No
+// normalizer, no post-processor (raw ids), ByteLevel decoder. First
+// fixture exercising the Sequence pre-tokenizer with these four
+// combinators end to end. Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained('tiiuae/falcon-7b')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_falcon_7b() {
+    run_fixture("falcon_7b.json", "falcon-7b");
 }

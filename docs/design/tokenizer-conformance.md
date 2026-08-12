@@ -85,18 +85,26 @@ the suite must surface.
 | `phi-3-mini-4k-instruct`         | `phi_3_mini_4k_instruct.json`       | 20    | Character-BPE + SentencePiece byte_fallback + Sequence[Prepend(▁), Replace(' '→'▁')] normalizer, no explicit pre-tokenizer | `transformers.AutoTokenizer.from_pretrained('microsoft/Phi-3-mini-4k-instruct')` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `gemma-2b`                       | `gemma_2b.json`                     | 20    | SentencePiece-BPE + byte_fallback + Replace(' '→'▁') normalizer, 256k vocabulary with 217 added chat-format tokens | `transformers.AutoTokenizer.from_pretrained('unsloth/gemma-2b')` — an ungated mirror of `google/gemma-2b`'s tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
 | `t5-base`                        | `t5_base.json`                      | 20    | SentencePiece Unigram + Precompiled charsmap normalizer + Sequence[WhitespaceSplit, Metaspace] pre-tokenizer + TemplateProcessing(</s>) post-processor | `transformers.AutoTokenizer.from_pretrained('google-t5/t5-base')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `phi-2`                          | `phi_2.json`                        | 20    | GPT-2-family byte-level BPE (no byte_fallback), null normalizer + ByteLevel pre-tokenizer/post-processor/decoder, 50257-entry vocabulary with 39 whitespace-run added tokens (ids 50257–50294) | `transformers.AutoTokenizer.from_pretrained('microsoft/phi-2')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `gemma-7b`                       | `gemma_7b.json`                     | 20    | SentencePiece-BPE + byte_fallback + Replace(' '→'▁') normalizer, 256k vocabulary with 217 added chat-format tokens — **byte-identical tokenizer semantics to `gemma-2b`** (verified via top-level field comparison); the upstream `tokenizer.json` blobs differ in file layout only | `transformers.AutoTokenizer.from_pretrained('unsloth/gemma-7b')` — an ungated mirror of `google/gemma-7b`'s tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
+| `falcon-7b`                      | `falcon_7b.json`                    | 20    | Byte-level BPE, null normalizer + Sequence[Punctuation(Contiguous), ByteLevel, Digits, Split(Regex="[0-9][0-9][0-9]")] pre-tokenizer, null post-processor, ByteLevel decoder, 65024-entry vocabulary with 12 special tokens (`>>TITLE<<`, `>>ABSTRACT<<`, …, `<|endoftext|>`) | `transformers.AutoTokenizer.from_pretrained('tiiuae/falcon-7b')` (transformers 5.14.1 / tokenizers 0.22.2) |
 
-Total: **16 checkpoints × (40 or 20) cases = 520 triples**, all
+Total: **19 checkpoints × (40 or 20) cases = 580 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
 Between them the checkpoints exercise every runtime shape
 `stringcheese-tokenizer-hf` accepts:
 
-- Byte-level BPE — `gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`
-  (four distinct vocabularies over the same BPE runtime; `qwen2-7b`
-  adds a `Sequence[Split(Regex), ByteLevel]` pre-tokenizer shape not
-  covered by the older three).
+- Byte-level BPE — `gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`,
+  `phi-2`, `falcon-7b` (six distinct vocabularies over the same BPE
+  runtime; `qwen2-7b` adds a `Sequence[Split(Regex), ByteLevel]`
+  pre-tokenizer shape not covered by the older three; `phi-2` adds a
+  block of 38 whitespace-run added tokens (`normalized: true`,
+  non-special) that upstream matches via added-vocab before
+  pre-tokenization runs; `falcon-7b` adds a `Sequence[Punctuation,
+  ByteLevel, Digits, Split(Regex)]` pre-tokenizer combining four
+  distinct pre-tokenizer combinators no other fixture exercises).
 - tiktoken BPE — `cl100k_base` (leans on the tiktoken parity harness
   for the actual vocab; the runner soft-skips when no `tokenizer.json`
   is provisioned locally for it, since tiktoken has its own format).
@@ -111,15 +119,18 @@ Between them the checkpoints exercise every runtime shape
   `Sequence[WhitespaceSplit, Metaspace]` pre-tokenizer and a
   `TemplateProcessing` post-processor that appends `</s>`).
 - Character-BPE + SentencePiece `byte_fallback` — `llama-2-7b-hf`,
-  `mistral-7b-v0.1`, `phi-3-mini-4k-instruct`, `gemma-2b` (Llama-family
-  BPE with the `<0xXX>` byte-fallback path; Mistral additionally
-  exercises the `Metaspace` pre-tokenizer variant of the same
-  semantics — see the runtime gap below; `phi-3-mini-4k-instruct`
+  `mistral-7b-v0.1`, `phi-3-mini-4k-instruct`, `gemma-2b`, `gemma-7b`
+  (Llama-family BPE with the `<0xXX>` byte-fallback path; Mistral
+  additionally exercises the `Metaspace` pre-tokenizer variant of the
+  same semantics — see the runtime gap below; `phi-3-mini-4k-instruct`
   uses the Llama-2 `Sequence[Prepend, Replace]` normalizer shape over
   a distinct 32k vocabulary with Phi-3 chat-format specials;
   `gemma-2b` ships a much larger 256k vocabulary, a bare `Replace`
-  normalizer with no `Prepend`, and 217 chat-format added tokens —
-  see the byte-fallback-coverage gap below).
+  normalizer with no `Prepend`, and 217 chat-format added tokens;
+  `gemma-7b` reuses `gemma-2b`'s tokenizer semantics *verbatim* — the
+  upstream `tokenizer.json` blobs differ in file layout only, so the
+  fixture serves as a distinct real-vocab checkpoint whose parity
+  covaries with gemma-2b by construction).
 
 `microsoft/deberta-v3-base` and `microsoft/mdeberta-v3-base` do not
 publish a `tokenizer.json` under
@@ -308,9 +319,40 @@ Each is filed here so a follow-up can pick them up without re-deriving:
   gate is the only blocker. All 20 fixture ids are recorded so the
   next-agent landing can flip the test from panic-on-load to (up to)
   20/20 with no fixture churn.
+- **`Punctuation` pre-tokenizer unsupported (blocks Falcon-7b).**
+  `tiiuae/falcon-7b` ships a `pre_tokenizer.type == "Sequence"` whose
+  four children are `Punctuation(behavior=Contiguous)`, `ByteLevel`,
+  `Digits(individual_digits=false)`, and
+  `Split(pattern=Regex("[0-9][0-9][0-9]"))`. The BPE loader rejects
+  the first child with
+  `UnsupportedPreTokenizer { type_name: "Punctuation", reason: "deferred to a later landing" }`,
+  so `conformance_falcon_7b` currently fails at `to_tokenizer(&config)`
+  and none of the 20 cases run. All 20 fixture ids are recorded so
+  the next-agent landing can flip the test from panic-on-load to
+  (up to) 20/20 with no fixture churn. Adding the `Punctuation` and
+  `Digits` combinators to the pre-tokenizer runtime unblocks Falcon-7b
+  and any other Falcon-family checkpoint that shares the shape.
+- **Whitespace-run added tokens skipped by pre-tokenization (2/20
+  cases on Phi-2).** `microsoft/phi-2` ships 38
+  added-vocabulary entries (`id 50257..=50294`) whose content is a run
+  of literal ASCII space characters of decreasing length
+  (`"                               "` down to `"  "`), each marked
+  `normalized: true` and `special: false`. Upstream
+  `transformers.AutoTokenizer` matches these against the *raw* input
+  before ByteLevel pre-tokenization runs, collapsing a run of N spaces
+  into a single added-token id when a matching length exists (so
+  `\n    return` in Python code becomes `[…, 198, 50284, 7783, …]`
+  where `50284` is the "4 spaces" added token). The BPE runtime today
+  matches only `normalized: false` added tokens against the raw input;
+  `normalized: true` non-special added tokens are ignored, so both the
+  `python-code` and `whitespace-heavy` cases on Phi-2 currently fall
+  through to per-space ByteLevel encoding (`220` × N) and mismatch.
+  Adds pressure on the added-vocabulary matcher to route
+  `normalized: true` entries through the same raw-input scan.
 - **Phi-3-mini's four Llama-family gaps** are all fixed as of the
   latest landing — `conformance_phi_3_mini_4k_instruct` runs 20/20
-  cases to parity. Two commits closed the four fixture cases:
+  cases to parity against the hand-crafted vocab. Two commits closed
+  the four fixture cases:
   - `python-code`: `BpeTokenizer::encode_region_bpe_inner` now
     short-circuits `pre_tokenize` when byte-fallback is enabled and no
     pre-tokenizer pattern is configured, passing the whole region to
@@ -334,6 +376,19 @@ Each is filed here so a follow-up can pick them up without re-deriving:
     `phi3_shape_*` in `bpe.rs` lock the four fixture behaviours in
     place against a hand-crafted Phi-3-shape vocab so the parity
     coverage does not depend on the real `tokenizer.json` on disk.
+    **Verification against the real vocab (with the parity fix from
+    the byte-fallback landing) surfaces one residual gap (1/20 cases):
+    `<s>hi</s>` currently encodes to `[1, 7251, 829, 29879, 29958]`
+    against the real vocab, expected `[1, 7251, 2]`. The Phi-3 real
+    `tokenizer.json` records `</s>` as an added-vocab entry with
+    `special: false, rstrip: true` (only `<s>` is `special: true`),
+    and the raw-input scan the hand-crafted-vocab tests exercise
+    matches on `special: true` and does not currently recognise the
+    non-special/`rstrip`-flagged `</s>` entry as an added-vocab hit.
+    Same class of gap as the Phi-2 whitespace-run finding above — the
+    added-vocabulary matcher needs to cover `special: false` /
+    `normalized: true` / `rstrip` / `lstrip` variants that upstream
+    treats uniformly.**
 
 ## Hand-computed fallback
 
