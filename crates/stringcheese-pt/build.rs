@@ -21,9 +21,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{portuguese_cardinals, portuguese_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
+    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
+    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -45,7 +47,90 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-pt.scud");
+    let datetime_bytes = build_datetime_pt_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-pt SCUD pack in memory.
+///
+/// Portuguese date/time formatting (CLDR 44.1, `gregorian.json`;
+/// pt-PT and pt-BR agree on date/time layout aside from a few
+/// month-abbreviation spellings the shipped pack rolls up under
+/// pt-PT conventions):
+///
+/// * Date patterns:
+///   * short — `dd/MM/y` (`22/09/2024`)
+///   * medium — `d 'de' MMM 'de' y` (`22 de set. de 2024`)
+///   * long — `d 'de' MMMM 'de' y` (`22 de setembro de 2024`)
+///   * full — `EEEE, d 'de' MMMM 'de' y`
+///     (`domingo, 22 de setembro de 2024`)
+/// * Time patterns (24-hour):
+///   * short — `HH:mm`
+///   * medium/long/full — `HH:mm:ss`
+/// * Month + weekday names — CLDR default lowercase form.
+/// * Era names — `a.C.` (BC), `d.C.` (AD).
+fn build_datetime_pt_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "dd/MM/y");
+    d.set_date_pattern(DateTimeLength::Medium, "d 'de' MMM 'de' y");
+    d.set_date_pattern(DateTimeLength::Long, "d 'de' MMMM 'de' y");
+    d.set_date_pattern(DateTimeLength::Full, "EEEE, d 'de' MMMM 'de' y");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    d.set_month_names([
+        "janeiro",
+        "fevereiro",
+        "mar\u{00E7}o",
+        "abril",
+        "maio",
+        "junho",
+        "julho",
+        "agosto",
+        "setembro",
+        "outubro",
+        "novembro",
+        "dezembro",
+    ]);
+    d.set_month_abbreviations([
+        "jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.",
+        "dez.",
+    ]);
+    d.set_weekday_names([
+        "domingo",
+        "segunda-feira",
+        "ter\u{00E7}a-feira",
+        "quarta-feira",
+        "quinta-feira",
+        "sexta-feira",
+        "s\u{00E1}bado",
+    ]);
+    d.set_weekday_abbreviations([
+        "dom.",
+        "seg.",
+        "ter.",
+        "qua.",
+        "qui.",
+        "sex.",
+        "s\u{00E1}b.",
+    ]);
+    d.set_am_pm("AM", "PM");
+    d.set_eras("a.C.", "d.C.");
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("pt"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-pt SCUD pack in memory.

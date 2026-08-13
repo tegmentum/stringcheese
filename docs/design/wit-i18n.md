@@ -575,7 +575,32 @@ Each phase is independently releasable; a caller who needs only case mapping nev
 
 **Wasm component sizes** (measured locally, aarch64 macOS, `--release`, wasmtime 26 / wasm-tools 1.254): raw module 91 586 B, componentised 114 442 B. Larger than the icu-case component (~112 KiB componentised) by roughly 2 KiB, entirely accounted for by the three embedded SCUD packs.
 
-**Locales covered vs deferred.** Phase 4 ships packs for `en`, `de`, and `fr` (matching Phase 3's initial locale set). The remaining ~200 CLDR locales are follow-ups that add per-locale packs but not new algorithm code — the pattern interpreter and Gregorian arithmetic already cover any Gregorian-calendar locale that uses the shipped token set.
+**Locales covered vs deferred.** Phase 4 ships packs for `en`, `de`, `fr`, `ru`, `pl`, `ar`, `zh`, `ja`, `es`, `pt`, and `it` (matching the Phase 3 plural+number footprint after the wave-2/3/4 rollout). The remaining ~200 CLDR locales are follow-ups that add per-locale packs but not new algorithm code — the pattern interpreter and Gregorian arithmetic already cover any Gregorian-calendar locale that uses the shipped token set.
+
+**Wave 2 — 8 additional SCUD packs (2026-08).** A data-only round extending the Phase 4 packs from `{en, de, fr}` to `{en, de, fr, ru, pl, ar, zh, ja, es, pt, it}` without changing algorithms. The pattern interpreter and Gregorian arithmetic already covered every one of these; this round wires per-locale `datetime_data` modules, `build.rs` codegen, and golden-vector suites into the existing `stringcheese-<lang>` packs behind opt-in `datetime-scud` features (matching the wave-1 en/de/fr shape).
+
+- `stringcheese-ru` — `datetime-ru.scud` (625 B; `dd.MM.y` short, `d MMM y г.` medium, `d MMMM y г.` long, `EEEE, d MMMM y г.` full — trailing `г.` is the era-less year suffix short for `года`; 24-hour throughout; genitive month names `января`..`декабря`; weekdays `воскресенье`..`суббота`; era markers `до н. э.` / `н. э.`). 9 golden test functions + 4 inner unit tests, 30+ assertions.
+- `stringcheese-pl` — `datetime-pl.scud` (444 B; `dd.MM.y` / `d MMM y` / `d MMMM y` / `EEEE, d MMMM y`; 24-hour; genitive months `stycznia`..`grudnia`; weekdays include `poniedziałek` / `środa` with Polish diacritics; era markers `p.n.e.` / `n.e.`). 9 golden test functions + 3 inner unit tests.
+- `stringcheese-ar` — `datetime-ar.scud` (679 B, the largest of the wave — Arabic character encoding is 2 bytes/scalar and every month name is 5+ characters). Ships CLDR-authoritative RTL marks (U+200F) between numeric fields in short/medium (`d‏/M‏/y`, `dd‏/MM‏/y`), Arabic comma (U+060C) after weekday in full pattern (`EEEE، d MMMM y`), 12-hour clock with Arabic AM/PM markers (`ص` / `م`), Arabic era markers (`ق.م` / `م`). 9 golden test functions + 3 inner unit tests. **RTL bidi shaping is a documented deferral** — the pattern strings carry the RTL marks and stringcheese emits them verbatim, but does not itself perform bidi shaping.
+- `stringcheese-zh` — `datetime-zh.scud` (491 B; `y/M/d` short, `y年M月d日` medium/long (CLDR ships them identical), `y年M月d日EEEE` full; 24-hour; wide months `一月`..`十二月` + numeric-with-suffix abbreviations `1月`..`12月`; weekdays `星期日`..`星期六`; AM/PM `上午`/`下午`; eras `公元前`/`公元`). 9 golden test functions + 3 inner unit tests.
+- `stringcheese-ja` — `datetime-ja.scud` (440 B; `y/MM/dd` short/medium, `y年M月d日` long, `y年M月d日EEEE` full; 24-hour; numeric-with-suffix months `1月`..`12月` (CLDR ships identical wide + abbreviated); weekdays `日曜日`..`土曜日` (single-kanji abbreviations `日`..`土`); AM/PM `午前`/`午後`; Gregorian eras `紀元前`/`西暦`). 9 golden test functions + 3 inner unit tests. **Japanese Imperial calendar (Reiwa / Heisei / Shōwa) is a documented deferral** — Phase 4 stays Gregorian-only.
+- `stringcheese-es` — `datetime-es.scud` (444 B; `d/M/y` short, `d MMM y` medium, `d 'de' MMMM 'de' y` long, `EEEE, d 'de' MMMM 'de' y` full — the `'de'` quoted-literal wrappers are the Spanish long-form convention; 24-hour Spain default; lowercase months `enero`..`diciembre` + weekdays `domingo`..`sábado`; September abbreviation post-CLDR-42 is `sept`; AM/PM `a. m.` / `p. m.`; eras `a. C.` / `d. C.`). 9 golden test functions + 3 inner unit tests.
+- `stringcheese-pt` — `datetime-pt.scud` (492 B; `dd/MM/y` short, `d 'de' MMM 'de' y` medium, `d 'de' MMMM 'de' y` long, `EEEE, d 'de' MMMM 'de' y` full — Portuguese wraps both abbreviated and full months with `'de'` unlike Spanish's medium; lowercase months + weekdays `segunda-feira`..`sábado` with hyphens; eras `a.C.` / `d.C.` — no spaces, differing from Spanish's `a. C.` / `d. C.`). 9 golden test functions + 3 inner unit tests.
+- `stringcheese-it` — `datetime-it.scud` (426 B; `dd/MM/y` short, `d MMM y` medium, `d MMMM y` long, `EEEE d MMMM y` full — Italian's full pattern has no comma after the weekday, differing from German's `EEEE, d. MMMM y`; lowercase months `gennaio`..`dicembre` + weekdays `luned\u{00EC}`..`sabato`; eras `a.C.` / `d.C.`). 9 golden test functions + 3 inner unit tests.
+- CI — the existing `wasm-i18n-datetime` job's `-p` list grows to include the 8 new crates, with a per-locale golden-test step for each and the SCUD-size reporter enumerating each new pack. No new CI job.
+
+**Wave 2 measured sizes** (release builds of the SCUD blobs, uncompressed):
+
+| Pack               | Bytes | Notes                                                                  |
+| ------------------ | -----:| ---------------------------------------------------------------------- |
+| `datetime-ru.scud` |   625 | Cyrillic month + weekday names, `г.` year suffix, genitive months      |
+| `datetime-pl.scud` |   444 | Polish diacritics in weekdays (`poniedziałek`, `środa`), genitive months |
+| `datetime-ar.scud` |   679 | Arabic UTF-8 (2B/scalar), RTL marks in patterns, 12-hour AM/PM         |
+| `datetime-zh.scud` |   491 | Han year/month/day markers, wide + numeric-abbrev months               |
+| `datetime-ja.scud` |   440 | Numeric-with-suffix months, kanji weekdays                             |
+| `datetime-es.scud` |   444 | Spanish `'de'` quoted literals in long/full patterns                   |
+| `datetime-pt.scud` |   492 | Portuguese `'de'` in medium/long/full, hyphenated weekdays             |
+| `datetime-it.scud` |   426 | Italian lowercase months + weekdays, no comma after weekday in full    |
 
 **Deferred.** Documented in the crate roots and left for the follow-up wave:
 

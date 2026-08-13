@@ -15,11 +15,13 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{chinese_cardinals, chinese_ordinals};
 use stringcheese_scud::{
-    CAP_CASE, CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder, CollationSectionBuilder,
-    NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_EXPANSIONS, SECT_FULL_FOLD, SECT_FULL_UPPER,
-    SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER,
-    SECT_SIMPLE_UPPER, ScudWriter,
+    CAP_CASE, CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
+    CollationSectionBuilder, DateTimeLength, DateTimeSectionBuilder, NumberSectionBuilder,
+    PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS,
+    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_MONTH_ABBR, SECT_MONTH_NAMES, SECT_ORDINAL_RULES,
+    SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER,
+    SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -48,7 +50,102 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-zh.scud");
+    let datetime_bytes = build_datetime_zh_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-zh SCUD pack in memory.
+///
+/// Chinese (Simplified) date/time formatting (CLDR 44.1,
+/// `gregorian.json`):
+///
+/// * Date patterns:
+///   * short — `y/M/d` (`2024/9/22`)
+///   * medium — `y年M月d日` (`2024年9月22日`)
+///   * long — `y年M月d日` (same as medium in CLDR)
+///   * full — `y年M月d日EEEE` (`2024年9月22日星期日`)
+/// * Time patterns (24-hour default):
+///   * short — `HH:mm`
+///   * medium/long/full — `HH:mm:ss`
+/// * Month names — wide form (`一月`, `二月`, …) and numeric-with-
+///   suffix abbreviations (`1月`, `2月`, …).
+/// * Weekday names — `星期日` (Sunday-first) through `星期六`;
+///   abbreviated as `周日` through `周六`.
+/// * AM/PM — `上午` / `下午`. Shipped for completeness; the
+///   default 24-hour patterns never emit the `a` token.
+/// * Era names — `公元前` (BC), `公元` (AD).
+fn build_datetime_zh_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "y/M/d");
+    d.set_date_pattern(DateTimeLength::Medium, "y\u{5E74}M\u{6708}d\u{65E5}");
+    d.set_date_pattern(DateTimeLength::Long, "y\u{5E74}M\u{6708}d\u{65E5}");
+    d.set_date_pattern(DateTimeLength::Full, "y\u{5E74}M\u{6708}d\u{65E5}EEEE");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    d.set_month_names([
+        "\u{4E00}\u{6708}",         // 一月
+        "\u{4E8C}\u{6708}",         // 二月
+        "\u{4E09}\u{6708}",         // 三月
+        "\u{56DB}\u{6708}",         // 四月
+        "\u{4E94}\u{6708}",         // 五月
+        "\u{516D}\u{6708}",         // 六月
+        "\u{4E03}\u{6708}",         // 七月
+        "\u{516B}\u{6708}",         // 八月
+        "\u{4E5D}\u{6708}",         // 九月
+        "\u{5341}\u{6708}",         // 十月
+        "\u{5341}\u{4E00}\u{6708}", // 十一月
+        "\u{5341}\u{4E8C}\u{6708}", // 十二月
+    ]);
+    d.set_month_abbreviations([
+        "1\u{6708}",
+        "2\u{6708}",
+        "3\u{6708}",
+        "4\u{6708}",
+        "5\u{6708}",
+        "6\u{6708}",
+        "7\u{6708}",
+        "8\u{6708}",
+        "9\u{6708}",
+        "10\u{6708}",
+        "11\u{6708}",
+        "12\u{6708}",
+    ]);
+    d.set_weekday_names([
+        "\u{661F}\u{671F}\u{65E5}", // 星期日 (Sunday)
+        "\u{661F}\u{671F}\u{4E00}", // 星期一 (Monday)
+        "\u{661F}\u{671F}\u{4E8C}", // 星期二
+        "\u{661F}\u{671F}\u{4E09}", // 星期三
+        "\u{661F}\u{671F}\u{56DB}", // 星期四
+        "\u{661F}\u{671F}\u{4E94}", // 星期五
+        "\u{661F}\u{671F}\u{516D}", // 星期六 (Saturday)
+    ]);
+    d.set_weekday_abbreviations([
+        "\u{5468}\u{65E5}", // 周日
+        "\u{5468}\u{4E00}", // 周一
+        "\u{5468}\u{4E8C}",
+        "\u{5468}\u{4E09}",
+        "\u{5468}\u{56DB}",
+        "\u{5468}\u{4E94}",
+        "\u{5468}\u{516D}",
+    ]);
+    d.set_am_pm("\u{4E0A}\u{5348}", "\u{4E0B}\u{5348}"); // 上午 / 下午
+    d.set_eras("\u{516C}\u{5143}\u{524D}", "\u{516C}\u{5143}"); // 公元前 / 公元
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("zh"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the case-zh SCUD pack in memory.

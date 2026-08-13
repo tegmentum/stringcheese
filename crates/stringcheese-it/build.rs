@@ -20,9 +20,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{italian_cardinals, italian_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
+    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
+    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -44,7 +46,81 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-it.scud");
+    let datetime_bytes = build_datetime_it_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-it SCUD pack in memory.
+///
+/// Italian date/time formatting (CLDR 44.1, `gregorian.json`):
+///
+/// * Date patterns:
+///   * short — `dd/MM/y` (`22/09/2024`)
+///   * medium — `d MMM y` (`22 set 2024`)
+///   * long — `d MMMM y` (`22 settembre 2024`)
+///   * full — `EEEE d MMMM y` (`domenica 22 settembre 2024`; note
+///     Italian's `EEEE d` has no comma — different from French's
+///     `EEEE d MMMM y` which also lacks a comma, but German uses
+///     `EEEE, d. MMMM y` with one)
+/// * Time patterns (24-hour):
+///   * short — `HH:mm`
+///   * medium/long/full — `HH:mm:ss`
+/// * Month + weekday names — CLDR default (lowercase months such
+///   as `gennaio`; weekdays such as `luned\u{00EC}`).
+/// * Era names — `a.C.` (BC), `d.C.` (AD).
+fn build_datetime_it_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "dd/MM/y");
+    d.set_date_pattern(DateTimeLength::Medium, "d MMM y");
+    d.set_date_pattern(DateTimeLength::Long, "d MMMM y");
+    d.set_date_pattern(DateTimeLength::Full, "EEEE d MMMM y");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    d.set_month_names([
+        "gennaio",
+        "febbraio",
+        "marzo",
+        "aprile",
+        "maggio",
+        "giugno",
+        "luglio",
+        "agosto",
+        "settembre",
+        "ottobre",
+        "novembre",
+        "dicembre",
+    ]);
+    d.set_month_abbreviations([
+        "gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic",
+    ]);
+    d.set_weekday_names([
+        "domenica",
+        "luned\u{00EC}",
+        "marted\u{00EC}",
+        "mercoled\u{00EC}",
+        "gioved\u{00EC}",
+        "venerd\u{00EC}",
+        "sabato",
+    ]);
+    d.set_weekday_abbreviations(["dom", "lun", "mar", "mer", "gio", "ven", "sab"]);
+    d.set_am_pm("AM", "PM");
+    d.set_eras("a.C.", "d.C.");
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("it"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-it SCUD pack in memory.

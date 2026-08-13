@@ -1393,7 +1393,8 @@ jobs:
 
   # ------------------------------------------------------------------
   # WIT-i18n Phase 4 date/time-formatting smoke — SCUD-pack size +
-  # golden vectors for en / de / fr.
+  # golden vectors for en / de / fr / ru / pl / ar / zh / ja / es /
+  # pt / it (matches the Phase 3 plural+number rollout).
   # ------------------------------------------------------------------
   wasm-i18n-datetime:
     name: WIT-i18n date/time formatting (SCUD size + golden)
@@ -1411,7 +1412,7 @@ jobs:
         with:
           key: wasm-i18n-datetime-stable
 
-      - name: Build the icu-datetime crate + three language packs
+      - name: Build the icu-datetime crate + language packs
         run: |
           cargo build \
             -p stringcheese-scud \
@@ -1419,6 +1420,14 @@ jobs:
             -p stringcheese-en \
             -p stringcheese-de \
             -p stringcheese-fr \
+            -p stringcheese-ru \
+            -p stringcheese-pl \
+            -p stringcheese-ar \
+            -p stringcheese-zh \
+            -p stringcheese-ja \
+            -p stringcheese-es \
+            -p stringcheese-pt \
+            -p stringcheese-it \
             --all-features \
             --locked
 
@@ -1457,6 +1466,78 @@ jobs:
             --test datetime_golden_fr \
             -- --nocapture
 
+      - name: Run Russian datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-ru \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_ru \
+            -- --nocapture
+
+      - name: Run Polish datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-pl \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_pl \
+            -- --nocapture
+
+      - name: Run Arabic datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-ar \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_ar \
+            -- --nocapture
+
+      - name: Run Chinese datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-zh \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_zh \
+            -- --nocapture
+
+      - name: Run Japanese datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-ja \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_ja \
+            -- --nocapture
+
+      - name: Run Spanish datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-es \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_es \
+            -- --nocapture
+
+      - name: Run Portuguese datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-pt \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_pt \
+            -- --nocapture
+
+      - name: Run Italian datetime golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-it \
+            --features datetime-scud \
+            --locked \
+            --test datetime_golden_it \
+            -- --nocapture
+
       - name: Report per-locale datetime SCUD sizes
         run: |
           set -euo pipefail
@@ -1464,11 +1545,27 @@ jobs:
             -p stringcheese-en \
             -p stringcheese-de \
             -p stringcheese-fr \
-            --features stringcheese-en/datetime-scud,stringcheese-de/datetime-scud,stringcheese-fr/datetime-scud \
+            -p stringcheese-ru \
+            -p stringcheese-pl \
+            -p stringcheese-ar \
+            -p stringcheese-zh \
+            -p stringcheese-ja \
+            -p stringcheese-es \
+            -p stringcheese-pt \
+            -p stringcheese-it \
+            --features stringcheese-en/datetime-scud,stringcheese-de/datetime-scud,stringcheese-fr/datetime-scud,stringcheese-ru/datetime-scud,stringcheese-pl/datetime-scud,stringcheese-ar/datetime-scud,stringcheese-zh/datetime-scud,stringcheese-ja/datetime-scud,stringcheese-es/datetime-scud,stringcheese-pt/datetime-scud,stringcheese-it/datetime-scud \
             --locked >/dev/null
           find target -name 'datetime-en.scud' -exec ls -l {} \; | head -1
           find target -name 'datetime-de.scud' -exec ls -l {} \; | head -1
           find target -name 'datetime-fr.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-ru.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-pl.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-ar.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-zh.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-ja.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-es.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-pt.scud' -exec ls -l {} \; | head -1
+          find target -name 'datetime-it.scud' -exec ls -l {} \; | head -1
 
   # ------------------------------------------------------------------
   # WIT-i18n Phase 1 case-mapping componentised WASM smoke.

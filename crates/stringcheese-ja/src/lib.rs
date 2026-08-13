@@ -135,6 +135,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "datetime-scud")]
+pub mod datetime_data;
 #[cfg(feature = "alloc")]
 pub mod hepburn;
 #[cfg(feature = "alloc")]
