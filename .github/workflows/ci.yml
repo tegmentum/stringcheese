@@ -997,6 +997,7 @@ jobs:
             -p stringcheese-fr \
             -p stringcheese-es \
             -p stringcheese-pt \
+            -p stringcheese-it \
             -p stringcheese-ru \
             -p stringcheese-pl \
             -p stringcheese-ar \
@@ -1058,6 +1059,15 @@ jobs:
             --test plural_golden_pt \
             -- --nocapture
 
+      - name: Run Italian plural golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-it \
+            --features plural-scud \
+            --locked \
+            --test plural_golden_it \
+            -- --nocapture
+
       - name: Run Russian plural golden vectors
         run: |
           cargo test \
@@ -1112,14 +1122,15 @@ jobs:
             -p stringcheese-fr \
             -p stringcheese-es \
             -p stringcheese-pt \
+            -p stringcheese-it \
             -p stringcheese-ru \
             -p stringcheese-pl \
             -p stringcheese-ar \
             -p stringcheese-zh \
             -p stringcheese-ja \
-            --features stringcheese-en/plural-scud,stringcheese-de/plural-scud,stringcheese-fr/plural-scud,stringcheese-es/plural-scud,stringcheese-pt/plural-scud,stringcheese-ru/plural-scud,stringcheese-pl/plural-scud,stringcheese-ar/plural-scud,stringcheese-zh/plural-scud,stringcheese-ja/plural-scud \
+            --features stringcheese-en/plural-scud,stringcheese-de/plural-scud,stringcheese-fr/plural-scud,stringcheese-es/plural-scud,stringcheese-pt/plural-scud,stringcheese-it/plural-scud,stringcheese-ru/plural-scud,stringcheese-pl/plural-scud,stringcheese-ar/plural-scud,stringcheese-zh/plural-scud,stringcheese-ja/plural-scud \
             --locked >/dev/null
-          for pack in plural-en.scud plural-de.scud plural-fr.scud plural-es.scud plural-pt.scud plural-ru.scud plural-pl.scud plural-ar.scud plural-zh.scud plural-ja.scud; do
+          for pack in plural-en.scud plural-de.scud plural-fr.scud plural-es.scud plural-pt.scud plural-it.scud plural-ru.scud plural-pl.scud plural-ar.scud plural-zh.scud plural-ja.scud; do
             find target -name "$pack" -exec ls -l {} \; | head -1
           done
 
@@ -1153,6 +1164,7 @@ jobs:
             -p stringcheese-fr \
             -p stringcheese-es \
             -p stringcheese-pt \
+            -p stringcheese-it \
             -p stringcheese-ru \
             -p stringcheese-pl \
             -p stringcheese-ar \
@@ -1214,6 +1226,15 @@ jobs:
             --test number_golden_pt \
             -- --nocapture
 
+      - name: Run Italian number golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-it \
+            --features number-scud \
+            --locked \
+            --test number_golden_it \
+            -- --nocapture
+
       - name: Run Russian number golden vectors
         run: |
           cargo test \
@@ -1268,14 +1289,15 @@ jobs:
             -p stringcheese-fr \
             -p stringcheese-es \
             -p stringcheese-pt \
+            -p stringcheese-it \
             -p stringcheese-ru \
             -p stringcheese-pl \
             -p stringcheese-ar \
             -p stringcheese-zh \
             -p stringcheese-ja \
-            --features stringcheese-en/number-scud,stringcheese-de/number-scud,stringcheese-fr/number-scud,stringcheese-es/number-scud,stringcheese-pt/number-scud,stringcheese-ru/number-scud,stringcheese-pl/number-scud,stringcheese-ar/number-scud,stringcheese-zh/number-scud,stringcheese-ja/number-scud \
+            --features stringcheese-en/number-scud,stringcheese-de/number-scud,stringcheese-fr/number-scud,stringcheese-es/number-scud,stringcheese-pt/number-scud,stringcheese-it/number-scud,stringcheese-ru/number-scud,stringcheese-pl/number-scud,stringcheese-ar/number-scud,stringcheese-zh/number-scud,stringcheese-ja/number-scud \
             --locked >/dev/null
-          for pack in number-en.scud number-de.scud number-fr.scud number-es.scud number-pt.scud number-ru.scud number-pl.scud number-ar.scud number-zh.scud number-ja.scud; do
+          for pack in number-en.scud number-de.scud number-fr.scud number-es.scud number-pt.scud number-it.scud number-ru.scud number-pl.scud number-ar.scud number-zh.scud number-ja.scud; do
             find target -name "$pack" -exec ls -l {} \; | head -1
           done
 
