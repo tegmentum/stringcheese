@@ -609,9 +609,9 @@ fn wasmtime_smoke_supports_falls_through_bcp47_chain() {
         .call_supports(&mut store, &loc("en-US"))
         .expect("supports trap-free");
     assert!(ok, "en-US should resolve via BCP 47 fallback to en");
-    // `de` is not registered at all.
+    // `ko` is not registered at all.
     let missing = caps
-        .call_supports(&mut store, &loc("de"))
+        .call_supports(&mut store, &loc("ko"))
         .expect("supports trap-free");
-    assert!(!missing, "de is not in the bundled pack set");
+    assert!(!missing, "ko is not in the bundled pack set");
 }
