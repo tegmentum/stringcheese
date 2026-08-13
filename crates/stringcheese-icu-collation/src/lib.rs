@@ -434,22 +434,19 @@ impl<'a> CollationEngine<'a> {
     /// UCA default puts case at level 3 (tertiary); CLDR's `ru`
     /// `standard` variant moves case to level 2 so that a case
     /// difference dominates over any diacritic difference at
-    /// secondary strength. The engine's simplified model builds a
-    /// bytewise sort key:
+    /// secondary strength.
     ///
-    /// * **Level 1 (primary):** pack-expand, strip combining marks,
-    ///   and ASCII-lowercase — same primary fold as the default
-    ///   engine.
-    /// * **Level 2 (secondary):** one byte per character carrying a
-    ///   case marker — `0x01` for lowercase or non-letter, `0x02`
-    ///   for uppercase. The 1-byte spacing keeps the compare stable
-    ///   across multi-byte UTF-8 sequences.
-    /// * **Level 3 (tertiary):** the pack-expanded original text so
-    ///   Tertiary+ still tie-breaks on the raw form.
+    /// The engine keeps feruca's DUCET-root primary compare intact
+    /// (so Ё still sorts between Е and Ж under `ru`) by delegating
+    /// level 1 to the UCA oracle after applying a Unicode-aware
+    /// lowercasing pass. Level 2 then emits per-character case
+    /// markers on primary tie; level 3+ falls back to the default
+    /// UCA compare so Tertiary/Identical tie-break the way callers
+    /// expect for languages that mix Cyrillic and Latin.
     ///
     /// Concretely, for the Cyrillic pair `"Аа"` vs `"аА"`:
     ///
-    /// * Level 1 folds both to `"аа"` (equal).
+    /// * Level 1 folds both to `"аа"` (equal under feruca).
     /// * Level 2 emits `[0x02, 0x01]` vs `[0x01, 0x02]` — the first
     ///   character diverges (`0x02 > 0x01`), so `"Аа" > "аА"`.
     ///
@@ -463,17 +460,53 @@ impl<'a> CollationEngine<'a> {
         locale: &str,
         strength: CollationStrength,
     ) -> Ordering {
-        let ka = self.case_second_key(a, locale, strength);
-        let kb = self.case_second_key(b, locale, strength);
-        match ka.cmp(&kb) {
-            Ordering::Equal if matches!(strength, CollationStrength::Identical) => a.cmp(b),
-            ord => ord,
+        // Level 1: pack-expand, Unicode-lowercase, strip combining
+        // marks, then delegate to feruca so the DUCET root ordering
+        // (including Cyrillic Ё between Е and Ж) still fires.
+        let base_a = case_second_expand_and_fold(a, locale, self);
+        let base_b = case_second_expand_and_fold(b, locale, self);
+        let primary_ord =
+            <stringcheese_collate::UcaCollator as stringcheese_collate::Collator>::compare(
+                &self.uca, &base_a, &base_b,
+            );
+        if primary_ord != Ordering::Equal || matches!(strength, CollationStrength::Primary) {
+            return primary_ord;
         }
+        // Level 2: per-character case markers, compared as a slice
+        // (equivalent to bytewise cmp).
+        let sec_a = case_markers(a, locale, self);
+        let sec_b = case_markers(b, locale, self);
+        let sec_ord = sec_a.cmp(&sec_b);
+        if sec_ord != Ordering::Equal || matches!(strength, CollationStrength::Secondary) {
+            return sec_ord;
+        }
+        // Level 3+: default UCA on the pack-expanded text so the
+        // tertiary tie-break stays aligned with the rest of the
+        // engine's Tertiary/Identical semantics.
+        let full_a = self.normalize_for_strength(a, locale, strength);
+        let full_b = self.normalize_for_strength(b, locale, strength);
+        let ord = <stringcheese_collate::UcaCollator as stringcheese_collate::Collator>::compare(
+            &self.uca, &full_a, &full_b,
+        );
+        if matches!(strength, CollationStrength::Identical) && ord == Ordering::Equal {
+            return a.cmp(b);
+        }
+        ord
     }
 
     /// Build a bytewise-comparable sort key for `text` under the
-    /// case-second tailoring. See [`compare_with_case_second`] for
-    /// the encoding.
+    /// case-second tailoring.
+    ///
+    /// The layout mirrors the `compare` path's L1|L2|L3 tuple, but
+    /// the L1 encoding is the bytewise `case_second_primary_fold`
+    /// form — feruca's UCA weight sequence is not exposed as bytes
+    /// on the Phase 2 surface, so `sort_key` cmp agrees with
+    /// `compare` for every pair whose L1 order also agrees with
+    /// codepoint order (pure ASCII and modern Cyrillic without Ё).
+    /// Pairs that involve non-codepoint-ordered CLDR reweights (Ё
+    /// vs Ж in Russian) can disagree — that is the same shape the
+    /// backwards-secondary `sort_key` has and is a known Phase 2
+    /// limitation of the string-key surface.
     fn case_second_key(&self, text: &str, locale: &str, strength: CollationStrength) -> Vec<u8> {
         // Pack-expand once so every level operates on the same
         // normalised form (`ß → ss` still fires for the ru pack's
@@ -482,10 +515,7 @@ impl<'a> CollationEngine<'a> {
         for c in text.chars() {
             self.expand_char(c, locale, &mut expanded);
         }
-        // Level 1: primary fold that lowercases via `char::to_lowercase`
-        // so Cyrillic and other non-ASCII case pairs collapse to a
-        // common primary form (a plain `primary_fold` only
-        // ASCII-lowercases).
+        // Level 1: Unicode-aware primary fold.
         let level1 = case_second_primary_fold(&expanded);
         let mut out = Vec::with_capacity(expanded.len() * 2 + 8);
         out.extend_from_slice(level1.as_bytes());
@@ -495,7 +525,6 @@ impl<'a> CollationEngine<'a> {
             out.push(0x00); // level separator
             for c in expanded.chars() {
                 if is_combining_mark(c) {
-                    // Combining marks contribute no case signal.
                     out.push(0x01);
                 } else if is_upper_letter(c) {
                     out.push(0x02); // uppercase sorts after
@@ -791,6 +820,44 @@ fn case_second_primary_fold(s: &str) -> String {
         }
         for lower in c.to_lowercase() {
             out.push(lower);
+        }
+    }
+    out
+}
+
+/// Pack-expand `text` and then apply the case-second primary fold
+/// (Unicode-lowercase, strip combining marks). Used by the
+/// case-second compare's level-1 path so the L1 string handed to
+/// feruca reflects both the pack's expansions and the tailoring's
+/// case-blind view.
+#[cfg(feature = "alloc")]
+fn case_second_expand_and_fold(text: &str, locale: &str, engine: &CollationEngine<'_>) -> String {
+    let mut expanded = String::with_capacity(text.len());
+    for c in text.chars() {
+        engine.expand_char(c, locale, &mut expanded);
+    }
+    case_second_primary_fold(&expanded)
+}
+
+/// Extract the per-character case-marker sequence for `text` under
+/// the case-second tailoring. `0x01` for lowercase, non-letters,
+/// and combining marks; `0x02` for uppercase. The resulting `Vec`
+/// compares under `[u8]::cmp` in the same order the level-2 tie
+/// -break requires.
+#[cfg(feature = "alloc")]
+fn case_markers(text: &str, locale: &str, engine: &CollationEngine<'_>) -> Vec<u8> {
+    let mut expanded = String::with_capacity(text.len());
+    for c in text.chars() {
+        engine.expand_char(c, locale, &mut expanded);
+    }
+    let mut out = Vec::with_capacity(expanded.len());
+    for c in expanded.chars() {
+        if is_combining_mark(c) {
+            out.push(0x01);
+        } else if is_upper_letter(c) {
+            out.push(0x02);
+        } else {
+            out.push(0x01);
         }
     }
     out
