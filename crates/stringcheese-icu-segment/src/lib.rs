@@ -68,7 +68,9 @@ use alloc::string::String;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use stringcheese_scud::{BreakDataView, GraphemeClass, ScudFile, SentenceClass, WordClass};
+use stringcheese_scud::{
+    BreakDataView, GraphemeClass, ScudFile, SentenceClass, WordClass, WordDictView,
+};
 
 pub use stringcheese_scud::{RULES_UAX29_DEFAULT, ScudError};
 
@@ -223,9 +225,33 @@ impl<'a> BreakEngine<'a> {
     /// [`WordSegment`] records covering the whole input contiguously
     /// (`segments[0].start == 0`, `segments.last().end ==
     /// len(text)`).
+    ///
+    /// # CJK dictionary tailoring
+    ///
+    /// When the loaded pack carries a
+    /// [`WordDictView`] — the CJK word-break dictionary section —
+    /// and the requested locale begins with `"ja"` or `"zh"`, the
+    /// engine drives a
+    /// **forward-maximum-match (FMM)** segmenter over each
+    /// contiguous CJK-script run in the input: at every position it
+    /// takes the longest dictionary entry that matches, or emits a
+    /// single scalar if none matches. Non-CJK runs still fall
+    /// through the UAX #29 default rules, so mixed CJK / Latin
+    /// input (`私はJavaScriptを勉強します`) behaves the way callers
+    /// expect.
+    ///
+    /// When no dictionary is loaded, or the locale does not match,
+    /// segmentation is pure UAX #29 (each ideograph becomes its own
+    /// word — the Phase 5 default).
     #[cfg(feature = "alloc")]
     #[must_use]
-    pub fn segment_words(&self, text: &str, _locale: &str) -> Vec<WordSegment> {
+    pub fn segment_words(&self, text: &str, locale: &str) -> Vec<WordSegment> {
+        // Dictionary-tailored path — Japanese / Chinese FMM.
+        if let Some(dict) = self.pack.as_ref().and_then(|p| p.data.word_dict()) {
+            if locale_wants_cjk_dict(locale) {
+                return segment_words_with_dict(text, self, &dict);
+            }
+        }
         WordIter::new(text, self).collect()
     }
 
@@ -566,6 +592,153 @@ impl Iterator for WordIter<'_, '_> {
             end: u32::try_from(end).unwrap_or(u32::MAX),
             is_word_like,
         })
+    }
+}
+
+// -----------------------------------------------------------------------
+// CJK dictionary-based word segmentation (FMM)
+// -----------------------------------------------------------------------
+
+/// True iff a BCP 47 locale tag opts into the CJK dictionary-based
+/// word segmenter. Matches `"ja"` and `"zh"` and any tag whose
+/// primary subtag is one of those (`"ja-JP"`, `"zh-Hans-CN"`).
+#[must_use]
+fn locale_wants_cjk_dict(locale: &str) -> bool {
+    let primary = locale.split(['-', '_']).next().unwrap_or("");
+    matches!(primary, "ja" | "zh")
+}
+
+/// FMM word segmentation over an input backed by a
+/// [`WordDictView`].
+///
+/// Walks the input in single-scalar steps. Each contiguous run of
+/// CJK-script scalars is consumed by
+/// [`forward_max_match`] against the dictionary — the longest
+/// dictionary entry that matches the input's prefix is emitted as a
+/// word, then the cursor advances past it and the loop repeats. If
+/// no dictionary entry matches, one scalar is emitted as an
+/// unknown-word singleton (still word-like). Runs of non-CJK
+/// scalars fall through to the UAX #29 [`WordIter`] the pack-less
+/// default already ships.
+///
+/// The output contract mirrors
+/// [`BreakEngine::segment_words`]: contiguous coverage of the input
+/// from `0` to `text.len()`, in ascending byte order.
+#[cfg(feature = "alloc")]
+fn segment_words_with_dict(
+    text: &str,
+    engine: &BreakEngine<'_>,
+    dict: &WordDictView<'_>,
+) -> Vec<WordSegment> {
+    let mut out: Vec<WordSegment> = Vec::new();
+    let bytes_len = text.len();
+    let mut cursor = 0usize;
+    while cursor < bytes_len {
+        // Peek at the first char to decide CJK vs non-CJK path.
+        let first_ch = text[cursor..]
+            .chars()
+            .next()
+            .expect("cursor < len ⇒ at least one char");
+        if classes::is_cjk_scalar(first_ch as u32) {
+            // Consume a maximal CJK run FMM-style.
+            let run_end = end_of_cjk_run(text, cursor);
+            fmm_run(text, cursor, run_end, dict, &mut out);
+            cursor = run_end;
+        } else {
+            // Consume a maximal non-CJK run using UAX #29 iteration.
+            let run_end = end_of_non_cjk_run(text, cursor);
+            let slice = &text[cursor..run_end];
+            let offset_u32 = u32::try_from(cursor).unwrap_or(u32::MAX);
+            for seg in WordIter::new(slice, engine) {
+                out.push(WordSegment {
+                    start: seg.start.saturating_add(offset_u32),
+                    end: seg.end.saturating_add(offset_u32),
+                    is_word_like: seg.is_word_like,
+                });
+            }
+            cursor = run_end;
+        }
+    }
+    out
+}
+
+/// Locate the byte offset of the first non-CJK scalar at or after
+/// `start`. Returns `text.len()` when the whole tail is CJK.
+fn end_of_cjk_run(text: &str, start: usize) -> usize {
+    let mut off = start;
+    for (rel, ch) in text[start..].char_indices() {
+        if !classes::is_cjk_scalar(ch as u32) {
+            return start + rel;
+        }
+        off = start + rel + ch.len_utf8();
+    }
+    off
+}
+
+/// Locate the byte offset of the first CJK scalar at or after
+/// `start`. Returns `text.len()` when the whole tail is non-CJK.
+fn end_of_non_cjk_run(text: &str, start: usize) -> usize {
+    let mut off = start;
+    for (rel, ch) in text[start..].char_indices() {
+        if classes::is_cjk_scalar(ch as u32) {
+            return start + rel;
+        }
+        off = start + rel + ch.len_utf8();
+    }
+    off
+}
+
+/// Emit dictionary-driven word segments covering `text[start..end]`,
+/// treating every scalar in that range as CJK (the caller guards
+/// that invariant via [`end_of_cjk_run`]).
+#[cfg(feature = "alloc")]
+fn fmm_run(
+    text: &str,
+    start: usize,
+    end: usize,
+    dict: &WordDictView<'_>,
+    out: &mut Vec<WordSegment>,
+) {
+    let bytes = text.as_bytes();
+    let mut cursor = start;
+    while cursor < end {
+        // Bound the FMM probe to the CJK run's tail and the dict's
+        // max word length.
+        let remaining = end - cursor;
+        let probe_hi = remaining.min(dict.max_word_len_bytes());
+        // Look up the longest dictionary entry that matches. Only
+        // accept matches that land on a char boundary — the input is
+        // valid UTF-8 so we must not emit a byte-range that splits a
+        // scalar.
+        let match_len = dict
+            .longest_prefix_match(&bytes[cursor..cursor + probe_hi])
+            .filter(|&len| text.is_char_boundary(cursor + len));
+        if let Some(len) = match_len {
+            let seg_start = u32::try_from(cursor).unwrap_or(u32::MAX);
+            let seg_end = u32::try_from(cursor + len).unwrap_or(u32::MAX);
+            out.push(WordSegment {
+                start: seg_start,
+                end: seg_end,
+                is_word_like: true,
+            });
+            cursor += len;
+        } else {
+            // Unknown-word fallback: emit one scalar. CJK scalars
+            // are word-like by construction.
+            let ch = text[cursor..]
+                .chars()
+                .next()
+                .expect("cursor < end ⇒ at least one char");
+            let clen = ch.len_utf8();
+            let seg_start = u32::try_from(cursor).unwrap_or(u32::MAX);
+            let seg_end = u32::try_from(cursor + clen).unwrap_or(u32::MAX);
+            out.push(WordSegment {
+                start: seg_start,
+                end: seg_end,
+                is_word_like: true,
+            });
+            cursor += clen;
+        }
     }
 }
 
@@ -1569,6 +1742,148 @@ mod tests {
         let out = engine().segment_words(s, "");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].end, u32::try_from(s.len()).unwrap());
+    }
+
+    // -- CJK dictionary FMM smoke ------------------------------------
+
+    fn build_break_pack_with_dict(entries: &[&str], locale: &str) -> alloc::vec::Vec<u8> {
+        use stringcheese_scud::{
+            BreakSectionBuilder, CAP_BREAK, SECT_GRAPHEME_CLASSES, SECT_GRAPHEME_RULES,
+            SECT_SENTENCE_CLASSES, SECT_SENTENCE_RULES, SECT_WORD_CLASSES, SECT_WORD_DICT,
+            SECT_WORD_RULES, ScudWriter,
+        };
+        let mut b = BreakSectionBuilder::new();
+        b.set_default_rules();
+        for e in entries {
+            b.push_dict_entry(e);
+        }
+        let mut w = ScudWriter::new(CAP_BREAK, "44.1", Some(locale));
+        w.append_section(SECT_GRAPHEME_CLASSES, &b.grapheme_classes_bytes());
+        w.append_section(SECT_WORD_CLASSES, &b.word_classes_bytes());
+        w.append_section(SECT_SENTENCE_CLASSES, &b.sentence_classes_bytes());
+        w.append_section(SECT_GRAPHEME_RULES, &b.grapheme_rules_bytes());
+        w.append_section(SECT_WORD_RULES, &b.word_rules_bytes());
+        w.append_section(SECT_SENTENCE_RULES, &b.sentence_rules_bytes());
+        w.append_section(SECT_WORD_DICT, &b.word_dict_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn fmm_dict_segments_japanese() {
+        let bytes = build_break_pack_with_dict(
+            &[
+                "\u{79C1}",         // 私
+                "\u{306F}",         // は
+                "\u{5B66}\u{751F}", // 学生
+                "\u{3067}\u{3059}", // です
+            ],
+            "ja",
+        );
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        // 私は学生です → [私, は, 学生, です]
+        let out = e.segment_words("\u{79C1}\u{306F}\u{5B66}\u{751F}\u{3067}\u{3059}", "ja");
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0].end - out[0].start, 3); // 私
+        assert_eq!(out[1].end - out[1].start, 3); // は
+        assert_eq!(out[2].end - out[2].start, 6); // 学生
+        assert_eq!(out[3].end - out[3].start, 6); // です
+        for seg in &out {
+            assert!(seg.is_word_like);
+        }
+    }
+
+    #[test]
+    fn fmm_dict_unknown_falls_through_as_single_char() {
+        // Dict only covers 私; 中 is unknown and should stand alone.
+        let bytes = build_break_pack_with_dict(&["\u{79C1}"], "ja");
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        let out = e.segment_words("\u{79C1}\u{4E2D}", "ja");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].end - out[0].start, 3);
+        assert_eq!(out[1].end - out[1].start, 3);
+    }
+
+    #[test]
+    fn fmm_dict_ignored_for_non_cjk_locale() {
+        let bytes = build_break_pack_with_dict(&["\u{79C1}"], "ja");
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        // "en" locale — FMM should NOT engage; standard UAX #29 runs.
+        let out = e.segment_words("hello", "en");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].end, 5);
+    }
+
+    #[test]
+    fn fmm_dict_ignored_without_pack() {
+        let e = BreakEngine::new();
+        let out = e.segment_words("\u{79C1}\u{306F}", "ja");
+        // Falls through to UAX #29 default: each scalar becomes its
+        // own word (both are Other/Hiragana).
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn fmm_dict_prefers_longest() {
+        // Both 東京 and 東京大学 in the dict — the longer match wins.
+        let bytes = build_break_pack_with_dict(
+            &[
+                "\u{6771}\u{4EAC}",                 // 東京
+                "\u{6771}\u{4EAC}\u{5927}\u{5B66}", // 東京大学
+                "\u{306B}",                         // に
+            ],
+            "ja",
+        );
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        // 東京大学に → [東京大学, に]
+        let out = e.segment_words("\u{6771}\u{4EAC}\u{5927}\u{5B66}\u{306B}", "ja");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].end - out[0].start, 12); // 東京大学
+        assert_eq!(out[1].end - out[1].start, 3); // に
+    }
+
+    #[test]
+    fn fmm_mixed_cjk_latin() {
+        // Dict covers 私; the "ABC" run should segment via UAX #29
+        // (single Latin word).
+        let bytes = build_break_pack_with_dict(&["\u{79C1}"], "ja");
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        // 私 A B C → [私, ABC]
+        let out = e.segment_words("\u{79C1}ABC", "ja");
+        assert!(out.len() >= 2);
+        // First seg: 私 (3 bytes)
+        assert_eq!(out[0].end, 3);
+        // Last seg ends at total length.
+        assert_eq!(out.last().unwrap().end as usize, "\u{79C1}ABC".len());
+    }
+
+    #[test]
+    fn fmm_locale_variant_engages_dict() {
+        let bytes = build_break_pack_with_dict(&["\u{79C1}"], "ja");
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        // "ja-JP" — primary subtag matches, FMM engages.
+        let out = e.segment_words("\u{79C1}\u{4E2D}", "ja-JP");
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn fmm_covers_input_contiguously() {
+        let bytes = build_break_pack_with_dict(&["\u{79C1}", "\u{5B66}\u{751F}"], "ja");
+        let pack = BreakPack::from_scud_bytes(&bytes).unwrap();
+        let e = BreakEngine::with_pack(pack);
+        let text = "\u{79C1}\u{5B66}\u{751F}";
+        let out = e.segment_words(text, "ja");
+        // Coverage invariant.
+        assert_eq!(out[0].start, 0);
+        assert_eq!(out.last().unwrap().end as usize, text.len());
+        for pair in out.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start);
+        }
     }
 
     #[test]

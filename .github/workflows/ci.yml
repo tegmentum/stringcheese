@@ -1873,6 +1873,8 @@ jobs:
           cargo build \
             -p stringcheese-scud \
             -p stringcheese-icu-segment \
+            -p stringcheese-ja \
+            -p stringcheese-zh \
             --all-features \
             --locked
 
@@ -1880,6 +1882,8 @@ jobs:
         run: |
           cargo test \
             -p stringcheese-icu-segment \
+            -p stringcheese-ja \
+            -p stringcheese-zh \
             --all-features \
             --locked \
             -- --nocapture

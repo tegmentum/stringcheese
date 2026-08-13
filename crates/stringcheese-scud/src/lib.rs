@@ -1972,6 +1972,37 @@ pub const SECT_WORD_RULES: [u8; 4] = *b"BkWr";
 /// [`SECT_GRAPHEME_RULES`]. Bytes `B` `k` `S` `r`.
 pub const SECT_SENTENCE_RULES: [u8; 4] = *b"BkSr";
 
+/// Section id for the CJK word-break dictionary. Bytes `B` `k` `W` `d`.
+///
+/// Ships a sorted list of dictionary word bytes so the
+/// [`stringcheese-icu-segment`](../../../stringcheese-icu-segment)
+/// engine can run a forward-maximum-match (FMM) word segmenter over
+/// CJK runs where UAX #29 leaves each ideograph as its own token. See
+/// the crate's segmenter documentation for the FMM algorithm.
+///
+/// Wire layout (little-endian throughout):
+///
+/// ```text
+///    0     4     count             u32 le — number of dictionary
+///                                  entries
+///    4     2     max_word_len_bytes u16 le — the longest word's
+///                                  byte length (used to bound the
+///                                  FMM inner loop)
+///    6     2     reserved          u16 le — must be zero
+///    8     4*n   offsets           u32 le * count — offsets into
+///                                  the payload region for each
+///                                  entry, sorted lexicographically
+///                                  by the entry's UTF-8 bytes
+///    ...   var   payload           for each entry:
+///                                    u16 length + [u8; length]
+///                                  words, lexicographically sorted
+/// ```
+///
+/// Entries must be non-empty (`length > 0`) and lexicographically
+/// sorted so a binary search over the offset index is well-defined.
+/// The writer sorts inputs; readers assume the invariant holds.
+pub const SECT_WORD_DICT: [u8; 4] = *b"BkWd";
+
 /// Well-known rule-id byte for "use the UAX #29 default rules".
 /// Written by [`BreakSectionBuilder::set_default_rules`].
 pub const RULES_UAX29_DEFAULT: u8 = 1;
@@ -2218,6 +2249,7 @@ pub struct BreakDataView<'a> {
     grapheme_rules: &'a [u8],
     word_rules: &'a [u8],
     sentence_rules: &'a [u8],
+    word_dict: &'a [u8],
 }
 
 impl<'a> BreakDataView<'a> {
@@ -2231,6 +2263,7 @@ impl<'a> BreakDataView<'a> {
             grapheme_rules: reader.find(SECT_GRAPHEME_RULES)?.unwrap_or(&[]),
             word_rules: reader.find(SECT_WORD_RULES)?.unwrap_or(&[]),
             sentence_rules: reader.find(SECT_SENTENCE_RULES)?.unwrap_or(&[]),
+            word_dict: reader.find(SECT_WORD_DICT)?.unwrap_or(&[]),
         })
     }
 
@@ -2292,6 +2325,217 @@ impl<'a> BreakDataView<'a> {
     #[must_use]
     pub fn sentence_class(&self, cp: u32) -> Option<SentenceClass> {
         lookup_range_class(self.sentence_classes, cp).map(SentenceClass::from_u8)
+    }
+
+    /// The CJK word-break dictionary carried by this pack, if any.
+    ///
+    /// Returns `None` when the pack ships no dictionary section (the
+    /// Phase 5 default). A [`WordDictView`] wraps the section bytes
+    /// and exposes the FMM-friendly
+    /// [`WordDictView::longest_prefix_match`] lookup used by the
+    /// segment engine.
+    #[must_use]
+    pub fn word_dict(&self) -> Option<WordDictView<'a>> {
+        WordDictView::parse(self.word_dict)
+    }
+}
+
+// -----------------------------------------------------------------------
+// CJK word-break dictionary view (see [`SECT_WORD_DICT`])
+// -----------------------------------------------------------------------
+
+/// Zero-copy view into a SCUD file's CJK word-break dictionary.
+///
+/// Carries a sorted list of dictionary entries so the segment engine
+/// can drive a forward-maximum-match (FMM) word segmenter over CJK
+/// script runs where UAX #29 leaves each ideograph as its own word.
+///
+/// Every lookup is `O(log n)` in the entry count plus `O(k)` in the
+/// probed word's byte length. See [`SECT_WORD_DICT`] for the wire
+/// layout.
+///
+/// # FMM contract
+///
+/// [`longest_prefix_match`](Self::longest_prefix_match) returns the
+/// **byte length** of the longest dictionary entry that matches the
+/// input's leading UTF-8 bytes, or `None` when no entry matches. The
+/// caller advances past the match and repeats until the input is
+/// exhausted. When no entry matches, the caller emits a single
+/// scalar and advances by its UTF-8 length — the standard
+/// unknown-word fallback.
+#[derive(Debug, Clone, Copy)]
+pub struct WordDictView<'a> {
+    /// Total entry count.
+    count: usize,
+    /// Longest word's byte length (bounds the FMM inner loop).
+    max_word_len_bytes: usize,
+    /// `count * u32` offset table into `payload`.
+    index: &'a [u8],
+    /// Concatenated `(u16 length, [u8; length])` records.
+    payload: &'a [u8],
+}
+
+impl<'a> WordDictView<'a> {
+    /// Parse a `SECT_WORD_DICT` section into a view.
+    ///
+    /// Returns `None` when the section is empty (no dictionary
+    /// shipped) or its declared layout does not fit inside the
+    /// section bytes.
+    #[must_use]
+    fn parse(bytes: &'a [u8]) -> Option<Self> {
+        if bytes.len() < 8 {
+            return None;
+        }
+        let count = read_u32(&bytes[0..4]) as usize;
+        if count == 0 {
+            return None;
+        }
+        let max_word_len_bytes = usize::from(read_u16(&bytes[4..6]));
+        // `bytes[6..8]` is the reserved u16.
+        let index_start = 8usize;
+        let index_len = count.checked_mul(4)?;
+        let index_end = index_start.checked_add(index_len)?;
+        if index_end > bytes.len() {
+            return None;
+        }
+        let index = &bytes[index_start..index_end];
+        let payload = &bytes[index_end..];
+        Some(Self {
+            count,
+            max_word_len_bytes,
+            index,
+            payload,
+        })
+    }
+
+    /// Total dictionary entry count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    /// True iff the dictionary is empty (unreachable via the private
+    /// `parse` constructor, which returns `None` on empty; kept for
+    /// API symmetry with `Vec`-style types).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// The longest dictionary entry's byte length. The FMM caller
+    /// bounds its inner "try longer prefixes" loop by this value.
+    #[must_use]
+    pub fn max_word_len_bytes(&self) -> usize {
+        self.max_word_len_bytes
+    }
+
+    /// Read the entry at position `idx` (`0..self.len()`) as a
+    /// byte slice. Returns `None` if `idx` is out of range or the
+    /// record is malformed.
+    #[must_use]
+    fn entry(&self, idx: usize) -> Option<&'a [u8]> {
+        if idx >= self.count {
+            return None;
+        }
+        let off = read_u32(&self.index[idx * 4..idx * 4 + 4]) as usize;
+        if off + 2 > self.payload.len() {
+            return None;
+        }
+        let len = usize::from(read_u16(&self.payload[off..off + 2]));
+        let start = off + 2;
+        let end = start + len;
+        if end > self.payload.len() {
+            return None;
+        }
+        Some(&self.payload[start..end])
+    }
+
+    /// Return the byte length of the longest dictionary entry that
+    /// is a prefix of `input`, or `None` if no entry matches.
+    ///
+    /// # Algorithm
+    ///
+    /// Binary-searches for the last entry `<=` `input`, then walks
+    /// backwards through the sorted table while entries share their
+    /// leading bytes with `input`, returning the longest prefix
+    /// found. This lets a call fail-fast when `input` sorts far away
+    /// from any dictionary entry, but stays correct when the
+    /// candidate largest-<= entry is itself not a prefix (e.g. dict
+    /// carries `"北京"` and `"北京大学"`, input is `"北京很大"` — the
+    /// largest-<= entry `"北京大学"` is not a prefix, but the earlier
+    /// entry `"北京"` is).
+    ///
+    /// # Complexity
+    ///
+    /// `O(log n)` for the binary search plus `O(k)` for the linear
+    /// walk over entries that share a common prefix with `input`.
+    /// For a well-distributed 2000-entry dictionary the linear walk
+    /// visits only a handful of entries in the worst case.
+    #[must_use]
+    pub fn longest_prefix_match(&self, input: &[u8]) -> Option<usize> {
+        if input.is_empty() || self.count == 0 {
+            return None;
+        }
+        // Binary search for the last entry <= input (lexicographic
+        // over raw bytes).
+        let mut lo = 0usize;
+        let mut hi = self.count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let entry = self.entry(mid)?;
+            if entry <= input {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo == 0 {
+            return None;
+        }
+        // Walk backwards from the candidate — the first entry that
+        // is a prefix of `input` is the longest such entry in the
+        // sorted table, because any longer-prefix entry would sort
+        // strictly after the current candidate.
+        //
+        // The walk terminates as soon as an entry no longer shares
+        // its first byte with `input`: since the table is sorted,
+        // no earlier entry can be a prefix once the common-first-
+        // byte invariant is broken.
+        let first_byte = input[0];
+        let mut i = lo;
+        while i > 0 {
+            i -= 1;
+            let entry = self.entry(i)?;
+            if entry.is_empty() || entry[0] != first_byte {
+                return None;
+            }
+            if input.starts_with(entry) {
+                return Some(entry.len());
+            }
+        }
+        None
+    }
+
+    /// True iff the dictionary contains exactly `word` as an entry.
+    #[must_use]
+    pub fn contains(&self, word: &[u8]) -> bool {
+        if word.is_empty() {
+            return false;
+        }
+        let mut lo = 0usize;
+        let mut hi = self.count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let Some(entry) = self.entry(mid) else {
+                return false;
+            };
+            match entry.cmp(word) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return true,
+            }
+        }
+        false
     }
 }
 
@@ -3415,6 +3659,7 @@ pub struct BreakSectionBuilder {
     grapheme_rules: Option<u8>,
     word_rules: Option<u8>,
     sentence_rules: Option<u8>,
+    word_dict: Vec<alloc::vec::Vec<u8>>,
 }
 
 #[cfg(feature = "alloc")]
@@ -3515,6 +3760,77 @@ impl BreakSectionBuilder {
             Some(id) => alloc::vec![id],
             None => Vec::new(),
         }
+    }
+
+    /// Push a dictionary entry for the CJK word-break dictionary
+    /// (see [`SECT_WORD_DICT`]).
+    ///
+    /// Duplicate entries are de-duplicated on encode. Empty inputs
+    /// are ignored. Each entry must be well-formed UTF-8 in
+    /// practice; the SCUD writer does not enforce that (the reader
+    /// treats entries as opaque bytes and hands them back to the
+    /// segment engine which requires char-boundary alignment against
+    /// its input).
+    pub fn push_dict_entry(&mut self, word: &str) {
+        if word.is_empty() {
+            return;
+        }
+        self.word_dict.push(word.as_bytes().to_vec());
+    }
+
+    /// Encode the CJK word-break dictionary section (see
+    /// [`SECT_WORD_DICT`]). Returns an empty `Vec` when no entries
+    /// were pushed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the dictionary carries more than `u32::MAX` entries
+    /// or a single entry exceeds `u16::MAX` bytes. Both bounds are
+    /// wire-format serialisation invariants no realistic dictionary
+    /// can violate.
+    #[must_use]
+    pub fn word_dict_bytes(&self) -> Vec<u8> {
+        if self.word_dict.is_empty() {
+            return Vec::new();
+        }
+        // Sort + dedup so binary search over the offset table is
+        // well-defined and the wire size matches the entry count.
+        let mut sorted: Vec<&alloc::vec::Vec<u8>> = self.word_dict.iter().collect();
+        sorted.sort();
+        sorted.dedup();
+        let count = u32::try_from(sorted.len()).expect("dict size fits u32");
+        let max_word_len_bytes = sorted.iter().map(|w| w.len()).max().unwrap_or(0);
+        let max_word_len =
+            u16::try_from(max_word_len_bytes).expect("longest dictionary word fits u16 bytes");
+
+        // Build the offset index and payload region in tandem.
+        let mut payload: Vec<u8> = Vec::new();
+        let mut index: Vec<u8> = Vec::with_capacity(sorted.len() * 4);
+        for w in &sorted {
+            let off = u32::try_from(payload.len()).expect("dictionary payload offset fits u32");
+            index.extend_from_slice(&off.to_le_bytes());
+            let len = u16::try_from(w.len()).expect("dictionary word length fits u16");
+            payload.extend_from_slice(&len.to_le_bytes());
+            payload.extend_from_slice(w);
+        }
+
+        let mut out = Vec::with_capacity(8 + index.len() + payload.len());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&max_word_len.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+        out.extend_from_slice(&index);
+        out.extend_from_slice(&payload);
+        out
+    }
+
+    /// Number of unique dictionary entries currently held by the
+    /// builder (after implicit de-duplication).
+    #[must_use]
+    pub fn dict_entry_count(&self) -> usize {
+        let mut sorted: Vec<&alloc::vec::Vec<u8>> = self.word_dict.iter().collect();
+        sorted.sort();
+        sorted.dedup();
+        sorted.len()
     }
 }
 
@@ -4436,5 +4752,130 @@ mod tests {
         assert_eq!(view.capability(), CAP_CASE);
         assert_eq!(view.locale(), Some("en"));
         assert_eq!(owned.len(), bytes.len());
+    }
+
+    // -- Word-dict tests -----------------------------------------------
+
+    fn build_break_pack_with_dict(entries: &[&str]) -> Vec<u8> {
+        let mut b = BreakSectionBuilder::new();
+        b.set_default_rules();
+        for e in entries {
+            b.push_dict_entry(e);
+        }
+        let mut w = ScudWriter::new(CAP_BREAK, "44.1", Some("ja"));
+        w.append_section(SECT_GRAPHEME_CLASSES, &b.grapheme_classes_bytes());
+        w.append_section(SECT_WORD_CLASSES, &b.word_classes_bytes());
+        w.append_section(SECT_SENTENCE_CLASSES, &b.sentence_classes_bytes());
+        w.append_section(SECT_GRAPHEME_RULES, &b.grapheme_rules_bytes());
+        w.append_section(SECT_WORD_RULES, &b.word_rules_bytes());
+        w.append_section(SECT_SENTENCE_RULES, &b.sentence_rules_bytes());
+        w.append_section(SECT_WORD_DICT, &b.word_dict_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn word_dict_absent_by_default() {
+        let bytes = build_test_break_default_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        assert!(view.word_dict().is_none());
+    }
+
+    #[test]
+    fn word_dict_round_trips() {
+        // Deliberately out-of-order push to exercise the writer's sort.
+        let bytes = build_break_pack_with_dict(&[
+            "\u{5B66}\u{751F}",                 // 学生
+            "\u{79C1}",                         // 私
+            "\u{6771}\u{4EAC}",                 // 東京
+            "\u{6771}\u{4EAC}\u{5927}\u{5B66}", // 東京大学
+        ]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().expect("dict present");
+        assert_eq!(dict.len(), 4);
+        // 東京大学 is 12 UTF-8 bytes (4 * 3).
+        assert_eq!(dict.max_word_len_bytes(), 12);
+
+        // Longest-prefix match on 東京大学に行きます — should pick
+        // 東京大学 (4 chars, 12 bytes).
+        let input = "\u{6771}\u{4EAC}\u{5927}\u{5B66}\u{306B}\u{884C}\u{304D}\u{307E}\u{3059}";
+        let m = dict.longest_prefix_match(input.as_bytes());
+        assert_eq!(m, Some(12));
+
+        // Longest-prefix match on 東京タワー — should pick 東京
+        // (6 bytes).
+        let input = "\u{6771}\u{4EAC}\u{30BF}\u{30EF}\u{30FC}";
+        let m = dict.longest_prefix_match(input.as_bytes());
+        assert_eq!(m, Some(6));
+
+        // No match on an unknown word (using a scalar that shares no
+        // prefix with any dict entry). U+4E2D 中 is not in the dict.
+        let input = "\u{4E2D}\u{56FD}";
+        assert!(dict.longest_prefix_match(input.as_bytes()).is_none());
+
+        // Contains lookup.
+        assert!(dict.contains("\u{79C1}".as_bytes()));
+        assert!(dict.contains("\u{5B66}\u{751F}".as_bytes()));
+        assert!(!dict.contains("\u{4E2D}".as_bytes()));
+    }
+
+    #[test]
+    fn word_dict_dedups_duplicates() {
+        let mut b = BreakSectionBuilder::new();
+        b.push_dict_entry("\u{79C1}");
+        b.push_dict_entry("\u{79C1}");
+        b.push_dict_entry("\u{5B66}\u{751F}");
+        assert_eq!(b.dict_entry_count(), 2);
+    }
+
+    #[test]
+    fn word_dict_empty_input_returns_none() {
+        let bytes = build_break_pack_with_dict(&["\u{79C1}"]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        assert!(dict.longest_prefix_match(b"").is_none());
+    }
+
+    #[test]
+    fn word_dict_walks_back_past_non_prefix_neighbour() {
+        // Regression: dict has "北京" and "北京大学"; input is
+        // "北京很大". The binary-search "largest <=" hits the
+        // non-prefix "北京大学" — the walk-back must find "北京"
+        // and return 6. Same shape as the ja/zh test cases.
+        let bytes = build_break_pack_with_dict(&[
+            "\u{5317}\u{4EAC}",                 // 北京
+            "\u{5317}\u{4EAC}\u{5927}\u{5B66}", // 北京大学
+        ]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        let input = "\u{5317}\u{4EAC}\u{5F88}\u{5927}"; // 北京很大
+        assert_eq!(dict.longest_prefix_match(input.as_bytes()), Some(6));
+    }
+
+    #[test]
+    fn word_dict_no_match_when_first_bytes_differ() {
+        let bytes = build_break_pack_with_dict(&["hello", "\u{5317}\u{4EAC}"]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        // Neither "hello" nor "北京" is a prefix of "world".
+        assert!(dict.longest_prefix_match(b"world").is_none());
+    }
+
+    #[test]
+    fn word_dict_prefers_longest() {
+        // 私 (3 bytes) and 私たち (9 bytes) both match 私たちは.
+        let bytes = build_break_pack_with_dict(&[
+            "\u{79C1}",                 // 私
+            "\u{79C1}\u{305F}\u{3061}", // 私たち
+        ]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        let input = "\u{79C1}\u{305F}\u{3061}\u{306F}"; // 私たちは
+        assert_eq!(dict.longest_prefix_match(input.as_bytes()), Some(9));
     }
 }

@@ -1163,6 +1163,37 @@ fn is_ideographic(cp: u32) -> bool {
     )
 }
 
+/// Broad "is this a CJK-script scalar" classifier used by the
+/// dictionary-based word segmenter to isolate CJK runs.
+///
+/// Covers Han (CJK Unified Ideographs and extensions), Hiragana
+/// (`0x3040..=0x309F`), Katakana (`0x30A0..=0x30FF`), half-width
+/// katakana (`0xFF65..=0xFF9F`), and the CJK punctuation /
+/// symbol / radicals blocks. The forward-maximum-match walker
+/// collects contiguous CJK runs and consumes them against the
+/// pack's dictionary; anything outside the CJK set falls through
+/// to the UAX #29 default rules.
+#[must_use]
+pub fn is_cjk_scalar(cp: u32) -> bool {
+    if is_ideographic(cp) {
+        return true;
+    }
+    if is_katakana(cp) {
+        return true;
+    }
+    // Hiragana + Katakana Phonetic Extensions + Katakana block.
+    matches!(
+        cp,
+        0x3040..=0x309F
+        | 0x30A0..=0x30FF
+        | 0x31F0..=0x31FF
+        | 0xFF65..=0xFF9F
+        | 0x3005          // Ideographic iteration mark (々)
+        | 0x3006          // Ideographic closing mark
+        | 0x3007          // Ideographic number zero (〇)
+    )
+}
+
 // -----------------------------------------------------------------------
 // Sentence_Break helpers
 // -----------------------------------------------------------------------

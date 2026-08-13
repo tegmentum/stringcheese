@@ -15,6 +15,7 @@ build = "build.rs"
 # the shipped rules.
 include = [
     "build.rs",
+    "build_dict.rs",
     "src/**/*.rs",
     "Cargo.toml",
 ]
@@ -69,6 +70,13 @@ number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 # `datetime_data` module exposing `DATETIME_ZH_SCUD: &'static [u8]`
 # and a helper for constructing a `stringcheese_icu_datetime::DateTimePack`.
 datetime-scud = ["dep:stringcheese-icu-datetime", "stringcheese-icu-datetime/std"]
+# Ship the break-zh.scud pack (WIT-i18n Phase 5 CJK word-break
+# dictionary for Chinese). Adds a `word_dict_data` module exposing
+# `WORD_DICT_ZH_SCUD: &'static [u8]` and a helper for constructing
+# a `stringcheese_icu_segment::BreakPack`. The starter dictionary
+# is a ~500-entry hand-curated HSK-level list; full CC-CEDICT
+# integration is a documented data-only follow-up.
+break-scud = ["dep:stringcheese-icu-segment", "stringcheese-icu-segment/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
@@ -80,6 +88,7 @@ stringcheese-icu-collation = { workspace = true, optional = true }
 stringcheese-icu-plural = { workspace = true, optional = true }
 stringcheese-icu-number = { workspace = true, optional = true }
 stringcheese-icu-datetime = { workspace = true, optional = true }
+stringcheese-icu-segment = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the plural-zh / number-zh SCUD packs.
