@@ -14,16 +14,11 @@
 //!   and Ж, matching CLDR's `ru` collation.
 //! * German ß / ẞ expansions — uniform composed-engine behaviour.
 //! * Default strength tertiary.
-//!
-//! # Phase 2 deferral
-//!
-//! * **Russian case-second variant.** CLDR ships two variants for
-//!   `ru`: lowercase-first (default) and uppercase-first. The
-//!   Phase 2 `CollationEngine`'s tertiary compare is fixed to
-//!   lowercase-first (feruca's DUCET-root default); the
-//!   uppercase-first variant requires an options-section extension
-//!   plus algorithm changes to consume it. See
-//!   `docs/design/wit-i18n.md` § 8.2.
+//! * **Case-second bit set** — matches CLDR's `ru` `standard`
+//!   variant, which moves case comparison from the tertiary level
+//!   to the secondary level with lowercase-before-uppercase
+//!   ordering. `CollationEngine` consults this bit and switches to
+//!   its `compare_with_case_second` path.
 
 use stringcheese_icu_collation::{CollationPack, ScudError};
 

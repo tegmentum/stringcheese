@@ -1147,7 +1147,7 @@ pub const SECT_EXPANSIONS: [u8; 4] = *b"Expn";
 /// pack header. Bytes `O` `p` `t` `0`.
 ///
 /// The layout is a fixed 4-byte record: `u8 default_strength, u8
-/// case_insensitive, u8 backwards_secondary, u8 reserved`.
+/// case_insensitive, u8 backwards_secondary, u8 case_second`.
 /// `default_strength` values map onto the wire encoding of the
 /// collation strength enum (0 = Primary, 1 = Secondary,
 /// 2 = Tertiary, 3 = Quaternary, 4 = Identical). Unknown / absent →
@@ -1156,6 +1156,14 @@ pub const SECT_EXPANSIONS: [u8; 4] = *b"Expn";
 /// French backwards-secondary tailoring — when true, the collation
 /// engine reverses the secondary-weight comparison so accents
 /// tie-break right-to-left within a word.
+/// `case_second` is a bool (0 = false, 1 = true) used by the Russian
+/// case-second tailoring — when true, the collation engine promotes
+/// case-distinguishing weights from tertiary to secondary so that
+/// case differences dominate over diacritic differences at secondary
+/// strength. Byte 3 was reserved in earlier SCUD writers; because
+/// pre-existing packs write it as `0` the new bit reads as
+/// `case_second = false` for any legacy blob and remains
+/// forward-compatible.
 pub const SECT_COLLATION_OPTIONS: [u8; 4] = *b"Opt0";
 
 /// Section id for a per-locale primary-weight override table.
@@ -1286,6 +1294,23 @@ impl<'a> CollationDataView<'a> {
             return None;
         }
         Some(self.options[2] != 0)
+    }
+
+    /// The pack's case-second flag, if the options blob carries one.
+    /// When true, the collation engine promotes case-distinguishing
+    /// weights from tertiary to secondary so that case differences
+    /// dominate over diacritic differences at secondary strength.
+    /// Used by Russian collation (`ru`'s CLDR `standard` variant).
+    ///
+    /// Legacy packs written before this bit was defined read as
+    /// `Some(false)` because their reserved byte 3 was written as
+    /// `0`.
+    #[must_use]
+    pub fn case_second(&self) -> Option<bool> {
+        if self.options.len() < 4 {
+            return None;
+        }
+        Some(self.options[3] != 0)
     }
 
     /// Look up the primary-weight override for `cp`. Returns
@@ -3132,6 +3157,7 @@ pub struct CollationSectionBuilder {
     default_strength: Option<u8>,
     case_insensitive: Option<bool>,
     backwards_secondary: Option<bool>,
+    case_second: Option<bool>,
     /// Sorted list of `(cp, primary, secondary, tertiary)` weight
     /// overrides. See [`SECT_PRIMARY_OVERRIDES`] for the wire layout.
     primary_overrides: Vec<(u32, u32, u32, u32)>,
@@ -3173,6 +3199,15 @@ impl CollationSectionBuilder {
         self.backwards_secondary = Some(v);
     }
 
+    /// Set the pack's case-second flag. When true, the collation
+    /// engine promotes case-distinguishing weights from tertiary to
+    /// secondary so that case differences dominate over diacritic
+    /// differences at secondary strength — the Russian tailoring
+    /// (CLDR `ru` `standard` variant).
+    pub fn set_case_second(&mut self, v: bool) {
+        self.case_second = Some(v);
+    }
+
     /// Push a primary-weight override for `cp`.
     ///
     /// See [`SECT_PRIMARY_OVERRIDES`] for the semantics. The
@@ -3209,7 +3244,7 @@ impl CollationSectionBuilder {
             self.default_strength.unwrap_or(2), // 2 = Tertiary default
             u8::from(self.case_insensitive.unwrap_or(false)),
             u8::from(self.backwards_secondary.unwrap_or(false)),
-            0, // reserved
+            u8::from(self.case_second.unwrap_or(false)),
         ]
     }
 
@@ -3243,6 +3278,7 @@ impl CollationSectionBuilder {
         self.default_strength.is_some()
             || self.case_insensitive.is_some()
             || self.backwards_secondary.is_some()
+            || self.case_second.is_some()
     }
 
     /// True iff the builder carries at least one primary-override row.
@@ -4240,6 +4276,57 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         let view = file.as_collation_data().unwrap();
         assert_eq!(view.backwards_secondary(), None);
+    }
+
+    #[test]
+    fn case_second_flag_round_trips() {
+        let mut c = CollationSectionBuilder::new();
+        c.set_default_strength(2);
+        c.set_case_second(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("ru"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert_eq!(view.case_second(), Some(true));
+        assert_eq!(view.default_strength(), Some(2));
+        // Other bits default to false when only case_second is set.
+        assert_eq!(view.backwards_secondary(), Some(false));
+        assert_eq!(view.case_insensitive(), Some(false));
+    }
+
+    #[test]
+    fn case_second_absent_when_no_options() {
+        // A pack that ships no options blob (older pack shape) reads
+        // case_second() as None so callers can distinguish "unset" from
+        // "explicitly false".
+        let c = CollationSectionBuilder::new();
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("ru"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert_eq!(view.case_second(), None);
+    }
+
+    #[test]
+    fn case_second_defaults_false_for_legacy_options_blobs() {
+        // A pack written by a pre-case_second SCUD writer (byte 3
+        // fixed to 0 as "reserved") still parses cleanly and reads
+        // case_second() as Some(false), preserving forward
+        // compatibility.
+        let mut c = CollationSectionBuilder::new();
+        c.set_default_strength(2);
+        c.set_backwards_secondary(true);
+        // Only backwards_secondary set — case_second unset → byte 3 = 0.
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("fr"));
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert_eq!(view.case_second(), Some(false));
+        assert_eq!(view.backwards_secondary(), Some(true));
     }
 
     #[test]

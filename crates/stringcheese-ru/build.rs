@@ -228,16 +228,11 @@ fn build_case_ru_scud() -> Vec<u8> {
 /// order (Ё inserted between Е and Ж), and feruca handles this
 /// correctly out of the box.
 ///
-/// # Phase 2 deferral
-///
-/// The Russian **case-second variant** — uppercase-first vs
-/// lowercase-first ordering at tertiary strength (CLDR ships two
-/// variants for `ru`) — is a documented Phase 2 `CollationEngine`
-/// deferral. The shipped pack uses the default lowercase-first
-/// direction (matching feruca's DUCET-root). Selecting the
-/// uppercase-first variant requires an options-section extension
-/// plus algorithm changes to consume it. See
-/// `docs/design/wit-i18n.md` § 8.2.
+/// The pack sets the `case_second` bit in
+/// [`SECT_COLLATION_OPTIONS`] so `CollationEngine` promotes
+/// case-distinguishing weights from tertiary to secondary. This
+/// matches CLDR's `ru` `standard` variant, under which lowercase
+/// sorts before uppercase at secondary strength (so "аА" < "Аа").
 fn build_collation_ru_scud() -> Vec<u8> {
     let mut c = CollationSectionBuilder::new();
 
@@ -247,6 +242,9 @@ fn build_collation_ru_scud() -> Vec<u8> {
 
     c.set_default_strength(2); // Tertiary
     c.set_case_insensitive(false);
+    // CLDR ru `standard`: case moves to secondary level with
+    // lowercase-before-uppercase ordering.
+    c.set_case_second(true);
 
     let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("ru"));
     w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());

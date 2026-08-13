@@ -6,23 +6,35 @@
 //! ready to hand to a
 //! [`stringcheese_icu_collation::CollationEngine`].
 //!
+//! # Stroke-based ordering scaffold (CLDR `zh` `standard`)
+//!
+//! Ships a **starter subset** of ~230 common CJK Ideographs paired
+//! with their stroke count, encoded as
+//! `stringcheese_scud::SECT_PRIMARY_OVERRIDES` rows. Weight
+//! formula: `1000 + stroke_count * 100 + within_stroke_index`, so
+//! shipped characters sort by stroke count first and then by
+//! codepoint within the same stroke bucket. Characters outside the
+//! shipped table fall through to codepoint order as an
+//! approximation.
+//!
+//! The engine's existing primary-override compare path handles the
+//! new data — no `CollationEngine` code change was needed to light
+//! up stroke ordering for the shipped subset.
+//!
 //! # Phase 2 deferrals
 //!
-//! CLDR ships four `zh` collation variants — `standard` (stroke-
-//! based, numeric stroke order), `pinyin` (Latin pinyin
-//! transliteration), `stroke`, and `zhuyin`. **All four are
-//! documented Phase 2 `CollationEngine` deferrals** — each requires
-//! a large Han-to-order or Han-to-pinyin lookup table (tens of
-//! thousands of entries) plus algorithm support that isn't in
-//! Phase 2. The shipped pack uses feruca's DUCET-root ordering,
-//! which sorts CJK Han by codepoint order — deterministic but
-//! not linguistically meaningful. See
-//! `docs/design/wit-i18n.md` § 8.2 for the deferral rationale.
+//! * **Full stroke dataset** — the ~20 000 CJK Ideograph glyphs
+//!   beyond the shipped starter set are a data-only follow-up.
+//! * **Pinyin (`zh-u-co-pinyin`) collation** — CLDR's `pinyin`
+//!   variant needs a ~40 000-entry Han → pinyin table plus tone
+//!   handling. Still deferred.
 //!
 //! # Coverage
 //!
-//! * DUCET root ordering (delegated to `feruca` via
-//!   `stringcheese-collate::UcaCollator`).
+//! * Stroke-ordered primary weights for ~230 common CJK Ideographs.
+//! * DUCET root ordering for anything not in the starter set
+//!   (delegated to `feruca` via `stringcheese-collate::UcaCollator`
+//!   with the primary-override approximation for un-shipped Han).
 //! * German ß / ẞ expansions.
 //! * Default strength tertiary.
 
@@ -68,10 +80,16 @@ mod tests {
     }
 
     #[test]
-    fn pack_bytes_are_small() {
+    fn pack_bytes_stay_within_scaffold_budget() {
+        // The stroke-based scaffold ships ~230 CJK entries as 16-byte
+        // primary-override records plus the tiny expansion +
+        // options blob. Budget: 8 KiB while the starter set is small;
+        // a data-only follow-up wave will grow this into the
+        // ~200 KiB range typical of full ICU-style CJK ordering
+        // data, at which point this guard needs re-baselining.
         assert!(
-            COLLATION_ZH_SCUD.len() < 1024,
-            "collation-zh.scud grew unexpectedly: {} bytes",
+            COLLATION_ZH_SCUD.len() < 8 * 1024,
+            "collation-zh.scud grew beyond the stroke-scaffold budget: {} bytes",
             COLLATION_ZH_SCUD.len()
         );
     }

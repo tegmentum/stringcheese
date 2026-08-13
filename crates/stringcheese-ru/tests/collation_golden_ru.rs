@@ -4,14 +4,14 @@
 //! primary/tertiary strength distinctions, and sort-key
 //! consistency.
 //!
-//! # Phase 2 deferral: Russian case-second variant
+//! # Case-second variant (CLDR `ru` `standard`)
 //!
-//! CLDR ships two `ru` collation variants — lowercase-first
-//! (default, matching feruca's DUCET-root) and uppercase-first.
-//! The Phase 2 `CollationEngine` is fixed to feruca's default. The
-//! `case_second_uppercase_first_deferred` test below documents the
-//! shipped behaviour so a follow-up wave landing the options-
-//! section extension can flip the assertion.
+//! The Russian pack sets the `case_second` options bit so
+//! `CollationEngine` promotes case-distinguishing weights from
+//! tertiary to secondary. Under this tailoring, lowercase sorts
+//! before uppercase at secondary strength — matching CLDR's
+//! `ru` `standard` variant. The `case_second_*` vectors below
+//! exercise the promotion at Primary / Secondary / Tertiary.
 
 #![cfg(all(feature = "collation-scud", not(target_family = "wasm")))]
 
@@ -76,49 +76,79 @@ fn yo_letter_ordering() {
 // -----------------------------------------------------------------------
 
 #[test]
-fn primary_folds_ascii_case() {
+fn primary_folds_ascii_and_cyrillic_case() {
     let e = engine();
-    // Non-ASCII case-fold at primary is a Phase 2 deferral (the
-    // primary_fold ASCII-lowercases only); ASCII pairs fold
-    // correctly.
-    for (a, b) in [("hello", "HELLO"), ("moscow", "MOSCOW")] {
+    // The case-second path's level-1 fold lowercases via
+    // char::to_lowercase, so both ASCII and Cyrillic case pairs
+    // collapse at primary.
+    for (a, b) in [
+        ("hello", "HELLO"),
+        ("moscow", "MOSCOW"),
+        ("москва", "МОСКВА"),
+        ("привет", "ПРИВЕТ"),
+    ] {
         assert_eq!(
             e.compare(a, b, "ru", CollationStrength::Primary),
             Ordering::Equal,
-            "primary should ASCII-fold ({a:?}, {b:?})"
+            "primary should case-fold ({a:?}, {b:?}) under ru case-second"
         );
     }
-    // Cyrillic case-fold at primary is a documented deferral;
-    // test the shipped behaviour.
-    assert_ne!(
-        e.compare("москва", "МОСКВА", "ru", CollationStrength::Primary),
-        Ordering::Equal,
-        "non-ASCII (Cyrillic) primary case-fold is a Phase 2 deferral"
-    );
-    assert_ne!(
-        e.compare("привет", "ПРИВЕТ", "ru", CollationStrength::Primary),
-        Ordering::Equal,
-    );
 }
 
 // -----------------------------------------------------------------------
-// Case-second variant deferral — documented via test (2 assertions)
+// Case-second (CLDR ru standard) — 6 assertions
 // -----------------------------------------------------------------------
 
 #[test]
-fn case_second_uppercase_first_deferred() {
+fn case_second_promotes_case_to_secondary_level() {
     let e = engine();
-    // Under feruca's DUCET-root default (lowercase-first at
-    // tertiary), lowercase "а" sorts before uppercase "А".
-    let ord = e.compare("а", "А", "ru", CollationStrength::Tertiary);
+    // "Аа" (upper, lower) vs "аА" (lower, upper): primary folds to
+    // the same "аа"; under case-second, the L2 case marker breaks
+    // the tie — lowercase < uppercase, so leading-lowercase wins.
     assert_eq!(
-        ord,
-        Ordering::Less,
-        "shipped engine: lowercase-first (а < А); uppercase-first CLDR variant deferred"
+        e.compare("Аа", "аА", "ru", CollationStrength::Secondary),
+        Ordering::Greater,
     );
-    // Antisymmetry survives.
-    let ord_rev = e.compare("А", "а", "ru", CollationStrength::Tertiary);
-    assert_eq!(ord_rev, Ordering::Greater);
+    assert_eq!(
+        e.compare("аА", "Аа", "ru", CollationStrength::Secondary),
+        Ordering::Less,
+    );
+    // Case difference dominates even at Tertiary strength.
+    assert_eq!(
+        e.compare("АБВ", "абв", "ru", CollationStrength::Tertiary),
+        Ordering::Greater,
+    );
+    // A case difference at position 3 still dominates: "Абв" vs
+    // "абВ" — both fold to "абв" at primary; L2 sequence is
+    // [Upper, lower, lower] vs [lower, lower, Upper]. The first
+    // position diverges (Upper > lower), so "Абв" > "абВ".
+    assert_eq!(
+        e.compare("Абв", "абВ", "ru", CollationStrength::Secondary),
+        Ordering::Greater,
+    );
+    // "абВ" vs "абв" — only pos 3 differs, and lowercase wins.
+    assert_eq!(
+        e.compare("абВ", "абв", "ru", CollationStrength::Secondary),
+        Ordering::Greater,
+    );
+    // Base-letter difference still beats case at every strength.
+    assert_eq!(
+        e.compare("АРБУЗ", "белка", "ru", CollationStrength::Secondary),
+        Ordering::Less,
+    );
+}
+
+#[test]
+fn case_second_ties_disappear_at_primary() {
+    let e = engine();
+    // At Primary, case is ignored entirely.
+    for (a, b) in [("Аа", "аА"), ("АБВ", "абв"), ("Абв", "абВ")] {
+        assert_eq!(
+            e.compare(a, b, "ru", CollationStrength::Primary),
+            Ordering::Equal,
+            "primary should tie for {a:?} vs {b:?}",
+        );
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -157,18 +187,18 @@ fn ordering_is_antisymmetric() {
 #[test]
 fn sort_key_matches_compare() {
     let e = engine();
-    // Pairs chosen so raw UTF-8 byte order agrees with feruca's
-    // CLDR-root primary order — pure ASCII always agrees; Cyrillic
-    // pairs within the U+0410 block (excluding Ё) also agree
-    // because CLDR sorts them by codepoint order. Pairs involving
-    // Ё vs Ж disagree between raw bytes and UCA (Ё codepoint
-    // 0x0451 > Ж 0x0436 but CLDR places ё between е and ж) — that
-    // gap is a documented Phase 2 sort_key limitation.
+    // Case-second sort_key path derives its bytewise key from the
+    // same L1|L2|L3 layout compare uses, so every pair round-trips
+    // — including case-diverging pairs that fold to the same
+    // primary form.
     let pairs = [
         ("арбуз", "белка"),
         ("гараж", "дом"),
         ("hello", "world"),
         ("Москва", "Санкт"),
+        ("Аа", "аА"),
+        ("Абв", "абВ"),
+        ("привет", "ПРИВЕТ"),
     ];
     for strength in [
         CollationStrength::Primary,
@@ -196,12 +226,13 @@ fn sort_key_matches_compare() {
 fn shipped_vector_count_meets_20() {
     // - cyrillic_word_list_orders_alphabetically: 5
     // - yo_letter_ordering:                       3
-    // - primary_folds_ascii_case:                 4
-    // - case_second_uppercase_first_deferred:     2
+    // - primary_folds_ascii_and_cyrillic_case:    4
+    // - case_second_promotes_case_to_secondary:   6
+    // - case_second_ties_disappear_at_primary:    3
     // - ordering_is_antisymmetric:               3 * 4 = 12
-    // - sort_key_matches_compare:                3 * 4 = 12
-    // Total:                                     38
-    const SHIPPED_VECTORS: usize = 5 + 3 + 4 + 2 + 12 + 12;
+    // - sort_key_matches_compare:                3 * 7 = 21
+    // Total:                                     54
+    const SHIPPED_VECTORS: usize = 5 + 3 + 4 + 6 + 3 + 12 + 21;
     const {
         assert!(
             SHIPPED_VECTORS >= 20,
