@@ -409,6 +409,7 @@ jobs:
             --exclude stringcheese-icu-collation-component \
             --exclude stringcheese-icu-datetime-component \
             --exclude stringcheese-icu-segment-component \
+            --exclude stringcheese-icu-linebreak-component \
             --exclude stringcheese-tokenizer-hf-native \
             --all-features \
             --locked \
@@ -1874,6 +1875,135 @@ jobs:
         run: |
           cargo test \
             -p stringcheese-icu-segment-component \
+            --all-features \
+            --locked \
+            --test component_smoke \
+            -- --nocapture
+
+  # ------------------------------------------------------------------
+  # WIT-i18n Phase 5 follow-up UAX #14 line-break unit tests.
+  # ------------------------------------------------------------------
+  wasm-i18n-linebreak:
+    name: WIT-i18n line breaking (UAX #14 unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-linebreak-stable
+
+      - name: Build the icu-linebreak crate
+        run: |
+          cargo build \
+            -p stringcheese-scud \
+            -p stringcheese-icu-linebreak \
+            --all-features \
+            --locked
+
+      - name: Run icu-linebreak unit + wit-parser tests
+        run: |
+          cargo test \
+            -p stringcheese-icu-linebreak \
+            --all-features \
+            --locked \
+            -- --nocapture
+
+  # ------------------------------------------------------------------
+  # WIT-i18n Phase 5 follow-up UAX #14 line-break componentised
+  # WASM smoke.
+  # ------------------------------------------------------------------
+  wasm-i18n-linebreak-component:
+    name: icu-linebreak WIT component (wasmtime smoke)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      WASMTIME_VERSION: "26.0.0"
+      WASM_TOOLS_VERSION: "1.219.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm-i18n-linebreak-component-stable
+
+      - name: Install wasmtime (${{ env.WASMTIME_VERSION }})
+        run: |
+          set -euo pipefail
+          curl https://wasmtime.dev/install.sh -sSf | bash -s -- \
+            --version "v${WASMTIME_VERSION}"
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+
+      - name: Install wasm-tools (${{ env.WASM_TOOLS_VERSION }})
+        run: cargo install --locked --version "${WASM_TOOLS_VERSION}" wasm-tools
+
+      - name: Verify tool versions
+        run: |
+          wasmtime --version
+          wasm-tools --version
+          rustup target list --installed
+
+      - name: Download WASI preview1 reactor adapter
+        run: |
+          set -euo pipefail
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/wasi_snapshot_preview1.reactor.wasm"
+          mkdir -p "${RUNNER_TEMP}"
+          curl -fL --retry 3 --retry-delay 5 \
+            -o "${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" "$url"
+          echo "STRINGCHEESE_WASI_ADAPTER=${RUNNER_TEMP}/wasi_snapshot_preview1.reactor.wasm" >> "$GITHUB_ENV"
+
+      - name: Build the icu-linebreak component (wasm32-wasip1)
+        run: |
+          cargo build \
+            -p stringcheese-icu-linebreak-component \
+            --target wasm32-wasip1 \
+            --features wit-component \
+            --release \
+            --locked
+          ls -la target/wasm32-wasip1/release/stringcheese_icu_linebreak_component.wasm
+
+      - name: Componentize + report sizes
+        run: |
+          set -euo pipefail
+          module=target/wasm32-wasip1/release/stringcheese_icu_linebreak_component.wasm
+          component="${RUNNER_TEMP}/stringcheese_icu_linebreak_component.wasm"
+          wasm-tools component new "$module" \
+            --adapt "${STRINGCHEESE_WASI_ADAPTER}" \
+            -o "$component"
+          raw=$(stat -c '%s' "$module" 2>/dev/null || stat -f '%z' "$module")
+          comp=$(stat -c '%s' "$component" 2>/dev/null || stat -f '%z' "$component")
+          echo "icu-linebreak module (raw)         : ${raw} bytes"
+          echo "icu-linebreak component (raw)      : ${comp} bytes"
+          if command -v wasm-opt >/dev/null; then
+            module_opt="${RUNNER_TEMP}/icu_linebreak_module_opt.wasm"
+            component_opt="${RUNNER_TEMP}/icu_linebreak_component_opt.wasm"
+            wasm-opt -Oz "$module" -o "$module_opt" --enable-bulk-memory
+            wasm-tools component new "$module_opt" \
+              --adapt "${STRINGCHEESE_WASI_ADAPTER}" \
+              -o "$component_opt"
+            mod_opt=$(stat -c '%s' "$module_opt" 2>/dev/null || stat -f '%z' "$module_opt")
+            comp_opt=$(stat -c '%s' "$component_opt" 2>/dev/null || stat -f '%z' "$component_opt")
+            echo "icu-linebreak module (wasm-opt -Oz)  : ${mod_opt} bytes"
+            echo "icu-linebreak component (wasm-opt -Oz): ${comp_opt} bytes"
+          fi
+
+      - name: Run wasmtime smoke test
+        run: |
+          cargo test \
+            -p stringcheese-icu-linebreak-component \
             --all-features \
             --locked \
             --test component_smoke \
