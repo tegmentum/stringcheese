@@ -143,6 +143,13 @@ pub const CAP_DATETIME: [u8; 4] = *b"DTFM";
 /// Capability tag for break iteration. Reserved.
 pub const CAP_BREAK: [u8; 4] = *b"BRKI";
 
+/// Capability tag for line-break iteration (UAX #14). Reserved for
+/// Phase 5's follow-up `stringcheese-icu-linebreak` crate; distinct
+/// from [`CAP_BREAK`] so a caller only interested in line-break
+/// classification does not have to load the (larger) UAX #29
+/// grapheme / word / sentence class tables. Bytes `L` `B` `R` `K`.
+pub const CAP_LINEBREAK: [u8; 4] = *b"LBRK";
+
 /// Bitfield of file-level flags stored at offset 8.
 ///
 /// Only bits 0-3 are defined; bits 4-31 are reserved and must be zero
@@ -567,6 +574,22 @@ impl<'a> ScudFile<'a> {
         }
         BreakDataView::parse(self.body())
     }
+
+    /// Project the body as a line-break (UAX #14) view.
+    ///
+    /// Returns `Ok(view)` when the file's capability tag is
+    /// [`CAP_LINEBREAK`]; returns [`ScudError::CapabilityMismatch`]
+    /// otherwise. The returned [`LineBreakDataView`] borrows into
+    /// this [`ScudFile`]'s bytes.
+    pub fn as_linebreak_data(&self) -> Result<LineBreakDataView<'a>, ScudError> {
+        if self.capability() != CAP_LINEBREAK {
+            return Err(ScudError::CapabilityMismatch {
+                expected: CAP_LINEBREAK,
+                got: self.capability(),
+            });
+        }
+        LineBreakDataView::parse(self.body())
+    }
 }
 
 /// Parse the outer file header (magic through the CLDR/locale
@@ -593,7 +616,8 @@ fn parse_header(bytes: &[u8]) -> Result<ScudHeader<'_>, ScudError> {
     }
     let cap_id = <[u8; 4]>::try_from(&bytes[12..16]).unwrap();
     match cap_id {
-        CAP_CASE | CAP_COLLATION | CAP_PLURAL | CAP_NUMBER | CAP_DATETIME | CAP_BREAK => {}
+        CAP_CASE | CAP_COLLATION | CAP_PLURAL | CAP_NUMBER | CAP_DATETIME | CAP_BREAK
+        | CAP_LINEBREAK => {}
         other => return Err(ScudError::UnsupportedCapability { got: other }),
     }
     let header_len = read_u32(&bytes[16..20]) as usize;
@@ -2164,6 +2188,276 @@ impl<'a> BreakDataView<'a> {
     }
 }
 
+// -----------------------------------------------------------------------
+// Line-break view (Phase 5 follow-up — UAX #14)
+// -----------------------------------------------------------------------
+
+/// Section id for the UAX #14 line-break property class table. Bytes
+/// `L` `b` `C` `c`.
+///
+/// Same wire layout as [`SECT_GRAPHEME_CLASSES`]: a `u32 count`
+/// prefix followed by `count` fixed-width `(u32 start, u32 length,
+/// u8 class)` records sorted by `start`. The `class` byte is one of
+/// the [`LineBreakClass`] discriminants. An empty section means "the
+/// algorithm crate applies its built-in default classification".
+pub const SECT_LB_CLASSES: [u8; 4] = *b"LbCc";
+
+/// Section id for the UAX #14 line-break rule table marker. Bytes
+/// `L` `b` `R` `l`.
+///
+/// Wire layout: a single `u8 rules_id` byte identifying which
+/// rule-set the algorithm crate should apply. Values:
+///
+/// * `0` — no rules section present (identical to omitting the
+///   section).
+/// * `1` — the UAX #14 default rule set built into the algorithm
+///   crate ([`RULES_UAX14_DEFAULT`]).
+pub const SECT_LB_RULES: [u8; 4] = *b"LbRl";
+
+/// Section id for optional per-locale line-break tailoring bytes.
+/// Bytes `L` `b` `T` `l`.
+///
+/// Wire layout: a single `u8 strictness` byte selecting the CJK
+/// strictness mode ([`LB_STRICTNESS_LOOSE`] / [`LB_STRICTNESS_NORMAL`]
+/// / [`LB_STRICTNESS_STRICT`], see UAX #14 § 6.1). Absent section
+/// means "normal" (the CLDR default).
+pub const SECT_LB_TAILORINGS: [u8; 4] = *b"LbTl";
+
+/// Well-known rule-id byte for "use the UAX #14 default rules".
+pub const RULES_UAX14_DEFAULT: u8 = 1;
+
+/// Strictness tag: loose (line-break-strictness = "loose"). CJK
+/// tailoring per UAX #14 § 6.1 that expands the small-kana / hyphen
+/// break-opportunity set.
+pub const LB_STRICTNESS_LOOSE: u8 = 0;
+
+/// Strictness tag: normal (line-break-strictness = "normal"). The
+/// CLDR default.
+pub const LB_STRICTNESS_NORMAL: u8 = 1;
+
+/// Strictness tag: strict (line-break-strictness = "strict"). CJK
+/// tailoring per UAX #14 § 6.1 that contracts the small-kana /
+/// hyphen break-opportunity set.
+pub const LB_STRICTNESS_STRICT: u8 = 2;
+
+/// Unicode `Line_Break` property values per UAX #14.
+///
+/// Full 43-value set (the 40 pair-table classes + BK / SP / EOT
+/// meta-markers used by the algorithm's tail state machine). The
+/// `Xx` value covers scalars whose `Line_Break` property is `XX`
+/// (Unknown) — LB1 folds these to `AL` before the pair table is
+/// consulted.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+#[allow(missing_docs)]
+pub enum LineBreakClass {
+    /// Default / unknown class (`XX`). Resolved to `AL` before the
+    /// pair table is consulted per LB1.
+    Xx = 0,
+    /// `OP` — open punctuation.
+    Op = 1,
+    /// `CL` — closing punctuation.
+    Cl = 2,
+    /// `CP` — closing parenthesis (behaves like `CL` under LB13).
+    Cp = 3,
+    /// `QU` — quotation mark.
+    Qu = 4,
+    /// `GL` — non-breaking glue.
+    Gl = 5,
+    /// `NS` — non-starter.
+    Ns = 6,
+    /// `EX` — exclamation / interrogation.
+    Ex = 7,
+    /// `SY` — symbols allowing break after.
+    Sy = 8,
+    /// `IS` — infix numeric separator.
+    Is = 9,
+    /// `PR` — prefix numeric.
+    Pr = 10,
+    /// `PO` — postfix numeric.
+    Po = 11,
+    /// `NU` — numeric.
+    Nu = 12,
+    /// `AL` — alphabetic.
+    Al = 13,
+    /// `HL` — Hebrew letter.
+    Hl = 14,
+    /// `ID` — ideographic.
+    Id = 15,
+    /// `IN` — inseparable.
+    In = 16,
+    /// `HY` — hyphen.
+    Hy = 17,
+    /// `BA` — break after.
+    Ba = 18,
+    /// `BB` — break before.
+    Bb = 19,
+    /// `B2` — break opportunity before and after.
+    B2 = 20,
+    /// `ZW` — zero-width space.
+    Zw = 21,
+    /// `CM` — combining mark. LB9 folds this into the preceding
+    /// class before the pair table is consulted.
+    Cm = 22,
+    /// `WJ` — word joiner.
+    Wj = 23,
+    /// `H2` — Hangul syllable of shape LV.
+    H2 = 24,
+    /// `H3` — Hangul syllable of shape LVT.
+    H3 = 25,
+    /// `JL` — Hangul leading jamo.
+    Jl = 26,
+    /// `JV` — Hangul vowel jamo.
+    Jv = 27,
+    /// `JT` — Hangul trailing jamo.
+    Jt = 28,
+    /// `RI` — Regional Indicator (flag half). Paired per `LB30a`.
+    Ri = 29,
+    /// `EB` — Emoji base.
+    Eb = 30,
+    /// `EM` — Emoji modifier.
+    Em = 31,
+    /// `ZWJ` — Zero-Width Joiner.
+    Zwj = 32,
+    /// `CJ` — Conditional Japanese starter. LB1 folds this into
+    /// `NS` (normal / strict) or `ID` (loose) before the pair table
+    /// is consulted.
+    Cj = 33,
+    /// `SG` — Surrogate. LB1 folds this into `AL`.
+    Sg = 34,
+    /// `AI` — Ambiguous. LB1 folds this into `AL` (or `ID` under
+    /// certain East-Asian-Width tailorings).
+    Ai = 35,
+    /// `CB` — Contingent break opportunity.
+    Cb = 36,
+    /// `BK` — mandatory break (paragraph separator U+2028/U+2029
+    /// only).
+    Bk = 37,
+    /// `CR` — mandatory break (U+000D).
+    Cr = 38,
+    /// `LF` — mandatory break (U+000A).
+    Lf = 39,
+    /// `NL` — mandatory break (U+0085).
+    Nl = 40,
+    /// `SP` — space.
+    Sp = 41,
+    /// `SA` — South-East Asian scripts (Thai, Lao, Khmer, Burmese).
+    /// LB1 folds this to `AL` in Phase 5 pending dictionary support.
+    Sa = 42,
+}
+
+impl LineBreakClass {
+    /// Round-trip a `u8` back into the typed enum. Unknown → `Xx`.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Op,
+            2 => Self::Cl,
+            3 => Self::Cp,
+            4 => Self::Qu,
+            5 => Self::Gl,
+            6 => Self::Ns,
+            7 => Self::Ex,
+            8 => Self::Sy,
+            9 => Self::Is,
+            10 => Self::Pr,
+            11 => Self::Po,
+            12 => Self::Nu,
+            13 => Self::Al,
+            14 => Self::Hl,
+            15 => Self::Id,
+            16 => Self::In,
+            17 => Self::Hy,
+            18 => Self::Ba,
+            19 => Self::Bb,
+            20 => Self::B2,
+            21 => Self::Zw,
+            22 => Self::Cm,
+            23 => Self::Wj,
+            24 => Self::H2,
+            25 => Self::H3,
+            26 => Self::Jl,
+            27 => Self::Jv,
+            28 => Self::Jt,
+            29 => Self::Ri,
+            30 => Self::Eb,
+            31 => Self::Em,
+            32 => Self::Zwj,
+            33 => Self::Cj,
+            34 => Self::Sg,
+            35 => Self::Ai,
+            36 => Self::Cb,
+            37 => Self::Bk,
+            38 => Self::Cr,
+            39 => Self::Lf,
+            40 => Self::Nl,
+            41 => Self::Sp,
+            42 => Self::Sa,
+            _ => Self::Xx,
+        }
+    }
+
+    /// The wire-encoded `u8` discriminant.
+    #[must_use]
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Zero-copy view into a SCUD file's line-break body.
+///
+/// Every accessor is `O(log n)` in the size of the corresponding
+/// class-range table; the rule-id / strictness accessors are `O(1)`.
+/// Callers who see the section as empty fall back to the algorithm
+/// crate's built-in default classification and rule set.
+#[derive(Debug, Clone, Copy)]
+pub struct LineBreakDataView<'a> {
+    classes: &'a [u8],
+    rules: &'a [u8],
+    tailorings: &'a [u8],
+}
+
+impl<'a> LineBreakDataView<'a> {
+    fn parse(body: &'a [u8]) -> Result<Self, ScudError> {
+        let reader = SectionReader::new(body);
+        Ok(Self {
+            classes: reader.find(SECT_LB_CLASSES)?.unwrap_or(&[]),
+            rules: reader.find(SECT_LB_RULES)?.unwrap_or(&[]),
+            tailorings: reader.find(SECT_LB_TAILORINGS)?.unwrap_or(&[]),
+        })
+    }
+
+    /// True iff the class section carries at least one range.
+    #[must_use]
+    pub fn has_classes(&self) -> bool {
+        range_table_count(self.classes) > 0
+    }
+
+    /// The rule-id byte, or `0` (no rules) if the section is absent.
+    #[must_use]
+    pub fn rules_id(&self) -> u8 {
+        first_byte_or_zero(self.rules)
+    }
+
+    /// The strictness byte, or [`LB_STRICTNESS_NORMAL`] if absent.
+    #[must_use]
+    pub fn strictness(&self) -> u8 {
+        if self.tailorings.is_empty() {
+            LB_STRICTNESS_NORMAL
+        } else {
+            self.tailorings[0]
+        }
+    }
+
+    /// Look up the [`LineBreakClass`] of the given scalar. Returns
+    /// `None` when the pack does not carry any classification for
+    /// `cp`.
+    #[must_use]
+    pub fn class(&self, cp: u32) -> Option<LineBreakClass> {
+        lookup_range_class(self.classes, cp).map(LineBreakClass::from_u8)
+    }
+}
+
 /// Wire size of one class-range record: `(u32 start, u32 length, u8
 /// class)` = 9 bytes.
 const CLASS_RANGE_RECORD_BYTES: usize = 9;
@@ -3061,6 +3355,77 @@ impl BreakSectionBuilder {
     }
 }
 
+/// Builds the byte-encoded sections that a line-break (UAX #14)
+/// SCUD pack contains. Sorts input entries by source scalar so the
+/// reader's binary search stays valid.
+///
+/// Wire shape mirrors [`BreakSectionBuilder`]: a `u32 count` prefix
+/// followed by `(u32 start, u32 length, u8 class)` fixed-width
+/// records. The rule section stores a single `u8` id; the tailoring
+/// section stores a single `u8` strictness byte.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub struct LineBreakSectionBuilder {
+    ranges: Vec<(u32, u32, u8)>,
+    rules: Option<u8>,
+    strictness: Option<u8>,
+}
+
+#[cfg(feature = "alloc")]
+impl LineBreakSectionBuilder {
+    /// Fresh, empty builder.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a `(start, length, class)` line-break class range.
+    pub fn push_range(&mut self, start: u32, length: u32, class: LineBreakClass) {
+        self.ranges.push((start, length, class.as_u8()));
+    }
+
+    /// Stamp the well-known UAX #14 default rule id.
+    pub fn set_default_rules(&mut self) {
+        self.rules = Some(RULES_UAX14_DEFAULT);
+    }
+
+    /// Set a specific rule-id byte. Overrides [`Self::set_default_rules`].
+    pub fn set_rules(&mut self, id: u8) {
+        self.rules = Some(id);
+    }
+
+    /// Set the pack's CJK strictness tag (see [`LB_STRICTNESS_LOOSE`],
+    /// [`LB_STRICTNESS_NORMAL`], [`LB_STRICTNESS_STRICT`]).
+    pub fn set_strictness(&mut self, strictness: u8) {
+        self.strictness = Some(strictness);
+    }
+
+    /// Encode the class range section. Returns an empty `Vec` when
+    /// no ranges were pushed.
+    #[must_use]
+    pub fn classes_bytes(&self) -> Vec<u8> {
+        encode_range_table(&self.ranges)
+    }
+
+    /// Encode the rule id, or an empty `Vec` if none set.
+    #[must_use]
+    pub fn rules_bytes(&self) -> Vec<u8> {
+        match self.rules {
+            Some(id) => alloc::vec![id],
+            None => Vec::new(),
+        }
+    }
+
+    /// Encode the strictness tag, or an empty `Vec` if none set.
+    #[must_use]
+    pub fn tailorings_bytes(&self) -> Vec<u8> {
+        match self.strictness {
+            Some(s) => alloc::vec![s],
+            None => Vec::new(),
+        }
+    }
+}
+
 #[cfg(feature = "alloc")]
 fn encode_range_table(ranges: &[(u32, u32, u8)]) -> Vec<u8> {
     if ranges.is_empty() {
@@ -3731,6 +4096,110 @@ mod tests {
         let file = ScudFile::from_slice(&bytes).unwrap();
         assert!(matches!(
             file.as_break_data(),
+            Err(ScudError::CapabilityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn linebreak_pack_round_trips() {
+        let mut b = LineBreakSectionBuilder::new();
+        b.push_range(0x0020, 1, LineBreakClass::Sp);
+        b.push_range(0x000A, 1, LineBreakClass::Lf);
+        b.push_range(0x000D, 1, LineBreakClass::Cr);
+        b.push_range(0x0028, 1, LineBreakClass::Op);
+        b.push_range(0x0029, 1, LineBreakClass::Cp);
+        b.set_default_rules();
+        b.set_strictness(LB_STRICTNESS_STRICT);
+        let mut w = ScudWriter::new(CAP_LINEBREAK, "15.1", Some(""));
+        w.append_section(SECT_LB_CLASSES, &b.classes_bytes());
+        w.append_section(SECT_LB_RULES, &b.rules_bytes());
+        w.append_section(SECT_LB_TAILORINGS, &b.tailorings_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert_eq!(file.capability(), CAP_LINEBREAK);
+        let view = file.as_linebreak_data().unwrap();
+        assert!(view.has_classes());
+        assert_eq!(view.class(0x0020), Some(LineBreakClass::Sp));
+        assert_eq!(view.class(0x0028), Some(LineBreakClass::Op));
+        assert_eq!(view.class(0x0029), Some(LineBreakClass::Cp));
+        assert_eq!(view.class(0x0041), None); // 'A' — not in pack
+        assert_eq!(view.rules_id(), RULES_UAX14_DEFAULT);
+        assert_eq!(view.strictness(), LB_STRICTNESS_STRICT);
+    }
+
+    #[test]
+    fn linebreak_empty_pack_reports_defaults() {
+        let mut w = ScudWriter::new(CAP_LINEBREAK, "15.1", Some(""));
+        let empty = LineBreakSectionBuilder::new();
+        w.append_section(SECT_LB_CLASSES, &empty.classes_bytes());
+        w.append_section(SECT_LB_RULES, &empty.rules_bytes());
+        w.append_section(SECT_LB_TAILORINGS, &empty.tailorings_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_linebreak_data().unwrap();
+        assert!(!view.has_classes());
+        assert_eq!(view.rules_id(), 0);
+        assert_eq!(view.strictness(), LB_STRICTNESS_NORMAL);
+    }
+
+    #[test]
+    fn linebreak_class_enum_round_trips() {
+        for c in [
+            LineBreakClass::Xx,
+            LineBreakClass::Op,
+            LineBreakClass::Cl,
+            LineBreakClass::Cp,
+            LineBreakClass::Qu,
+            LineBreakClass::Gl,
+            LineBreakClass::Ns,
+            LineBreakClass::Ex,
+            LineBreakClass::Sy,
+            LineBreakClass::Is,
+            LineBreakClass::Pr,
+            LineBreakClass::Po,
+            LineBreakClass::Nu,
+            LineBreakClass::Al,
+            LineBreakClass::Hl,
+            LineBreakClass::Id,
+            LineBreakClass::In,
+            LineBreakClass::Hy,
+            LineBreakClass::Ba,
+            LineBreakClass::Bb,
+            LineBreakClass::B2,
+            LineBreakClass::Zw,
+            LineBreakClass::Cm,
+            LineBreakClass::Wj,
+            LineBreakClass::H2,
+            LineBreakClass::H3,
+            LineBreakClass::Jl,
+            LineBreakClass::Jv,
+            LineBreakClass::Jt,
+            LineBreakClass::Ri,
+            LineBreakClass::Eb,
+            LineBreakClass::Em,
+            LineBreakClass::Zwj,
+            LineBreakClass::Cj,
+            LineBreakClass::Sg,
+            LineBreakClass::Ai,
+            LineBreakClass::Cb,
+            LineBreakClass::Bk,
+            LineBreakClass::Cr,
+            LineBreakClass::Lf,
+            LineBreakClass::Nl,
+            LineBreakClass::Sp,
+            LineBreakClass::Sa,
+        ] {
+            assert_eq!(LineBreakClass::from_u8(c.as_u8()), c);
+        }
+        assert_eq!(LineBreakClass::from_u8(250), LineBreakClass::Xx);
+    }
+
+    #[test]
+    fn as_linebreak_data_rejects_case_file() {
+        let bytes = build_ascii_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        assert!(matches!(
+            file.as_linebreak_data(),
             Err(ScudError::CapabilityMismatch { .. })
         ));
     }

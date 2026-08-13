@@ -1,0 +1,128 @@
+// StringCheese ICU alternative — line-break iteration capability.
+//
+// Sibling of the `tegmentum:i18n-segment@0.1.0` (UAX #29) package.
+// This is the line-break surface per Unicode Standard Annex #14
+// (<https://www.unicode.org/reports/tr14/>): given a string, returns
+// the list of positions at which a text layout engine may (or must)
+// insert a line break.
+//
+// See `docs/design/wit-i18n.md` § 8.7 for the delivery notes and
+// § 8.5 for the reasoning behind splitting this out of the UAX #29
+// segment package.
+//
+// Boundary offsets are returned as byte offsets into the input's
+// UTF-8 encoding — matches Rust's `str` convention and is what wasm
+// callers expect. Every emitted opportunity records both the byte
+// offset and whether the break is mandatory (BK / CR / LF / NL) or a
+// hint the layout engine is free to consume.
+
+package tegmentum:i18n-linebreak@0.1.0;
+
+/// Shared types. Split into its own interface so the `linebreak` and
+/// `capabilities` interfaces can `use` the same definitions.
+interface types {
+    /// BCP 47 locale tag: "en", "ja-JP", …. The empty string denotes
+    /// the CLDR root locale. Accepted for forward compatibility with
+    /// per-locale tailorings; Phase 5 applies the UAX #14 default
+    /// rules regardless of the tag.
+    type locale = string;
+
+    /// Distinguishes a mandatory break (paragraph separator, CR, LF,
+    /// NEL) from a discretionary one (space, hyphen, ZWJ, …). See
+    /// UAX #14 § 6 for the rule numbers behind each classification.
+    variant break-kind {
+        /// A required break introduced by BK / CR / LF / NL. A
+        /// conformant layout engine MUST insert a line break here.
+        mandatory,
+        /// A discretionary break — the layout engine is free to
+        /// insert a line break at this position, but is not required
+        /// to.
+        allowed,
+    }
+
+    /// One break-opportunity record.
+    ///
+    /// `offset` is the UTF-8 byte offset at which the layout engine
+    /// may (or must) insert the break. The last emitted opportunity
+    /// always sits at `len(input)` and carries `kind = allowed`
+    /// unless the input ends with a mandatory break, in which case
+    /// the last opportunity's kind reflects the terminator.
+    record break-opportunity {
+        /// UTF-8 byte offset of the break opportunity.
+        offset: u32,
+        /// Whether the break is mandatory or discretionary.
+        kind: break-kind,
+    }
+
+    /// CJK strictness tailoring (UAX #14 § 6.1). CSS `line-break`
+    /// authors: `loose` matches `line-break: loose`, `strict`
+    /// matches `line-break: strict`, `normal` is the CLDR default.
+    enum line-break-strictness {
+        /// Loose — expand the set of allowed break opportunities
+        /// (small-kana, hyphens, iteration marks).
+        loose,
+        /// Normal — the CLDR default.
+        normal,
+        /// Strict — contract the set of allowed break opportunities.
+        strict,
+    }
+
+    /// Errors surfaced by the line-break interface.
+    variant linebreak-error {
+        /// The locale tag was not a well-formed BCP 47 tag.
+        invalid-locale(string),
+    }
+}
+
+/// The core line-break surface.
+///
+/// Every function takes an input string plus (for the strictness
+/// variant) a strictness tag, and returns the list of break
+/// opportunities in UTF-8-byte-offset-sorted order.
+interface linebreak {
+    use types.{locale, break-opportunity, line-break-strictness, linebreak-error};
+
+    /// Enumerate every break opportunity in `text` under the CLDR
+    /// default (normal) strictness.
+    ///
+    /// The returned list carries one record per opportunity in
+    /// strictly-increasing offset order. Empty input returns the
+    /// empty list.
+    find-breaks: func(text: string) -> list<break-opportunity>;
+
+    /// As [`find-breaks`], but the caller selects a CJK strictness
+    /// tailoring per UAX #14 § 6.1.
+    find-breaks-with-strictness: func(
+        text: string,
+        strictness: line-break-strictness,
+    ) -> list<break-opportunity>;
+}
+
+/// Introspection: which locales does the linked component actually
+/// cover?
+///
+/// Phase 5's follow-up ships the locale-neutral default only; the
+/// returned list carries the root-locale marker `""` and nothing
+/// else. Locale-specific tailorings (Japanese `ja`, Chinese `zh-Hans`,
+/// Korean `ko`) are documented deferrals — the WIT surface is
+/// ready but the built-in engine falls through to the default rules
+/// for every input.
+interface capabilities {
+    use types.{locale};
+
+    /// Every BCP 47 tag this component's linked packs cover. Phase 5
+    /// ships the root-locale marker only.
+    supported-locales: func() -> list<locale>;
+
+    /// True iff a query in the given locale would use a locale-
+    /// specific pack. Phase 5 always falls through to the default;
+    /// returns `true` for every input for forward compatibility.
+    supports: func(loc: locale) -> bool;
+}
+
+/// The world every line-break component exports.
+world linebreak-world {
+    export types;
+    export linebreak;
+    export capabilities;
+}

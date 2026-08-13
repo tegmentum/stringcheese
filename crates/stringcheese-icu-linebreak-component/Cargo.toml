@@ -1,0 +1,73 @@
+[package]
+name = "stringcheese-icu-linebreak-component"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Reference WebAssembly component packaging for the StringCheese ICU-alternative UAX #14 line-break capability. Wraps `stringcheese-icu-linebreak`'s `LineBreakEngine` behind the shared `tegmentum:i18n-linebreak@0.1.0` WIT contract, feature-gated so a component-model host can load the line-break engine through the standard `linebreak-world` exports while callers of the plain `rlib` avoid any wit-bindgen-rt symbol collisions. Phase 5 follow-up ships the algorithm crate's built-in UAX #14 default classification tables + rules, so the shipped .wasm is drivable end-to-end without loading any external SCUD pack."
+categories = ["text-processing", "internationalization", "wasm"]
+keywords = ["linebreak", "icu", "uax14", "wasm", "component-model"]
+
+[lib]
+# Dual-target: `rlib` for Rust callers (unit tests, host-side
+# embedding), `cdylib` for the WIT component build produced by
+# `cargo build --target wasm32-wasip1 --features wit-component`.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# `alloc` is required unconditionally — the WIT `linebreak-world`
+# exports functions that return owned `Vec<BreakOpportunity>`s and
+# the `LineBreakEngine` the guest wraps is `alloc`-only. `std` is
+# enabled by default for parity with the rest of the WIT-i18n
+# subsystem.
+default = ["std"]
+std = ["stringcheese-icu-linebreak/std"]
+
+# `wit-component` opts into the WIT `Guest` implementations and the
+# `export!` invocation that turns this crate into a standalone
+# `tegmentum:i18n-linebreak@0.1.0` WASM component. Off by default
+# so the crate can be linked as a plain `rlib` sibling of other WIT
+# components without every backend emitting the same exported
+# symbols and tripping the linker with duplicate-export errors —
+# matches the pattern established by the sibling icu-*-component
+# crates. Enable this only for the standalone-component build
+# produced by `cargo build --target wasm32-wasip1 --features
+# wit-component`.
+wit-component = ["std", "dep:wit-bindgen-rt"]
+
+[dependencies]
+# The line-break algorithm crate. Provides `LineBreakEngine`,
+# `BreakOpportunity`, and the UAX #14 default classification tables +
+# rule engine the guest delegates to.
+stringcheese-icu-linebreak = { workspace = true, features = ["alloc"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Pulled in only when the `wit-component` feature is enabled — see
+# the feature docs above. Version + feature set pinned in lockstep
+# with the other icu-*-component crates so a workspace-wide
+# wit-bindgen bump lands in one place.
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[dev-dependencies]
+# `wit-parser` gives a strong "the WIT file parses cleanly" gate
+# that does not require the wasm toolchain to be present. Matches
+# the sibling icu-*-component crates.
+wit-parser = "0.230"
+
+# `wasmtime` drives the in-process component runtime the smoke
+# tests in `tests/component_smoke.rs` invoke each of the WIT
+# exports through. Feature-pinned to the minimal set the tests
+# need — same trimmed shape as the sibling icu-*-component crates.
+wasmtime = { version = "26", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+
+# Companion crate that ships the WASI preview2 host implementations
+# behind `add_to_linker_sync`. The line-break component does no
+# I/O of its own, but the wasip1 -> wasip2 adapter applied at
+# componentize time introduces a `wasi:*@0.2.x` import surface
+# that the linker must satisfy before `instantiate` will succeed.
+wasmtime-wasi = { version = "26", default-features = false }
+
+[lints]
+workspace = true
