@@ -103,7 +103,7 @@ icu_collator = { version = "1.5", optional = true }
 # `icu_locid` — the `locale!("en")` macro that names the CLDR locale
 # passed to `Collator::try_new`. Same version family as the
 # already-in-tree `icu_casemap` dependency (both at ICU4X 1.5).
-icu_locid = { version = "1.5", optional = true }
+icu_locid = { version = "2.0", optional = true }
 # `icu_provider` with the `sync` feature. Enabling `sync` swaps
 # ICU4X's internal `Rc`-based smart pointers for `Arc`s, which is
 # what makes the resulting `Collator` `Send + Sync` — required for
