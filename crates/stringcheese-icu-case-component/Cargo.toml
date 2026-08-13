@@ -22,7 +22,15 @@ crate-type = ["cdylib", "rlib"]
 # `CaseEngine` the guest wraps is `alloc`-only. `std` is enabled by
 # default for parity with the rest of the WIT-i18n subsystem.
 default = ["std"]
-std = ["stringcheese-icu-case/std", "stringcheese-en/std", "stringcheese-tr/std"]
+std = [
+    "stringcheese-icu-case/std",
+    "stringcheese-en/std",
+    "stringcheese-de/std",
+    "stringcheese-fr/std",
+    "stringcheese-tr/std",
+    "stringcheese-ru/std",
+    "stringcheese-zh/std",
+]
 
 # `wit-component` opts into the WIT `Guest` implementations and the
 # `export!` invocation that turns this crate into a standalone
@@ -41,13 +49,20 @@ wit-component = ["std", "dep:wit-bindgen-rt"]
 # `CasePack`, `FoldMode`, `TitleBoundary`, and the `CaseError`
 # variants the WIT `case-error` mirrors.
 stringcheese-icu-case = { workspace = true, features = ["alloc"] }
-# English and Turkish SCUD packs. Embedded so the shipped .wasm is
-# drivable end-to-end for the smoke test — `upper("i", "tr")`
+# English, German, French, Turkish, Russian, and Chinese SCUD packs
+# — the WIT-i18n Phase 6 six-locale roster. Embedded so the shipped
+# .wasm is drivable end-to-end for the smoke test: `upper("i", "tr")`
 # resolves to `"İ"` because the Turkish contextual override table
-# ships inside the same component. The `case-scud` feature exposes
-# each pack's `case_data::case_pack()` helper.
+# ships inside the same component, and the fr / ru / zh packs give
+# uniform pack-hit ratios for their Latin / Cyrillic / Han inputs.
+# The `case-scud` feature exposes each pack's
+# `case_data::case_pack()` helper.
 stringcheese-en = { workspace = true, features = ["case-scud"] }
+stringcheese-de = { workspace = true, features = ["case-scud"] }
+stringcheese-fr = { workspace = true, features = ["case-scud"] }
 stringcheese-tr = { workspace = true, features = ["case-scud"] }
+stringcheese-ru = { workspace = true, features = ["case-scud"] }
+stringcheese-zh = { workspace = true, features = ["case-scud"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 # Pulled in only when the `wit-component` feature is enabled — see
