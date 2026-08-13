@@ -335,10 +335,29 @@ impl<'a> CaseEngine<'a> {
     }
 
     /// Look up the first-matching pack for a locale tag.
+    ///
+    /// Consults an exact-match on the tag first, then a small set of
+    /// locale-equivalence aliases (see [`case_locale_alias`]) — this
+    /// lets a caller who ships only the Turkish `tr` case pack still
+    /// pack-hit when the query locale is Azerbaijani (`az` / `az-Latn`),
+    /// which shares the Turkic dotted / dotless-I case tailorings.
+    /// Alias resolution never re-consults the fallback chain — a match
+    /// on `az` returns the `tr` pack directly.
     fn pack_for(&self, tag: &str) -> Option<&CasePack<'a>> {
-        self.packs
+        if let Some(pack) = self
+            .packs
             .iter()
             .find(|p| p.locale.eq_ignore_ascii_case(tag))
+        {
+            return Some(pack);
+        }
+        if let Some(alias) = case_locale_alias(tag) {
+            return self
+                .packs
+                .iter()
+                .find(|p| p.locale.eq_ignore_ascii_case(alias));
+        }
+        None
     }
 
     /// Iterate every pack whose locale is a prefix of `locale` under
@@ -449,6 +468,39 @@ impl<'a> CaseEngine<'a> {
     }
 }
 
+/// Map a locale tag to its case-mapping equivalence-class partner,
+/// if any.
+///
+/// Some locales share the same locale-specific case tailorings — the
+/// canonical example is Azerbaijani `az` (Latin script), whose
+/// dotted/dotless-I rules are identical to Turkish `tr`. Rather than
+/// requiring every consumer to ship two nearly-identical SCUD packs,
+/// [`CaseEngine`]'s pack-lookup consults this table when an exact
+/// tag-match misses so a caller who loaded only the `tr` pack still
+/// pack-hits under `az` queries.
+///
+/// The alias is deliberately narrow: it fires only on the exact tag,
+/// not on prefixes. Query `az-Cyrl` (Azerbaijani in Cyrillic script,
+/// which does *not* share the Turkic-I rules) walks the fallback
+/// chain `az-Cyrl → az → ""`; at `az` the alias fires and returns the
+/// Turkish pack. Cyrillic-script Azerbaijani text under this shape is
+/// a documented Phase 6 red flag — the fix ships alongside a
+/// dedicated `az-Cyrl` pack in a follow-up wave.
+///
+/// The Phase 6 table is intentionally minimal (just `az → tr`); larger
+/// tables (Lithuanian's soft-dotted-i, Greek final-sigma tailoring at
+/// case boundaries, etc.) land alongside the packs that need them.
+#[must_use]
+pub fn case_locale_alias(tag: &str) -> Option<&'static str> {
+    // Case-insensitive exact match — BCP 47 tags are ASCII so
+    // eq_ignore_ascii_case matches locale-agnostic RFC 5646 canonical
+    // forms (`AZ` == `az`).
+    if tag.eq_ignore_ascii_case("az") || tag.eq_ignore_ascii_case("az-Latn") {
+        return Some("tr");
+    }
+    None
+}
+
 /// Walk the CLDR-defined fallback chain for a BCP 47 tag.
 ///
 /// The chain strips subtags one at a time from the right, terminating
@@ -535,12 +587,20 @@ mod tests {
 
     fn build_test_tr() -> alloc::vec::Vec<u8> {
         let mut c = CaseSectionBuilder::new();
-        // Turkish dotted/dotless-I contextual mappings.
+        // Turkish dotted/dotless-I contextual mappings (Phase 6).
         c.push_context('I' as u32, ContextKind::LocaleOverrideLower, 0x0131);
         c.push_context('i' as u32, ContextKind::LocaleOverrideUpper, 0x0130);
+        // Simple round-trip for the dotted / dotless capital pair —
+        // default Unicode has no uppercase for U+0131 (ı) and lowers
+        // U+0130 (İ) to "i̇" (i + U+0307), which is wrong for Turkish;
+        // the pack overrides both via the simple tables.
+        c.push_simple_lower(0x0130, 0x0069); // İ → i
+        c.push_simple_upper(0x0131, 0x0049); // ı → I
 
         let mut w = ScudWriter::new(CAP_CASE, "44.1", Some("tr"));
         w.append_section(SECT_CONTEXT, &c.context_bytes());
+        w.append_section(SECT_SIMPLE_LOWER, &c.simple_lower_bytes());
+        w.append_section(SECT_SIMPLE_UPPER, &c.simple_upper_bytes());
         w.finish()
     }
 
@@ -678,6 +738,106 @@ mod tests {
         assert_eq!(en_pack.locale(), "en");
         assert_eq!(en_pack.cldr_version(), "44.1");
         assert!(en_pack.scud_bytes_len() > 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 6: Turkish-i locale-tailoring algorithm change
+    //
+    // The tr pack ships four Turkish-i rules via SECT_CONTEXT
+    // (`LocaleOverrideLower` / `LocaleOverrideUpper`) plus symmetric
+    // simple-table entries for `İ ↔ i` and `ı ↔ I`. Under the CLDR
+    // fallback chain those rules apply when the query locale walks up
+    // to `tr`. The `case_locale_alias` table extends the same rules to
+    // Azerbaijani `az` (Latin) queries so a caller loading only the
+    // `tr` pack still handles both locales — the whole point of a
+    // shared-tailoring equivalence class.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn turkish_upper_lowercase_i_maps_to_dotted_capital() {
+        // Rule: uppercase("i", "tr") == "İ" (U+0130).
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        assert_eq!(engine.to_upper("i", "tr"), "\u{0130}");
+    }
+
+    #[test]
+    fn turkish_lower_capital_i_maps_to_dotless_lowercase() {
+        // Rule: lowercase("I", "tr") == "ı" (U+0131).
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        assert_eq!(engine.to_lower("I", "tr"), "\u{0131}");
+    }
+
+    #[test]
+    fn az_locale_alias_shares_turkish_tailorings() {
+        // The az → tr alias means a caller shipping only the Turkish
+        // pack still gets Turkic-I behaviour under Azerbaijani queries.
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        // az bare tag walks fallback ["az", ""]; alias fires at "az".
+        assert_eq!(engine.to_upper("i", "az"), "\u{0130}");
+        assert_eq!(engine.to_lower("I", "az"), "\u{0131}");
+        // az-Latn also fires the alias directly.
+        assert_eq!(engine.to_upper("i", "az-Latn"), "\u{0130}");
+        // az-AZ walks ["az-AZ", "az", ""] — alias fires at the "az"
+        // rung, so region-tagged Azerbaijani inherits the same rules.
+        assert_eq!(engine.to_upper("i", "az-AZ"), "\u{0130}");
+    }
+
+    #[test]
+    fn turkish_control_english_locale_uses_default_case_rules() {
+        // Cross-check: the same input under English lowercasing does
+        // NOT apply the Turkish tailoring even when the tr pack is
+        // loaded — the alias is scoped to tr / az queries only.
+        let (en, tr) = engine_with_en_and_tr();
+        let en_pack = CasePack::from_scud_bytes(&en).unwrap();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![en_pack, tr_pack]);
+        assert_eq!(engine.to_upper("istanbul", "en"), "ISTANBUL");
+        assert_eq!(engine.to_lower("ISTANBUL", "en"), "istanbul");
+    }
+
+    #[test]
+    fn case_locale_alias_returns_expected_partners() {
+        // The alias table is the algorithm-side authority for shared
+        // case tailorings; a regression that widens or narrows it is
+        // visible here.
+        assert_eq!(case_locale_alias("az"), Some("tr"));
+        assert_eq!(case_locale_alias("AZ"), Some("tr")); // case-insensitive
+        assert_eq!(case_locale_alias("az-Latn"), Some("tr"));
+        // Cyrillic-script Azerbaijani is *not* Turkic-I; the alias
+        // deliberately does not fire on `az-Cyrl` — the walk-up to
+        // bare `az` triggers the alias, though, which is a documented
+        // Phase 6 red flag until a dedicated `az-Cyrl` pack lands.
+        assert_eq!(case_locale_alias("az-Cyrl"), None);
+        assert_eq!(case_locale_alias("tr"), None);
+        assert_eq!(case_locale_alias("en"), None);
+    }
+
+    #[test]
+    fn turkish_dotless_lowercase_uppers_to_dotless_capital() {
+        // Rule (via simple_upper in the tr pack): uppercase("ı", "tr")
+        // == "I". Default Unicode has no uppercase mapping for U+0131,
+        // so this only works because the tr pack ships the mapping.
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        assert_eq!(engine.to_upper("\u{0131}", "tr"), "I");
+    }
+
+    #[test]
+    fn turkish_dotted_capital_lowers_to_dotted_lowercase() {
+        // Rule (via simple_lower in the tr pack): lowercase("İ", "tr")
+        // == "i" (single scalar). Default Unicode lowercases İ to
+        // "i̇" (i + combining dot above); the tr pack overrides that.
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        assert_eq!(engine.to_lower("\u{0130}", "tr"), "i");
     }
 
     #[test]

@@ -501,6 +501,27 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.6. Phase 6 progress (2026-08)
+
+**Landed.** The Phase 6 multi-language rollout ships case + collation packs across the six-locale roster (**{en, de, fr, tr, ru, zh}**) and closes the Turkish-i locale-tailoring algorithm hook:
+
+- **Case-mapping locales.** The Phase 1 shipped set of `{en, tr}` grows to `{en, de, fr, tr, ru, zh}`. Each new pack ships an ASCII a-z ↔ A-Z table, the Latin-1 supplement (À-Þ ↔ à-þ excluding × ÷), the ß → SS full uppercase / ß → ss full fold rows, and language-specific letters (fr adds Ÿ / Œ / Æ; ru adds the Cyrillic upper/lower pairs; zh ships ambient ASCII since Han is case-neutral; de adds ẞ → ß simple-lower). `case-de.scud` is the new pack landing in this wave (~1.5 KB); `case-{fr,ru,zh}.scud` landed in the Phase 6 partial rollout (Wave 14).
+- **Turkish-i algorithm hook.** `stringcheese_icu_case::CaseEngine::pack_for` grows a locale-alias fallback that fires when an exact tag-match misses. The Phase 6 table maps `az` and `az-Latn` → `tr` so a caller shipping only the Turkish pack still handles the Turkic dotted/dotless-I rules under Azerbaijani queries (same rules per [UAX #21 § 1.2](https://www.unicode.org/reports/tr21/tr21-7.html)). Exposed as the standalone `case_locale_alias(tag)` helper for pack-authoring introspection. +7 new unit tests exercising the four Turkish-i rules (I → ı, i → İ, İ → i, ı → I) plus az / az-Latn / az-AZ fallback and a control that English keeps default rules.
+- **Collation locales.** The Phase 2 shipped set of `{en, de}` grows to `{en, de, fr, tr, ru, zh}`. The fr / ru / zh packs shipped in Wave 14 (each ships options + shared ß→ss expansion + Latin-1 supplement rows so the composed engine has uniform pack-hit ratios); the tr pack adds Turkish alphabet options. Locale-specific ordering tailorings — French backwards-secondary, Russian case-second, Turkish primary-distinct dotless-ı, Chinese pinyin/stroke — remain documented Phase 6 deferrals (see § 8.2's deferral list; they require CollationEngine changes not scoped to this wave).
+- **Component embedding.** `stringcheese-icu-case-component` grows from embedding `{en, tr}` to embedding `{en, de, fr, tr, ru, zh}`; `stringcheese-icu-collation-component` grows from `{en, de}` to `{en, de, fr, tr, ru, zh}`. Each smoke-test suite gains one-or-two per-locale wasmtime tests exercising the new packs end-to-end, plus an Azerbaijani-alias smoke on the case component.
+- **CI.** `wasm-i18n-case` and `wasm-i18n-collation` jobs extended from two-locale coverage to six-locale coverage. Each job runs the per-locale `case_golden_<lang>` / `collation_golden_<lang>` suite plus a size-reporting step listing all six SCUD blobs.
+
+**Locales covered vs the Phase 6 charter.** Phase 6's completion charter (§ 8, above) lists `{en, fr, de, es, ja, zh, ar}` as the seven languages that must ship the full six capabilities each. Case + collation are now covered for `{en, de, fr, tr, ru, zh}` — six of the seven; the missing pieces are:
+
+- `es`, `ja`, `ar` — no case or collation packs yet. The Phase 3 plural + number packs for these landed in Wave 3.
+- `tr`, `ru` are Phase 6 additions over the charter's baseline seven, giving richer coverage for Turkic and Cyrillic scripts.
+- Full-capability coverage (adding datetime + break for every locale) remains a follow-up wave.
+
+**Red flags.** A couple worth noting for reviewers:
+
+- **`az-Cyrl` walks up to `az` and inherits Turkic-I incorrectly.** Cyrillic-script Azerbaijani does not share the dotted / dotless-I rules with Turkish, but the CLDR fallback chain for `az-Cyrl-AZ` walks `az-Cyrl-AZ → az-Cyrl → az → ""` and the alias table fires at the bare-`az` rung, returning the Turkish pack. The fix ships alongside a dedicated `az-Cyrl` pack in a follow-up wave; until then a caller who needs correct `az-Cyrl` behaviour must supply an explicit pack (or query at a more specific tag that the alias table does not cover).
+- **Turkish collation is still primary-equal on ı vs i.** The tr collation pack ships options only, not primary-tailoring rows. Adding the CLDR-conformant primary-distinct `... h ı i j ...` ordering requires a new SCUD section for per-locale weight overrides consulted before the UCA compare, plus the CollationEngine changes to consume it — deferred to a follow-up wave. See § 8.2's deferral list.
+
 ### 8.5. Phase 5 progress (2026-08)
 
 **Landed.** The Phase 5 foundation ships across a single wave:

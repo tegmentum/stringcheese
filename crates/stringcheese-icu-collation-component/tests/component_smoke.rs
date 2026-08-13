@@ -486,7 +486,14 @@ fn wasmtime_smoke_supported_locales_lists_bundled_tags() {
         .expect("get-capabilities trap-free");
     assert_eq!(
         record.supported_locales,
-        vec!["en".to_string(), "de".to_string()],
+        vec![
+            "en".to_string(),
+            "de".to_string(),
+            "fr".to_string(),
+            "tr".to_string(),
+            "ru".to_string(),
+            "zh".to_string(),
+        ],
     );
     assert!(
         matches!(record.max_strength, WitStrength::Identical),
@@ -494,6 +501,180 @@ fn wasmtime_smoke_supported_locales_lists_bundled_tags() {
         record.max_strength,
     );
     assert_eq!(record.cldr_version, "44.1");
+}
+
+// -----------------------------------------------------------------------
+// Phase 6: per-locale smoke tests for the four new packs
+// (fr, tr, ru, zh). Two smokes per locale.
+// -----------------------------------------------------------------------
+
+#[test]
+fn wasmtime_smoke_compare_french_primary_ordering() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    let ord = collation
+        .call_compare(
+            &mut store,
+            "apple",
+            "banana",
+            &loc("fr"),
+            WitStrength::Primary,
+        )
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "apple < banana at primary under fr should be Less, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_french_supports_falls_back_to_root() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let caps = bindings.stringcheese_icu_collation_capabilities();
+    // fr-CA is not registered directly, but falls back to fr.
+    let ok = caps
+        .call_supports(&mut store, &loc("fr-CA"))
+        .expect("supports trap-free");
+    assert!(ok, "fr-CA should resolve via BCP 47 fallback to fr");
+}
+
+#[test]
+fn wasmtime_smoke_compare_turkish_ascii_primary() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // Standard ASCII primary ordering under the tr locale — the
+    // primary-distinct dotless-ı ordering is a documented Phase 6
+    // deferral so `ı` and `i` compare primary-equal for now.
+    let ord = collation
+        .call_compare(&mut store, "a", "b", &loc("tr"), WitStrength::Primary)
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "a < b at primary under tr should be Less, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_turkish_sharp_s_expansion_shared() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // The tr pack ships the shared ß → ss expansion so a Turkish
+    // text quoting a German loanword collates uniformly.
+    let ord = collation
+        .call_compare(
+            &mut store,
+            "Straße",
+            "Strasse",
+            &loc("tr"),
+            WitStrength::Tertiary,
+        )
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Equal),
+        "Straße == Strasse under tr at tertiary should be Equal, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_russian_cyrillic_primary() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // Cyrillic а < б at primary.
+    let ord = collation
+        .call_compare(&mut store, "а", "б", &loc("ru"), WitStrength::Primary)
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "Cyrillic а < б at primary under ru should be Less, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_russian_word_primary() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // Cyrillic word compare — Москва vs Санкт primary ordering.
+    let ord = collation
+        .call_compare(
+            &mut store,
+            "Москва",
+            "Санкт",
+            &loc("ru"),
+            WitStrength::Primary,
+        )
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "Москва < Санкт at primary under ru should be Less, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_chinese_ascii_primary() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // ASCII input under zh locale — the pinyin / stroke ordering is
+    // a documented Phase 6 deferral so Han input falls back to
+    // codepoint order and ASCII input follows UCA primary.
+    let ord = collation
+        .call_compare(
+            &mut store,
+            "apple",
+            "banana",
+            &loc("zh"),
+            WitStrength::Primary,
+        )
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "apple < banana at primary under zh should be Less, got {ord:?}"
+    );
+}
+
+#[test]
+fn wasmtime_smoke_compare_chinese_han_primary() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let collation = bindings.stringcheese_icu_collation_collation();
+    // Han input under zh locale falls back to codepoint order — 一
+    // (U+4E00) < 二 (U+4E8C).
+    let ord = collation
+        .call_compare(&mut store, "一", "二", &loc("zh"), WitStrength::Primary)
+        .expect("compare trap-free")
+        .unwrap_or_else(|e| panic!("compare returned error: {}", describe_err(&e)));
+    assert!(
+        matches!(ord, WitOrdering::Less),
+        "一 (U+4E00) < 二 (U+4E8C) at primary under zh should be Less, got {ord:?}"
+    );
 }
 
 #[test]

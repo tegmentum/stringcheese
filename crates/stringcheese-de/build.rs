@@ -22,12 +22,13 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{german_cardinals, german_ordinals};
 use stringcheese_scud::{
-    CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CollationSectionBuilder, DateTimeLength,
-    DateTimeSectionBuilder, NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM,
-    SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS,
-    SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS, SECT_MONTH_ABBR, SECT_MONTH_NAMES,
-    SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR,
-    SECT_WEEKDAY_NAMES, ScudWriter,
+    CAP_CASE, CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
+    CollationSectionBuilder, DateTimeLength, DateTimeSectionBuilder, NumberSectionBuilder,
+    PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS,
+    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_MONTH_ABBR, SECT_MONTH_NAMES, SECT_ORDINAL_RULES,
+    SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER,
+    SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against. Bumping
@@ -42,6 +43,11 @@ fn main() {
     let out = out_dir.join("generated.rs");
     stringcheese_lang_gen::generate(rules, &out)
         .unwrap_or_else(|e| panic!("stringcheese-lang-gen failed on {rules}: {e}"));
+
+    let case_path = out_dir.join("case-de.scud");
+    let case_bytes = build_case_de_scud();
+    fs::write(&case_path, &case_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", case_path.display()));
 
     let collation_path = out_dir.join("collation-de.scud");
     let collation_bytes = build_collation_de_scud();
@@ -184,6 +190,64 @@ fn build_number_de_scud() -> Vec<u8> {
     w.append_section(SECT_DECIMAL_PATTERN, &n.decimal_bytes());
     w.append_section(SECT_CURRENCY_TABLE, &n.currency_bytes());
     w.append_section(SECT_PERCENT_PATTERN, &n.percent_bytes());
+    w.finish()
+}
+
+/// Build the case-de SCUD pack in memory.
+///
+/// German has no locale-specific case-mapping tailoring — unlike
+/// Turkish's dotted / dotless-I, no German letter's case behaviour
+/// diverges from the Unicode default. The pack's presence over the
+/// default `char::to_lowercase` / `char::to_uppercase` fallback is
+/// about **uniform pack-hit ratios** — every German letter resolves
+/// through the pack rather than falling through to Rust's built-in
+/// tables.
+///
+/// # Coverage
+///
+/// * **ASCII a-z ↔ A-Z** — 52 simple lower/upper pairs plus 26
+///   simple-fold entries.
+/// * **Latin-1 supplement (U+00C0..U+00FE minus U+00D7 U+00F7)** —
+///   covers the umlauts German common text carries (ä, ö, ü, Ä,
+///   Ö, Ü) and the sharp s ß (U+00DF).
+/// * **German ß (U+00DF)** — full uppercase to `SS` and full fold to
+///   `ss`, matching the CLDR-shipped mapping and the default Unicode
+///   full-case behaviour.
+/// * **Capital sharp S ẞ (U+1E9E)** — simple lower to ß plus full
+///   fold to `ss` so a caller who loads `de` as their only pack sees
+///   uniform capital-sharp-s handling.
+fn build_case_de_scud() -> Vec<u8> {
+    let mut c = CaseSectionBuilder::new();
+
+    // ASCII a-z ↔ A-Z.
+    for ch in 'a'..='z' {
+        let up = ch.to_ascii_uppercase();
+        c.push_simple_lower(up as u32, ch as u32);
+        c.push_simple_upper(ch as u32, up as u32);
+        c.push_simple_fold(up as u32, ch as u32);
+    }
+
+    // Latin-1 supplement upper/lower pairs.
+    // U+00C0..U+00D6 → U+00E0..U+00F6, U+00D8..U+00DE → U+00F8..U+00FE.
+    for upper in (0x00C0u32..=0x00D6u32).chain(0x00D8..=0x00DE) {
+        let lower = upper + 0x20;
+        c.push_simple_lower(upper, lower);
+        c.push_simple_upper(lower, upper);
+        c.push_simple_fold(upper, lower);
+    }
+
+    // German ß / ẞ — the two shapes CLDR ships mappings for.
+    c.push_full_upper(0x00DF, &[0x0053, 0x0053]); // ß → SS
+    c.push_full_fold(0x00DF, &[0x0073, 0x0073]); // ß → ss
+    c.push_simple_lower(0x1E9E, 0x00DF); // ẞ → ß
+    c.push_full_fold(0x1E9E, &[0x0073, 0x0073]); // ẞ → ss
+
+    let mut w = ScudWriter::new(CAP_CASE, CLDR_VERSION, Some("de"));
+    w.append_section(SECT_SIMPLE_LOWER, &c.simple_lower_bytes());
+    w.append_section(SECT_SIMPLE_UPPER, &c.simple_upper_bytes());
+    w.append_section(SECT_SIMPLE_FOLD, &c.simple_fold_bytes());
+    w.append_section(SECT_FULL_UPPER, &c.full_upper_bytes());
+    w.append_section(SECT_FULL_FOLD, &c.full_fold_bytes());
     w.finish()
 }
 

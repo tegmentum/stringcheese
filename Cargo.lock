@@ -2554,6 +2554,7 @@ name = "stringcheese-de"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-case",
  "stringcheese-icu-collation",
  "stringcheese-icu-datetime",
  "stringcheese-icu-number",

@@ -126,6 +126,8 @@ mod generated {
 }
 pub use generated::CAPABILITIES;
 
+#[cfg(feature = "case-scud")]
+pub mod case_data;
 #[cfg(feature = "collation-scud")]
 pub mod collation_data;
 #[cfg(feature = "alloc")]

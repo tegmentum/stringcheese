@@ -31,6 +31,16 @@ std = ["alloc", "stringcheese-lang/std", "stringcheese-phonetic/std"]
 # (enough to link against on embedded targets that only want the
 # stopword table).
 alloc = ["stringcheese-lang/alloc", "stringcheese-phonetic/alloc"]
+# Ship the case-de.scud pack (WIT-i18n Phase 1 case-mapping data for
+# German). Adds a `case_data` module exposing `CASE_DE_SCUD:
+# &'static [u8]` and a helper for constructing a
+# `stringcheese_icu_case::CasePack`. Enabled by default — the pack
+# is small (~500 B). German has no locale-specific case tailoring
+# (unlike Turkish's dotted / dotless-I); the pack ships the standard
+# Latin case tables plus the full ß → SS uppercase expansion so a
+# composed engine has uniform pack-hit ratios for German queries
+# rather than falling through to Rust's `char::to_*case`.
+case-scud = ["dep:stringcheese-icu-case", "stringcheese-icu-case/alloc"]
 # Ship the collation-de.scud pack (the WIT-i18n Phase 2 collation
 # tailoring data for German). Adds a `collation_data` module
 # exposing `COLLATION_DE_SCUD: &'static [u8]` and a helper for
@@ -67,6 +77,9 @@ datetime-scud = ["dep:stringcheese-icu-datetime", "stringcheese-icu-datetime/std
 [dependencies]
 stringcheese-lang = { workspace = true }
 stringcheese-phonetic = { workspace = true }
+# WIT-i18n case-mapping capability crate. Optional; only pulled in
+# when the `case-scud` feature is enabled.
+stringcheese-icu-case = { workspace = true, optional = true }
 # WIT-i18n collation capability crate. Optional; only pulled in
 # when the `collation-scud` feature is enabled.
 stringcheese-icu-collation = { workspace = true, optional = true }

@@ -446,7 +446,155 @@ fn wasmtime_smoke_supported_locales_lists_bundled_tags() {
     let locales = caps
         .call_supported_locales(&mut store)
         .expect("supported-locales trap-free");
-    assert_eq!(locales, vec!["en".to_string(), "tr".to_string()]);
+    assert_eq!(
+        locales,
+        vec![
+            "en".to_string(),
+            "de".to_string(),
+            "fr".to_string(),
+            "tr".to_string(),
+            "ru".to_string(),
+            "zh".to_string(),
+        ]
+    );
+}
+
+// -----------------------------------------------------------------------
+// Phase 6: per-locale smoke tests for the four new packs (de, fr,
+// ru, zh) plus one Turkish smoke that re-asserts the tr pack still
+// works after the roster expanded.
+// -----------------------------------------------------------------------
+
+#[test]
+fn wasmtime_smoke_to_upper_german_sharp_s_expands() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_upper(&mut store, "straße", &loc("de"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "STRASSE");
+}
+
+#[test]
+fn wasmtime_smoke_to_lower_german_umlaut() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_lower(&mut store, "MÄDCHEN", &loc("de"))
+        .expect("to-lower trap-free")
+        .unwrap_or_else(|e| panic!("to-lower returned error: {}", describe_err(&e)));
+    assert_eq!(out, "mädchen");
+}
+
+#[test]
+fn wasmtime_smoke_to_upper_french_word() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_upper(&mut store, "bonjour", &loc("fr"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "BONJOUR");
+}
+
+#[test]
+fn wasmtime_smoke_to_lower_french_oe_ligature() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_lower(&mut store, "ŒUVRE", &loc("fr"))
+        .expect("to-lower trap-free")
+        .unwrap_or_else(|e| panic!("to-lower returned error: {}", describe_err(&e)));
+    assert_eq!(out, "œuvre");
+}
+
+#[test]
+fn wasmtime_smoke_to_upper_russian_word() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_upper(&mut store, "привет", &loc("ru"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "ПРИВЕТ");
+}
+
+#[test]
+fn wasmtime_smoke_to_lower_russian_word() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_lower(&mut store, "МОСКВА", &loc("ru"))
+        .expect("to-lower trap-free")
+        .unwrap_or_else(|e| panic!("to-lower returned error: {}", describe_err(&e)));
+    assert_eq!(out, "москва");
+}
+
+#[test]
+fn wasmtime_smoke_to_upper_chinese_han_is_neutral() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    // Han script has no case; uppercase / lowercase are identity.
+    let out = mapping
+        .call_to_upper(&mut store, "你好世界", &loc("zh"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "你好世界");
+}
+
+#[test]
+fn wasmtime_smoke_to_upper_chinese_ambient_ascii() {
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    // The Chinese pack ships ambient ASCII tables so mixed-script
+    // input still works under the zh locale.
+    let out = mapping
+        .call_to_upper(&mut store, "hello 你好", &loc("zh"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "HELLO 你好");
+}
+
+#[test]
+fn wasmtime_smoke_az_locale_alias_pack_hits_turkish() {
+    // Phase 6 algorithm change: Azerbaijani queries pack-hit via the
+    // Turkish pack thanks to the `case_locale_alias` table shared
+    // across the CaseEngine.
+    let Some(h) = SmokeHarness::build_or_skip() else {
+        return;
+    };
+    let (mut store, bindings) = h.instantiate();
+    let mapping = bindings.stringcheese_icu_case_mapping();
+    let out = mapping
+        .call_to_upper(&mut store, "i", &loc("az"))
+        .expect("to-upper trap-free")
+        .unwrap_or_else(|e| panic!("to-upper returned error: {}", describe_err(&e)));
+    assert_eq!(out, "\u{0130}", "az `i` upper must yield İ via tr alias");
 }
 
 #[test]
