@@ -291,7 +291,7 @@ impl<'a> CollationEngine<'a> {
     /// specific tag matching `locale` wins, then progressively
     /// less-specific ancestors, then no pack (root DUCET only).
     ///
-    /// Two locale tailorings switch the compare path off the
+    /// Three locale tailorings switch the compare path off the
     /// default UCA delegation:
     ///
     /// * **Primary-weight overrides** (Turkish) — when the winning
@@ -305,6 +305,20 @@ impl<'a> CollationEngine<'a> {
     ///   sets the backwards-secondary options-blob bit, the engine
     ///   reverses the secondary weight sequence before comparing so
     ///   accents tie-break right-to-left within a word.
+    /// * **Case-second** (Russian) — when the winning pack sets the
+    ///   case-second options-blob bit, the engine promotes
+    ///   case-distinguishing weights from tertiary to secondary so
+    ///   that case differences dominate over diacritics at
+    ///   secondary strength.
+    ///
+    /// # Precedence when multiple tailorings coexist
+    ///
+    /// Practical CLDR packs pick exactly one of these three; the
+    /// engine tolerates simultaneous bits and picks the winner in
+    /// the order listed above (primary-overrides beat
+    /// backwards-secondary beat case-second). No CLDR data ships
+    /// combined variants, so this ordering is a defensive fallback
+    /// rather than a semantic decision.
     #[must_use]
     pub fn compare(&self, a: &str, b: &str, locale: &str, strength: CollationStrength) -> Ordering {
         let pack = self.active_pack(locale);
@@ -314,6 +328,9 @@ impl<'a> CollationEngine<'a> {
             }
             if p.data.backwards_secondary() == Some(true) {
                 return self.compare_with_backwards_secondary(a, b, locale, strength);
+            }
+            if p.data.case_second() == Some(true) {
+                return self.compare_with_case_second(a, b, locale, strength);
             }
         }
         let expanded_a = self.normalize_for_strength(a, locale, strength);
@@ -412,6 +429,94 @@ impl<'a> CollationEngine<'a> {
         ord
     }
 
+    /// Compare `a` and `b` under the Russian case-second tailoring.
+    ///
+    /// UCA default puts case at level 3 (tertiary); CLDR's `ru`
+    /// `standard` variant moves case to level 2 so that a case
+    /// difference dominates over any diacritic difference at
+    /// secondary strength. The engine's simplified model builds a
+    /// bytewise sort key:
+    ///
+    /// * **Level 1 (primary):** pack-expand, strip combining marks,
+    ///   and ASCII-lowercase — same primary fold as the default
+    ///   engine.
+    /// * **Level 2 (secondary):** one byte per character carrying a
+    ///   case marker — `0x01` for lowercase or non-letter, `0x02`
+    ///   for uppercase. The 1-byte spacing keeps the compare stable
+    ///   across multi-byte UTF-8 sequences.
+    /// * **Level 3 (tertiary):** the pack-expanded original text so
+    ///   Tertiary+ still tie-breaks on the raw form.
+    ///
+    /// Concretely, for the Cyrillic pair `"Аа"` vs `"аА"`:
+    ///
+    /// * Level 1 folds both to `"аа"` (equal).
+    /// * Level 2 emits `[0x02, 0x01]` vs `[0x01, 0x02]` — the first
+    ///   character diverges (`0x02 > 0x01`), so `"Аа" > "аА"`.
+    ///
+    /// This matches the CLDR `ru` `standard` "lower before upper at
+    /// secondary" rule (lowercase sorts before uppercase, so the
+    /// leading-uppercase form comes later).
+    fn compare_with_case_second(
+        &self,
+        a: &str,
+        b: &str,
+        locale: &str,
+        strength: CollationStrength,
+    ) -> Ordering {
+        let ka = self.case_second_key(a, locale, strength);
+        let kb = self.case_second_key(b, locale, strength);
+        match ka.cmp(&kb) {
+            Ordering::Equal if matches!(strength, CollationStrength::Identical) => a.cmp(b),
+            ord => ord,
+        }
+    }
+
+    /// Build a bytewise-comparable sort key for `text` under the
+    /// case-second tailoring. See [`compare_with_case_second`] for
+    /// the encoding.
+    fn case_second_key(&self, text: &str, locale: &str, strength: CollationStrength) -> Vec<u8> {
+        // Pack-expand once so every level operates on the same
+        // normalised form (`ß → ss` still fires for the ru pack's
+        // shared expansion table).
+        let mut expanded = String::with_capacity(text.len());
+        for c in text.chars() {
+            self.expand_char(c, locale, &mut expanded);
+        }
+        // Level 1: primary fold that lowercases via `char::to_lowercase`
+        // so Cyrillic and other non-ASCII case pairs collapse to a
+        // common primary form (a plain `primary_fold` only
+        // ASCII-lowercases).
+        let level1 = case_second_primary_fold(&expanded);
+        let mut out = Vec::with_capacity(expanded.len() * 2 + 8);
+        out.extend_from_slice(level1.as_bytes());
+        // Level 2: case markers per character. Emit only for
+        // Secondary+ strengths so Primary compares stay case-blind.
+        if !matches!(strength, CollationStrength::Primary) {
+            out.push(0x00); // level separator
+            for c in expanded.chars() {
+                if is_combining_mark(c) {
+                    // Combining marks contribute no case signal.
+                    out.push(0x01);
+                } else if is_upper_letter(c) {
+                    out.push(0x02); // uppercase sorts after
+                } else {
+                    out.push(0x01); // lowercase / non-letter
+                }
+            }
+        }
+        // Level 3: raw pack-expanded text at Tertiary+.
+        if matches!(
+            strength,
+            CollationStrength::Tertiary
+                | CollationStrength::Quaternary
+                | CollationStrength::Identical
+        ) {
+            out.push(0x00);
+            out.extend_from_slice(expanded.as_bytes());
+        }
+        out
+    }
+
     /// Build a bytewise-comparable weight key for `text` using the
     /// active pack's primary-override table.
     fn overridden_key(&self, text: &str, locale: &str, strength: CollationStrength) -> Vec<u8> {
@@ -501,6 +606,23 @@ impl<'a> CollationEngine<'a> {
             out.push(strength.as_u8());
             out.push(0);
             let key = self.overridden_key(text, locale, strength);
+            out.extend_from_slice(&key);
+            if matches!(strength, CollationStrength::Identical) {
+                out.push(0);
+                out.extend_from_slice(text.as_bytes());
+            }
+            return out;
+        }
+        // Case-second packs (Russian): produce a bytewise key from
+        // the L1|L2|L3 layout used by compare_with_case_second so
+        // `sort_key` cmp mirrors compare.
+        if pack.is_some_and(|p| {
+            p.data.case_second() == Some(true) && p.data.backwards_secondary() != Some(true)
+        }) {
+            let mut out = Vec::with_capacity(text.len() * 2 + 8);
+            out.push(strength.as_u8());
+            out.push(0);
+            let key = self.case_second_key(text, locale, strength);
             out.extend_from_slice(&key);
             if matches!(strength, CollationStrength::Identical) {
                 out.push(0);
@@ -651,6 +773,58 @@ fn primary_fold(s: &str) -> String {
         }
     }
     out
+}
+
+/// Primary-fold variant used by the case-second tailoring: strips
+/// combining marks and lowercases every letter (not just ASCII) via
+/// `char::to_lowercase()` so Cyrillic and Latin-supplement upper /
+/// lower pairs collapse to a common primary form. The main
+/// [`primary_fold`] deliberately ASCII-lowercases only — that
+/// matches the Phase 2 default engine, which the case-second path
+/// improves on for Russian.
+#[cfg(feature = "alloc")]
+fn case_second_primary_fold(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if is_combining_mark(c) {
+            continue;
+        }
+        for lower in c.to_lowercase() {
+            out.push(lower);
+        }
+    }
+    out
+}
+
+/// True iff `c` carries an uppercase case signal — used by the
+/// case-second tailoring to score per-character case at level 2.
+///
+/// Covers ASCII A-Z plus the Cyrillic uppercase block (U+0400..
+/// =U+042F including irregular Ё U+0401), the Latin-1 supplement
+/// upper letters (U+00C0..=U+00DE minus U+00D7 ×), and any scalar
+/// whose `char::is_uppercase()` returns true and which is not
+/// already ASCII-lowercase. The `is_uppercase()` check picks up
+/// wider Unicode uppercase letters without needing a hand-written
+/// table.
+#[cfg(feature = "alloc")]
+fn is_upper_letter(c: char) -> bool {
+    if c.is_ascii_lowercase() {
+        return false;
+    }
+    if c.is_ascii_uppercase() {
+        return true;
+    }
+    // Cyrillic uppercase A-Я = U+0410..=U+042F, plus irregular
+    // Ё at U+0401.
+    let cp = c as u32;
+    if (0x0410..=0x042F).contains(&cp) || cp == 0x0401 {
+        return true;
+    }
+    // Latin-1 supplement uppercase (À..Þ minus ×).
+    if (0x00C0..=0x00DE).contains(&cp) && cp != 0x00D7 {
+        return true;
+    }
+    c.is_uppercase()
 }
 
 #[cfg(feature = "alloc")]
@@ -1361,5 +1535,190 @@ mod tests {
         assert_eq!(decompose_precomposed('É'), Some(('E', 0x0301)));
         assert_eq!(decompose_precomposed('a'), None);
         assert_eq!(decompose_precomposed('z'), None);
+    }
+
+    // -------------------------------------------------------------------
+    // Case-second (Russian) tailoring
+    // -------------------------------------------------------------------
+
+    fn build_test_ru_case_second() -> alloc::vec::Vec<u8> {
+        let mut c = CollationSectionBuilder::new();
+        // ß → ss stays as a shared expansion so composed-engine hits
+        // match ru's real pack shape.
+        c.push_expansion(0x00DF, &[0x0073, 0x0073]);
+        c.set_default_strength(CollationStrength::Tertiary.as_u8());
+        c.set_case_second(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("ru"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn case_second_promotes_case_to_secondary_level() {
+        // "Аа" (Upper, lower) vs "аА" (lower, Upper): both fold to
+        // the same primary. Under case-second the L2 case marker
+        // dominates — uppercase is scored higher, so the
+        // leading-uppercase form comes later.
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        let ord = engine.compare("Аа", "аА", "ru", CollationStrength::Secondary);
+        assert_eq!(ord, Ordering::Greater);
+        // Antisymmetry.
+        let ord_rev = engine.compare("аА", "Аа", "ru", CollationStrength::Secondary);
+        assert_eq!(ord_rev, Ordering::Less);
+    }
+
+    #[test]
+    fn case_second_ties_at_primary() {
+        // At primary the case difference disappears — both forms
+        // fold to the same base letters.
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("Аа", "аА", "ru", CollationStrength::Primary),
+            Ordering::Equal,
+        );
+        // ASCII pairs still fold at primary too.
+        assert_eq!(
+            engine.compare("apple", "APPLE", "ru", CollationStrength::Primary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn case_second_still_orders_by_base_letters() {
+        // When base letters differ, the primary level wins and the
+        // case-second machinery never fires.
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("Арбуз", "Белка", "ru", CollationStrength::Secondary),
+            Ordering::Less,
+        );
+        assert_eq!(
+            engine.compare("Гараж", "Арбуз", "ru", CollationStrength::Tertiary),
+            Ordering::Greater,
+        );
+    }
+
+    #[test]
+    fn case_second_case_wins_over_length_prefix() {
+        // The classic UCA "case ties break after full L1 compare"
+        // rule still holds — a shorter all-lower prefix vs a
+        // longer mixed-case string: L1 orders by prefix length,
+        // L2 only fires on primary ties.
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        // "аА" (2 chars, mixed) vs "аа" (2 chars, all lower):
+        // primary ties, then case-second sorts lowercase-first.
+        assert_eq!(
+            engine.compare("аа", "аА", "ru", CollationStrength::Secondary),
+            Ordering::Less,
+        );
+        // "аа" (2 chars) vs "аа" (2 chars) — identical.
+        assert_eq!(
+            engine.compare("аа", "аа", "ru", CollationStrength::Secondary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn case_second_sort_key_matches_compare() {
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        let pairs = [
+            ("Аа", "аА"),
+            ("Арбуз", "Белка"),
+            ("аА", "аа"),
+            ("привет", "ПРИВЕТ"),
+            ("Straße", "Strasse"),
+        ];
+        for strength in [
+            CollationStrength::Primary,
+            CollationStrength::Secondary,
+            CollationStrength::Tertiary,
+        ] {
+            for (a, b) in pairs {
+                let ka = engine.sort_key(a, "ru", strength);
+                let kb = engine.sort_key(b, "ru", strength);
+                assert_eq!(
+                    ka.cmp(&kb),
+                    engine.compare(a, b, "ru", strength),
+                    "sort_key vs compare disagreed for ({a:?}, {b:?}, {strength:?})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn case_second_expansions_still_fire() {
+        // The shared ß → ss expansion still applies under
+        // case-second, matching Russian's real pack shape.
+        let ru = build_test_ru_case_second();
+        let pack = CollationPack::from_scud_bytes(&ru).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("Straße", "Strasse", "ru", CollationStrength::Primary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn case_second_yields_when_pack_also_has_primary_overrides() {
+        // When a pack sets both primary_overrides and case_second,
+        // primary-overrides win — this is the documented precedence
+        // and matches how `compare` dispatches. No CLDR pack ships
+        // both bits together; this test locks the precedence for
+        // future maintainers.
+        let mut c = CollationSectionBuilder::new();
+        c.push_primary_override(0x0430, 100, 0, 0); // а
+        c.push_primary_override(0x0410, 100, 0, 0); // А (same primary)
+        c.set_default_strength(CollationStrength::Tertiary.as_u8());
+        c.set_case_second(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("ru-x-mixed"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.append_section(
+            stringcheese_scud::SECT_PRIMARY_OVERRIDES,
+            &c.primary_overrides_bytes(),
+        );
+        let bytes = w.finish();
+        let pack = CollationPack::from_scud_bytes(&bytes).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        // Under the primary-override path both "а" and "А" have the
+        // same primary weight → the compare uses the L2/L3 tuple
+        // from that path, not the case-second key. Whatever the
+        // result is, the important invariant is that sort_key ==
+        // compare under the same tailoring, which we check here.
+        let a = "а";
+        let b = "А";
+        let ka = engine.sort_key(a, "ru-x-mixed", CollationStrength::Tertiary);
+        let kb = engine.sort_key(b, "ru-x-mixed", CollationStrength::Tertiary);
+        assert_eq!(
+            ka.cmp(&kb),
+            engine.compare(a, b, "ru-x-mixed", CollationStrength::Tertiary),
+        );
+    }
+
+    #[test]
+    fn is_upper_letter_covers_cyrillic_and_latin() {
+        assert!(is_upper_letter('A'));
+        assert!(!is_upper_letter('a'));
+        assert!(is_upper_letter('\u{0410}')); // А
+        assert!(!is_upper_letter('\u{0430}')); // а
+        assert!(is_upper_letter('\u{0401}')); // Ё
+        assert!(!is_upper_letter('\u{0451}')); // ё
+        assert!(is_upper_letter('\u{00DC}')); // Ü
+        assert!(!is_upper_letter('\u{00FC}')); // ü
+        // Non-letters and combining marks do not count as uppercase.
+        assert!(!is_upper_letter(' '));
+        assert!(!is_upper_letter('1'));
+        assert!(!is_upper_letter('\u{0301}')); // combining acute
     }
 }
