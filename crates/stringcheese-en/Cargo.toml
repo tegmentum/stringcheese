@@ -110,7 +110,7 @@ icu_locid = { version = "1.5", optional = true }
 # the `static ENGLISH_CLDR_COLLATOR` slot below and for the
 # `Language::collator` trait's `Sync` bound. Only pulled in with
 # `icu-collator`.
-icu_provider = { version = "1.5", optional = true, default-features = false, features = ["sync"] }
+icu_provider = { version = "2.2", optional = true, default-features = false, features = ["sync"] }
 # WIT-i18n case-mapping capability crate. Optional; only pulled in
 # when the `case-scud` feature is enabled — pulls a small
 # `CasePack` constructor helper into the crate's public surface so
