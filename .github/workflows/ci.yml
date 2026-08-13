@@ -834,13 +834,17 @@ jobs:
         with:
           key: wasm-i18n-case-stable
 
-      - name: Build both packs
+      - name: Build the six-locale pack roster
         run: |
           cargo build \
             -p stringcheese-scud \
             -p stringcheese-icu-case \
             -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
             -p stringcheese-tr \
+            -p stringcheese-ru \
+            -p stringcheese-zh \
             --all-features \
             --locked
 
@@ -861,6 +865,24 @@ jobs:
             --test case_golden_en \
             -- --nocapture
 
+      - name: Run German golden vectors (>= 15)
+        run: |
+          cargo test \
+            -p stringcheese-de \
+            --features case-scud \
+            --locked \
+            --test case_golden_de \
+            -- --nocapture
+
+      - name: Run French golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-fr \
+            --features case-scud \
+            --locked \
+            --test case_golden_fr \
+            -- --nocapture
+
       - name: Run Turkish golden vectors (>= 50)
         run: |
           cargo test \
@@ -868,6 +890,24 @@ jobs:
             --features case-scud \
             --locked \
             --test case_golden_tr \
+            -- --nocapture
+
+      - name: Run Russian golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-ru \
+            --features case-scud \
+            --locked \
+            --test case_golden_ru \
+            -- --nocapture
+
+      - name: Run Chinese golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-zh \
+            --features case-scud \
+            --locked \
+            --test case_golden_zh \
             -- --nocapture
 
       - name: Run cross-locale composition test
@@ -882,14 +922,18 @@ jobs:
       - name: Report per-locale SCUD sizes
         run: |
           set -euo pipefail
-          cargo test \
+          cargo build \
+            -p stringcheese-en \
+            -p stringcheese-de \
+            -p stringcheese-fr \
             -p stringcheese-tr \
-            --features case-scud \
-            --locked \
-            --test case_cross_locale \
-            print_composed_pack_sizes \
-            -- --nocapture \
-            | grep -E "(case-en\.scud|case-tr\.scud|composed engine)" || true
+            -p stringcheese-ru \
+            -p stringcheese-zh \
+            --features stringcheese-en/case-scud,stringcheese-de/case-scud,stringcheese-fr/case-scud,stringcheese-tr/case-scud,stringcheese-ru/case-scud,stringcheese-zh/case-scud \
+            --locked >/dev/null
+          for lang in en de fr tr ru zh; do
+            find target -name "case-${lang}.scud" -exec ls -l {} \; | head -1
+          done
 
   # ------------------------------------------------------------------
   # WIT-i18n Phase 2 collation smoke — SCUD-pack size + golden
@@ -911,13 +955,17 @@ jobs:
         with:
           key: wasm-i18n-collation-stable
 
-      - name: Build the icu-collation crate + both packs
+      - name: Build the icu-collation crate + six-locale pack roster
         run: |
           cargo build \
             -p stringcheese-scud \
             -p stringcheese-icu-collation \
             -p stringcheese-en \
             -p stringcheese-de \
+            -p stringcheese-fr \
+            -p stringcheese-tr \
+            -p stringcheese-ru \
+            -p stringcheese-zh \
             --all-features \
             --locked
 
@@ -956,16 +1004,57 @@ jobs:
             --test collation_golden_de \
             -- --nocapture
 
+      - name: Run French collation golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-fr \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_fr \
+            -- --nocapture
+
+      - name: Run Turkish collation golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-tr \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_tr \
+            -- --nocapture
+
+      - name: Run Russian collation golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-ru \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_ru \
+            -- --nocapture
+
+      - name: Run Chinese collation golden vectors
+        run: |
+          cargo test \
+            -p stringcheese-zh \
+            --features collation-scud \
+            --locked \
+            --test collation_golden_zh \
+            -- --nocapture
+
       - name: Report per-locale collation SCUD sizes
         run: |
           set -euo pipefail
           cargo build \
             -p stringcheese-en \
             -p stringcheese-de \
-            --features stringcheese-en/collation-scud,stringcheese-de/collation-scud \
+            -p stringcheese-fr \
+            -p stringcheese-tr \
+            -p stringcheese-ru \
+            -p stringcheese-zh \
+            --features stringcheese-en/collation-scud,stringcheese-de/collation-scud,stringcheese-fr/collation-scud,stringcheese-tr/collation-scud,stringcheese-ru/collation-scud,stringcheese-zh/collation-scud \
             --locked >/dev/null
-          find target -name 'collation-en.scud' -exec ls -l {} \; | head -1
-          find target -name 'collation-de.scud' -exec ls -l {} \; | head -1
+          for lang in en de fr tr ru zh; do
+            find target -name "collation-${lang}.scud" -exec ls -l {} \; | head -1
+          done
 
   # ------------------------------------------------------------------
   # WIT-i18n Phase 3 plural-rules smoke — SCUD-pack size + golden
