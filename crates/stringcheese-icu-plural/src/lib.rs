@@ -734,10 +734,9 @@ pub mod builder {
     ///   ([`PluralRuleId::EsItPtCardinalMany`]).
     /// * `other` otherwise.
     ///
-    /// Ships as a builder helper for the future `stringcheese-it`
-    /// language pack; the crate does not yet exist in the workspace
-    /// (see the Phase 3 progress notes in `docs/design/wit-i18n.md`
-    /// § 8.3).
+    /// Consumed by the `stringcheese-it` language pack's
+    /// `build.rs` to emit `plural-it.scud` (see the Phase 3 Wave 4
+    /// progress notes in `docs/design/wit-i18n.md` § 8.3).
     pub fn italian_cardinals(b: &mut PluralSectionBuilder) {
         b.push_cardinal(PluralCategory::One, PluralRuleId::IEq1AndVEq0.as_u8());
         b.push_cardinal(
@@ -756,8 +755,9 @@ pub mod builder {
     ///   800º`).
     /// * `other` otherwise.
     ///
-    /// Ships as a builder helper for the future `stringcheese-it`
-    /// language pack (see the Phase 3 progress notes).
+    /// Consumed by the `stringcheese-it` language pack's
+    /// `build.rs` to emit `plural-it.scud` (see the Phase 3 Wave 4
+    /// progress notes).
     pub fn italian_ordinals(b: &mut PluralSectionBuilder) {
         b.push_ordinal(PluralCategory::Many, PluralRuleId::ItOrdinalMany.as_u8());
     }

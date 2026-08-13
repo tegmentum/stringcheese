@@ -2829,17 +2829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "stringcheese-icu-segment-component"
-version = "0.1.0"
-dependencies = [
- "stringcheese-icu-segment",
- "wasmtime",
- "wasmtime-wasi",
- "wit-bindgen-rt",
- "wit-parser 0.230.0",
-]
-
-[[package]]
 name = "stringcheese-id"
 version = "0.1.0"
 dependencies = [
@@ -2873,6 +2862,17 @@ dependencies = [
  "proptest",
  "stringcheese-lang",
  "stringcheese-phonetic",
+]
+
+[[package]]
+name = "stringcheese-it"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "stringcheese-icu-number",
+ "stringcheese-icu-plural",
+ "stringcheese-lang",
+ "stringcheese-scud",
 ]
 
 [[package]]
