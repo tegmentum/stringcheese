@@ -1123,12 +1123,38 @@ pub const SECT_EXPANSIONS: [u8; 4] = *b"Expn";
 /// pack header. Bytes `O` `p` `t` `0`.
 ///
 /// The layout is a fixed 4-byte record: `u8 default_strength, u8
-/// case_insensitive, u8 reserved, u8 reserved`. `default_strength`
-/// values map onto the wire encoding of the collation strength enum
-/// (0 = Primary, 1 = Secondary, 2 = Tertiary, 3 = Quaternary,
-/// 4 = Identical). Unknown / absent → the algorithm's compile-time
-/// default (Tertiary).
+/// case_insensitive, u8 backwards_secondary, u8 reserved`.
+/// `default_strength` values map onto the wire encoding of the
+/// collation strength enum (0 = Primary, 1 = Secondary,
+/// 2 = Tertiary, 3 = Quaternary, 4 = Identical). Unknown / absent →
+/// the algorithm's compile-time default (Tertiary).
+/// `backwards_secondary` is a bool (0 = false, 1 = true) used by the
+/// French backwards-secondary tailoring — when true, the collation
+/// engine reverses the secondary-weight comparison so accents
+/// tie-break right-to-left within a word.
 pub const SECT_COLLATION_OPTIONS: [u8; 4] = *b"Opt0";
+
+/// Section id for a per-locale primary-weight override table.
+/// Bytes `P` `r` `i` `W`.
+///
+/// The wire shape is a fixed 16-byte record per entry:
+/// `u32 cp, u32 primary_weight, u32 secondary_weight,
+/// u32 tertiary_weight`, sorted by `cp`, prefixed with a `u32 count`.
+///
+/// A pack ships primary-override rows to tailor UCA weights for a
+/// specific set of code points. The canonical use is Turkish's
+/// primary-distinct dotless-ı (U+0131) ordering — CLDR Turkish places
+/// `ı` between `h` and `i` at the primary level while default UCA
+/// treats them as primary-equal, tertiary-distinct.
+///
+/// The [`stringcheese-icu-collation`](../../../stringcheese-icu-collation)
+/// engine consults this table at compare-time before falling back to
+/// the UCA weight table (feruca / DUCET root). When at least one
+/// override row is present, the engine switches to a
+/// weight-tuple-based comparator that ranks characters by their
+/// override entry — chars without an override use the ASCII-lowercased
+/// codepoint as an approximation.
+pub const SECT_PRIMARY_OVERRIDES: [u8; 4] = *b"PriW";
 
 /// Zero-copy view into a SCUD file's collation body.
 ///
@@ -1153,6 +1179,11 @@ pub struct CollationDataView<'a> {
     /// Empty when the pack ships no options blob (algorithm defaults
     /// apply).
     options: &'a [u8],
+    /// Optional primary-weight override table (see
+    /// [`SECT_PRIMARY_OVERRIDES`]). Sorted list of `(u32 cp, u32 pw,
+    /// u32 sw, u32 tw)` records. Empty when the pack ships no
+    /// primary-override rows.
+    primary_overrides: &'a [u8],
 }
 
 impl<'a> CollationDataView<'a> {
@@ -1162,6 +1193,7 @@ impl<'a> CollationDataView<'a> {
         Ok(Self {
             expansions: reader.find(SECT_EXPANSIONS)?.unwrap_or(&[]),
             options: reader.find(SECT_COLLATION_OPTIONS)?.unwrap_or(&[]),
+            primary_overrides: reader.find(SECT_PRIMARY_OVERRIDES)?.unwrap_or(&[]),
         })
     }
 
@@ -1219,6 +1251,81 @@ impl<'a> CollationDataView<'a> {
         }
         Some(self.options[1] != 0)
     }
+
+    /// The pack's backwards-secondary flag, if the options blob
+    /// carries one. When true, the collation engine reverses the
+    /// secondary-weight comparison so accents tie-break
+    /// right-to-left within a word. Used by French collation.
+    #[must_use]
+    pub fn backwards_secondary(&self) -> Option<bool> {
+        if self.options.len() < 4 {
+            return None;
+        }
+        Some(self.options[2] != 0)
+    }
+
+    /// Look up the primary-weight override for `cp`. Returns
+    /// `Some((primary, secondary, tertiary))` when the pack ships an
+    /// override row for the code point, `None` otherwise.
+    ///
+    /// See [`SECT_PRIMARY_OVERRIDES`] for the wire format and
+    /// intended interpretation.
+    #[must_use]
+    pub fn primary_override(&self, cp: u32) -> Option<(u32, u32, u32)> {
+        binary_search_primary_override(self.primary_overrides, cp)
+    }
+
+    /// True iff the pack carries at least one primary-weight
+    /// override row.
+    #[must_use]
+    pub fn has_primary_overrides(&self) -> bool {
+        if self.primary_overrides.len() < 4 {
+            return false;
+        }
+        read_u32(&self.primary_overrides[0..4]) != 0
+    }
+
+    /// Number of primary-override entries in the pack. Useful for
+    /// reporting pack coverage in test logs.
+    #[must_use]
+    pub fn primary_override_count(&self) -> usize {
+        if self.primary_overrides.len() < 4 {
+            return 0;
+        }
+        read_u32(&self.primary_overrides[0..4]) as usize
+    }
+}
+
+/// Binary-search the primary-override table for `cp`. Returns
+/// `Some((primary, secondary, tertiary))` when found.
+fn binary_search_primary_override(bytes: &[u8], cp: u32) -> Option<(u32, u32, u32)> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let count = read_u32(&bytes[0..4]) as usize;
+    // Each record is 16 bytes (cp + 3 * u32 weights).
+    let expected_len = 4usize.checked_add(count.checked_mul(16)?)?;
+    if bytes.len() < expected_len {
+        return None;
+    }
+    let records = &bytes[4..expected_len];
+    let mut lo = 0;
+    let mut hi = count;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let entry_cp = read_u32(&records[mid * 16..mid * 16 + 4]);
+        match entry_cp.cmp(&cp) {
+            core::cmp::Ordering::Less => lo = mid + 1,
+            core::cmp::Ordering::Greater => hi = mid,
+            core::cmp::Ordering::Equal => {
+                let pw = read_u32(&records[mid * 16 + 4..mid * 16 + 8]);
+                let sw = read_u32(&records[mid * 16 + 8..mid * 16 + 12]);
+                let tw = read_u32(&records[mid * 16 + 12..mid * 16 + 16]);
+                return Some((pw, sw, tw));
+            }
+        }
+    }
+    None
 }
 
 // -----------------------------------------------------------------------
@@ -2486,6 +2593,10 @@ pub struct CollationSectionBuilder {
     expansions: Vec<(u32, Vec<u32>)>,
     default_strength: Option<u8>,
     case_insensitive: Option<bool>,
+    backwards_secondary: Option<bool>,
+    /// Sorted list of `(cp, primary, secondary, tertiary)` weight
+    /// overrides. See [`SECT_PRIMARY_OVERRIDES`] for the wire layout.
+    primary_overrides: Vec<(u32, u32, u32, u32)>,
 }
 
 #[cfg(feature = "alloc")]
@@ -2516,6 +2627,26 @@ impl CollationSectionBuilder {
         self.case_insensitive = Some(v);
     }
 
+    /// Set the pack's backwards-secondary flag. When true, the
+    /// collation engine reverses the secondary-weight comparison so
+    /// diacritics tie-break right-to-left within a word — the French
+    /// tailoring.
+    pub fn set_backwards_secondary(&mut self, v: bool) {
+        self.backwards_secondary = Some(v);
+    }
+
+    /// Push a primary-weight override for `cp`.
+    ///
+    /// See [`SECT_PRIMARY_OVERRIDES`] for the semantics. The
+    /// canonical use is Turkish's primary-distinct dotless-ı
+    /// (U+0131) ordering — `push_primary_override(0x0131, 190, 0, 0)`
+    /// tags dotless-ı with a primary weight that sorts it between h
+    /// and i in the Turkish alphabet.
+    pub fn push_primary_override(&mut self, cp: u32, primary: u32, secondary: u32, tertiary: u32) {
+        self.primary_overrides
+            .push((cp, primary, secondary, tertiary));
+    }
+
     /// Encode the character-expansion table.
     ///
     /// Wire shape mirrors the case-mapping full tables: a 4-byte
@@ -2527,8 +2658,8 @@ impl CollationSectionBuilder {
         encode_full_table(&self.expansions)
     }
 
-    /// Encode the options blob. Returns an empty `Vec` when neither
-    /// default-strength nor case-insensitive is set — callers use
+    /// Encode the options blob. Returns an empty `Vec` when no
+    /// options field has been set — callers use
     /// [`is_options_present`](Self::is_options_present) to decide
     /// whether to append the section at all.
     #[must_use]
@@ -2539,15 +2670,47 @@ impl CollationSectionBuilder {
         alloc::vec![
             self.default_strength.unwrap_or(2), // 2 = Tertiary default
             u8::from(self.case_insensitive.unwrap_or(false)),
-            0, // reserved
+            u8::from(self.backwards_secondary.unwrap_or(false)),
             0, // reserved
         ]
+    }
+
+    /// Encode the primary-weight override table.
+    ///
+    /// Wire shape: `u32 count` + `count × (u32 cp, u32 primary,
+    /// u32 secondary, u32 tertiary)` sorted by `cp`. Returns an
+    /// empty `Vec` when no overrides have been pushed.
+    #[must_use]
+    pub fn primary_overrides_bytes(&self) -> Vec<u8> {
+        if self.primary_overrides.is_empty() {
+            return Vec::new();
+        }
+        let mut sorted = self.primary_overrides.clone();
+        sorted.sort_by_key(|(cp, _, _, _)| *cp);
+        let count = u32::try_from(sorted.len()).unwrap_or(u32::MAX);
+        let mut out = Vec::with_capacity(4 + sorted.len() * 16);
+        out.extend_from_slice(&count.to_le_bytes());
+        for (cp, pw, sw, tw) in sorted {
+            out.extend_from_slice(&cp.to_le_bytes());
+            out.extend_from_slice(&pw.to_le_bytes());
+            out.extend_from_slice(&sw.to_le_bytes());
+            out.extend_from_slice(&tw.to_le_bytes());
+        }
+        out
     }
 
     /// True iff the builder carries any options-blob content.
     #[must_use]
     pub fn is_options_present(&self) -> bool {
-        self.default_strength.is_some() || self.case_insensitive.is_some()
+        self.default_strength.is_some()
+            || self.case_insensitive.is_some()
+            || self.backwards_secondary.is_some()
+    }
+
+    /// True iff the builder carries at least one primary-override row.
+    #[must_use]
+    pub fn has_primary_overrides(&self) -> bool {
+        !self.primary_overrides.is_empty()
     }
 }
 
@@ -3366,6 +3529,67 @@ mod tests {
             file.as_collation_data(),
             Err(ScudError::CapabilityMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn backwards_secondary_flag_round_trips() {
+        let mut c = CollationSectionBuilder::new();
+        c.set_default_strength(2);
+        c.set_backwards_secondary(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("fr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert_eq!(view.backwards_secondary(), Some(true));
+        assert_eq!(view.default_strength(), Some(2));
+        // A pack that doesn't set the flag reads as Some(false) when
+        // any option is present.
+        assert_eq!(view.case_insensitive(), Some(false));
+    }
+
+    #[test]
+    fn backwards_secondary_absent_when_no_options() {
+        let c = CollationSectionBuilder::new();
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("fr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        // No options section written at all.
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert_eq!(view.backwards_secondary(), None);
+    }
+
+    #[test]
+    fn primary_overrides_round_trip() {
+        let mut c = CollationSectionBuilder::new();
+        // Push out-of-order to check the writer sorts by cp.
+        c.push_primary_override(0x0131, 190, 0, 0); // dotless-ı
+        c.push_primary_override(0x0069, 200, 0, 0); // i
+        c.push_primary_override(0x0068, 180, 0, 0); // h
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("tr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_PRIMARY_OVERRIDES, &c.primary_overrides_bytes());
+        let bytes = w.finish();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert!(view.has_primary_overrides());
+        assert_eq!(view.primary_override_count(), 3);
+        assert_eq!(view.primary_override(0x0068), Some((180, 0, 0)));
+        assert_eq!(view.primary_override(0x0131), Some((190, 0, 0)));
+        assert_eq!(view.primary_override(0x0069), Some((200, 0, 0)));
+        assert_eq!(view.primary_override(0x006A), None); // not in table
+    }
+
+    #[test]
+    fn primary_overrides_absent_by_default() {
+        let bytes = build_de_phonebook_collation_pack();
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_collation_data().unwrap();
+        assert!(!view.has_primary_overrides());
+        assert_eq!(view.primary_override_count(), 0);
+        assert!(view.primary_override(0x0131).is_none());
     }
 
     fn build_test_plural_en_pack() -> Vec<u8> {
