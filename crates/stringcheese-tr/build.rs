@@ -14,7 +14,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use stringcheese_scud::{
-    CAP_CASE, CaseSectionBuilder, ContextKind, SECT_CONTEXT, SECT_FULL_UPPER, SECT_SIMPLE_LOWER,
+    CAP_CASE, CAP_COLLATION, CaseSectionBuilder, CollationSectionBuilder, ContextKind,
+    SECT_COLLATION_OPTIONS, SECT_CONTEXT, SECT_EXPANSIONS, SECT_FULL_UPPER, SECT_SIMPLE_LOWER,
     SECT_SIMPLE_UPPER, ScudWriter,
 };
 
@@ -28,7 +29,56 @@ fn main() {
     fs::write(&scud_path, &scud_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", scud_path.display()));
 
+    let coll_path = out_dir.join("collation-tr.scud");
+    let coll_bytes = build_collation_tr_scud();
+    fs::write(&coll_path, &coll_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", coll_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the collation-tr SCUD pack in memory.
+///
+/// Turkish collation traditionally orders the Turkish alphabet as
+/// `a b c ç d e f g ğ h ı i j k l m n o ö p r s ş t u ü v y z`.
+/// The distinctive tailoring is the **primary-distinct** ordering
+/// of dotless `ı` before dotted `i` (default UCA treats the two as
+/// primary-equal, tertiary-distinct).
+///
+/// # Phase 2 deferral
+///
+/// The Phase 2 `CollationEngine`'s `primary_fold` ASCII-lowercases
+/// and strips combining marks before delegating to `feruca`
+/// (CLDR-root). It carries no primary-tailoring section to shift
+/// `ı`'s weight relative to `i` — implementing that requires a new
+/// SCUD section (per-locale weight overrides consulted before the
+/// UCA compare) plus the algorithm changes to consume it. The
+/// shipped tr pack therefore uses default UCA ordering for `ı` /
+/// `i` and documents the primary-distinct behaviour as a follow-up
+/// wave. See `docs/design/wit-i18n.md` § 8.2 for the deferral
+/// rationale.
+///
+/// The pack still ships:
+///
+/// * **ß → ss** — belt-and-braces so Turkish text quoting a German
+///   loanword (`Straße`) collates identically to the English/German
+///   packs.
+/// * **Default strength tertiary** — case-sensitive.
+fn build_collation_tr_scud() -> Vec<u8> {
+    let mut c = CollationSectionBuilder::new();
+
+    // German ß expansion — uniform with en/de.
+    c.push_expansion(0x00DF, &[0x0073, 0x0073]); // ß → ss
+    c.push_expansion(0x1E9E, &[0x0053, 0x0053]); // ẞ → SS
+
+    // Default strength tertiary (case + diacritics + base).
+    c.set_default_strength(2);
+    c.set_case_insensitive(false);
+
+    let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("tr"));
+    w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+    w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+    w.finish()
 }
 
 /// Build the case-tr SCUD pack in memory.

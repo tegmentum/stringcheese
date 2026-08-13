@@ -2687,6 +2687,8 @@ name = "stringcheese-fr"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-case",
+ "stringcheese-icu-collation",
  "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
@@ -3083,6 +3085,8 @@ name = "stringcheese-ru"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-case",
+ "stringcheese-icu-collation",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -3238,6 +3242,7 @@ dependencies = [
  "proptest",
  "stringcheese-en",
  "stringcheese-icu-case",
+ "stringcheese-icu-collation",
  "stringcheese-lang",
  "stringcheese-phonetic",
  "stringcheese-scud",
@@ -3290,6 +3295,8 @@ name = "stringcheese-zh"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-case",
+ "stringcheese-icu-collation",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",

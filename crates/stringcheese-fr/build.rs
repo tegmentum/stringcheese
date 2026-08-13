@@ -20,11 +20,13 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{french_cardinals, french_ordinals};
 use stringcheese_scud::{
-    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
-    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
-    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
-    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
+    CAP_CASE, CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
+    CollationSectionBuilder, DateTimeLength, DateTimeSectionBuilder, NumberSectionBuilder,
+    PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS,
+    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_MONTH_ABBR, SECT_MONTH_NAMES, SECT_ORDINAL_RULES,
+    SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER,
+    SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -32,6 +34,16 @@ const CLDR_VERSION: &str = "44.1";
 
 fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
+
+    let case_path = out_dir.join("case-fr.scud");
+    let case_bytes = build_case_fr_scud();
+    fs::write(&case_path, &case_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", case_path.display()));
+
+    let collation_path = out_dir.join("collation-fr.scud");
+    let collation_bytes = build_collation_fr_scud();
+    fs::write(&collation_path, &collation_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", collation_path.display()));
 
     let plural_path = out_dir.join("plural-fr.scud");
     let plural_bytes = build_plural_fr_scud();
@@ -49,6 +61,120 @@ fn main() {
         .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
 
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the case-fr SCUD pack in memory.
+///
+/// French uses the default Unicode case-mapping rules with no locale
+/// tailoring — unlike Turkish's dotted / dotless-I, French has no
+/// letter whose case behaviour diverges from the Unicode default.
+///
+/// The shipped pack mirrors the English pack's coverage so a
+/// composed `[fr, en]` engine behaves uniformly regardless of which
+/// pack the query resolves through first:
+///
+/// * **ASCII a-z ↔ A-Z** — 52 simple lower/upper pairs, plus 26
+///   simple-fold entries.
+/// * **Latin-1 supplement (U+00C0..U+00FE minus U+00D7 U+00F7)** —
+///   the accented letters French common text carries (é, à, ç,
+///   ô, û, ÿ …).
+/// * **Ligatures Œ/œ, Æ/æ** — Œ ligature is common in French
+///   (`œuf`, `cœur`) and its titlecasing behaviour agrees with
+///   the default Unicode rules.
+/// * **German ß (U+00DF)** — full uppercase to "SS" and full fold
+///   to "ss". Not French per se; included so a caller loading fr
+///   as their only pack still gets the ß expansion when a foreign
+///   word (e.g. `Straße`) appears in French text.
+fn build_case_fr_scud() -> Vec<u8> {
+    let mut c = CaseSectionBuilder::new();
+
+    // ASCII a-z ↔ A-Z.
+    for ch in 'a'..='z' {
+        let up = ch.to_ascii_uppercase();
+        c.push_simple_lower(up as u32, ch as u32);
+        c.push_simple_upper(ch as u32, up as u32);
+        c.push_simple_fold(up as u32, ch as u32);
+    }
+
+    // Latin-1 supplement upper/lower pairs.
+    // U+00C0..U+00D6 → U+00E0..U+00F6, U+00D8..U+00DE → U+00F8..U+00FE.
+    for upper in (0x00C0u32..=0x00D6u32).chain(0x00D8..=0x00DE) {
+        let lower = upper + 0x20;
+        c.push_simple_lower(upper, lower);
+        c.push_simple_upper(lower, upper);
+        c.push_simple_fold(upper, lower);
+    }
+
+    // Latin small letter y with diaeresis (ÿ, U+00FF) upper (Ÿ,
+    // U+0178). The uppercase form sits outside Latin-1 supplement
+    // and needs an explicit entry.
+    c.push_simple_upper(0x00FF, 0x0178);
+    c.push_simple_lower(0x0178, 0x00FF);
+    c.push_simple_fold(0x0178, 0x00FF);
+
+    // French ligatures.
+    c.push_simple_lower(0x0152, 0x0153); // Œ → œ
+    c.push_simple_upper(0x0153, 0x0152); // œ → Œ
+    c.push_simple_fold(0x0152, 0x0153);
+    c.push_simple_lower(0x00C6, 0x00E6); // Æ → æ
+    c.push_simple_upper(0x00E6, 0x00C6); // æ → Æ
+    c.push_simple_fold(0x00C6, 0x00E6);
+
+    // German ß / ẞ — belt-and-braces so a composed engine sees the
+    // expansion regardless of which pack the query resolves through.
+    c.push_full_upper(0x00DF, &[0x0053, 0x0053]); // ß → SS
+    c.push_full_fold(0x00DF, &[0x0073, 0x0073]); // ß → ss
+    c.push_full_fold(0x1E9E, &[0x0073, 0x0073]); // ẞ → ss
+    c.push_simple_lower(0x1E9E, 0x00DF); // ẞ → ß
+
+    let mut w = ScudWriter::new(CAP_CASE, CLDR_VERSION, Some("fr"));
+    w.append_section(SECT_SIMPLE_LOWER, &c.simple_lower_bytes());
+    w.append_section(SECT_SIMPLE_UPPER, &c.simple_upper_bytes());
+    w.append_section(SECT_SIMPLE_FOLD, &c.simple_fold_bytes());
+    w.append_section(SECT_FULL_UPPER, &c.full_upper_bytes());
+    w.append_section(SECT_FULL_FOLD, &c.full_fold_bytes());
+    w.finish()
+}
+
+/// Build the collation-fr SCUD pack in memory.
+///
+/// French collation is nearly-default UCA: alphabetical ordering
+/// matches DUCET-root for the Latin script. The one tailoring
+/// worth remembering — the **backwards-secondary** rule (accents
+/// compared right-to-left within a word, so `côte < coté`
+/// rather than `coté < côte`) — is a **documented Phase 2
+/// `CollationEngine` deferral**. The engine's `primary_fold` strips
+/// combining marks and delegates to feruca (CLDR-root); it does
+/// not carry the reversed accent-comparison state a French
+/// backwards-secondary implementation would need. See
+/// `docs/design/wit-i18n.md` § 8.2 for the deferral rationale.
+///
+/// The shipped pack encodes:
+///
+/// * **Ligatures** — Æ/æ expands to `AE`/`ae`, Œ/œ to `OE`/`oe`.
+///   These are DUCET contractions written as explicit expansions
+///   so `sort_key` stays bytewise-consistent for these characters.
+/// * **Default strength** — tertiary (case-sensitive). Matches
+///   French dictionary ordering conventions.
+///
+/// Nothing else is tailored; French otherwise agrees with root
+/// UCA at primary/secondary/tertiary strength.
+fn build_collation_fr_scud() -> Vec<u8> {
+    let mut c = CollationSectionBuilder::new();
+
+    // Ligatures.
+    c.push_expansion(0x00C6, &[0x0041, 0x0045]); // Æ → AE
+    c.push_expansion(0x00E6, &[0x0061, 0x0065]); // æ → ae
+    c.push_expansion(0x0152, &[0x004F, 0x0045]); // Œ → OE
+    c.push_expansion(0x0153, &[0x006F, 0x0065]); // œ → oe
+
+    c.set_default_strength(2); // Tertiary
+    c.set_case_insensitive(false);
+
+    let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("fr"));
+    w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+    w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+    w.finish()
 }
 
 /// Build the datetime-fr SCUD pack in memory.

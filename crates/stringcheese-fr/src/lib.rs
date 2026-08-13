@@ -108,6 +108,10 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "case-scud")]
+pub mod case_data;
+#[cfg(feature = "collation-scud")]
+pub mod collation_data;
 #[cfg(feature = "datetime-scud")]
 pub mod datetime_data;
 #[cfg(feature = "number-scud")]
