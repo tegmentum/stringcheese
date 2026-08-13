@@ -366,6 +366,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "phi_2.json",
     "gemma_7b.json",
     "falcon_7b.json",
+    "mistral_7b_v03.json",
+    "command_r_v01.json",
 ];
 
 #[test]
@@ -638,4 +640,34 @@ fn conformance_gemma_7b() {
 )]
 fn conformance_falcon_7b() {
     run_fixture("falcon_7b.json", "falcon-7b");
+}
+
+// Real mistralai/Mistral-7B-Instruct-v0.3 tokenizer.json — same
+// Llama-family character-BPE + SentencePiece byte_fallback + Metaspace
+// pre-tokenizer as Mistral-7B-v0.1, but with 771 added_tokens (v0.1
+// had 3) covering [INST]/[/INST]/[TOOL_CALLS] and a block of 768
+// [control_N] slots. Post-processor prepends `<s>` (id 1).
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mistral_7b_v03() {
+    run_fixture("mistral_7b_v03.json", "mistral-7b-instruct-v0.3");
+}
+
+// Real CohereForAI/c4ai-command-r-v01 tokenizer.json — byte-level BPE
+// with NFC normalizer + Sequence[Digits(individual_digits=true),
+// ByteLevel] pre-tokenizer + TemplateProcessing(<BOS_TOKEN>). 255029
+// entries, 37 added_tokens (8 classical-specials + 29 chat-template
+// markers <|START_OF_TURN_TOKEN|>, <|END_OF_TURN_TOKEN|>, …). Local
+// vocab is fetched via the ungated `Xenova/c4ai-command-r-v01-
+// tokenizer` mirror because the upstream repo is gated.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_command_r_v01() {
+    run_fixture("command_r_v01.json", "command-r-v01");
 }
