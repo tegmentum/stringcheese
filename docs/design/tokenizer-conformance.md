@@ -88,8 +88,10 @@ the suite must surface.
 | `phi-2`                          | `phi_2.json`                        | 20    | GPT-2-family byte-level BPE (no byte_fallback), null normalizer + ByteLevel pre-tokenizer/post-processor/decoder, 50257-entry vocabulary with 39 whitespace-run added tokens (ids 50257–50294) | `transformers.AutoTokenizer.from_pretrained('microsoft/phi-2')` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `gemma-7b`                       | `gemma_7b.json`                     | 20    | SentencePiece-BPE + byte_fallback + Replace(' '→'▁') normalizer, 256k vocabulary with 217 added chat-format tokens — **byte-identical tokenizer semantics to `gemma-2b`** (verified via top-level field comparison); the upstream `tokenizer.json` blobs differ in file layout only | `transformers.AutoTokenizer.from_pretrained('unsloth/gemma-7b')` — an ungated mirror of `google/gemma-7b`'s tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
 | `falcon-7b`                      | `falcon_7b.json`                    | 20    | Byte-level BPE, null normalizer + Sequence[Punctuation(Contiguous), ByteLevel, Digits, Split(Regex="[0-9][0-9][0-9]")] pre-tokenizer, null post-processor, ByteLevel decoder, 65024-entry vocabulary with 12 special tokens (`>>TITLE<<`, `>>ABSTRACT<<`, …, `<|endoftext|>`) | `transformers.AutoTokenizer.from_pretrained('tiiuae/falcon-7b')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `mistral-7b-instruct-v0.3`       | `mistral_7b_v03.json`               | 20    | Character-BPE + SentencePiece byte_fallback + Metaspace(prepend_scheme=first, split=false) pre-tokenizer, null normalizer, TemplateProcessing post-processor prepending `<s>` (id 1), Sequence[Replace, ByteFallback, Fuse, Strip] decoder. 32768-entry vocabulary with **771** added_tokens (v0.1 had 3): [INST]/[/INST]/[TOOL_CALLS]/[AVAILABLE_TOOLS]/[/AVAILABLE_TOOLS]/[TOOL_RESULTS]/[/TOOL_RESULTS] chat + tool-call surface forms plus a solid block of 768 `[control_N]` slots at ids 3–770 | `transformers.AutoTokenizer.from_pretrained('mistralai/Mistral-7B-Instruct-v0.3')` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `command-r-v01`                  | `command_r_v01.json`                | 20    | Byte-level BPE + NFC normalizer + Sequence[Digits(individual_digits=true), ByteLevel] pre-tokenizer + TemplateProcessing post-processor prepending `<BOS_TOKEN>` (id 5), ByteLevel decoder. 255029-entry vocabulary with 37 added_tokens: 8 special classical entries at ids 0–7 (`<PAD>`, `<UNK>`, `<CLS>`, `<SEP>`, `<MASK_TOKEN>`, `<BOS_TOKEN>`, `<EOS_TOKEN>`, `<EOP_TOKEN>`) plus 29 **`special: false`** chat-template markers at ids 255000–255028 (`<\|START_OF_TURN_TOKEN\|>`, `<\|END_OF_TURN_TOKEN\|>`, `<\|USER_TOKEN\|>`, `<\|CHATBOT_TOKEN\|>`, `<\|SYSTEM_TOKEN\|>`, …). Local vocab is fetched via the ungated `Xenova/c4ai-command-r-v01-tokenizer` mirror because the upstream `CohereForAI/c4ai-command-r-v01` repo is gated | `transformers.AutoTokenizer.from_pretrained('Xenova/c4ai-command-r-v01-tokenizer')` against the byte-identical mirror of the upstream tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
 
-Total: **19 checkpoints × (40 or 20) cases = 580 triples**, all
+Total: **21 checkpoints × (40 or 20) cases = 620 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
@@ -97,14 +99,20 @@ Between them the checkpoints exercise every runtime shape
 `stringcheese-tokenizer-hf` accepts:
 
 - Byte-level BPE — `gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`,
-  `phi-2`, `falcon-7b` (six distinct vocabularies over the same BPE
-  runtime; `qwen2-7b` adds a `Sequence[Split(Regex), ByteLevel]`
-  pre-tokenizer shape not covered by the older three; `phi-2` adds a
-  block of 38 whitespace-run added tokens (`normalized: true`,
-  non-special) that upstream matches via added-vocab before
-  pre-tokenization runs; `falcon-7b` adds a `Sequence[Punctuation,
-  ByteLevel, Digits, Split(Regex)]` pre-tokenizer combining four
-  distinct pre-tokenizer combinators no other fixture exercises).
+  `phi-2`, `falcon-7b`, `command-r-v01` (seven distinct vocabularies
+  over the same BPE runtime; `qwen2-7b` adds a `Sequence[Split(Regex),
+  ByteLevel]` pre-tokenizer shape not covered by the older three;
+  `phi-2` adds a block of 38 whitespace-run added tokens
+  (`normalized: true`, non-special) that upstream matches via
+  added-vocab before pre-tokenization runs; `falcon-7b` adds a
+  `Sequence[Punctuation, ByteLevel, Digits, Split(Regex)]`
+  pre-tokenizer combining four distinct pre-tokenizer combinators no
+  other fixture exercises; `command-r-v01` combines an NFC normalizer,
+  a `Sequence[Digits(individual_digits=true), ByteLevel]` pre-tokenizer
+  and a `TemplateProcessing` post-processor prepending `<BOS_TOKEN>`
+  over a 255k-entry vocabulary — the first byte-level BPE fixture
+  pairing NFC normalization with individual-digit splitting and BOS
+  template-processing).
 - tiktoken BPE — `cl100k_base` (leans on the tiktoken parity harness
   for the actual vocab; the runner soft-skips when no `tokenizer.json`
   is provisioned locally for it, since tiktoken has its own format).
@@ -119,18 +127,23 @@ Between them the checkpoints exercise every runtime shape
   `Sequence[WhitespaceSplit, Metaspace]` pre-tokenizer and a
   `TemplateProcessing` post-processor that appends `</s>`).
 - Character-BPE + SentencePiece `byte_fallback` — `llama-2-7b-hf`,
-  `mistral-7b-v0.1`, `phi-3-mini-4k-instruct`, `gemma-2b`, `gemma-7b`
-  (Llama-family BPE with the `<0xXX>` byte-fallback path; Mistral
-  additionally exercises the `Metaspace` pre-tokenizer variant of the
-  same semantics — see the runtime gap below; `phi-3-mini-4k-instruct`
-  uses the Llama-2 `Sequence[Prepend, Replace]` normalizer shape over
-  a distinct 32k vocabulary with Phi-3 chat-format specials;
-  `gemma-2b` ships a much larger 256k vocabulary, a bare `Replace`
-  normalizer with no `Prepend`, and 217 chat-format added tokens;
-  `gemma-7b` reuses `gemma-2b`'s tokenizer semantics *verbatim* — the
-  upstream `tokenizer.json` blobs differ in file layout only, so the
-  fixture serves as a distinct real-vocab checkpoint whose parity
-  covaries with gemma-2b by construction).
+  `mistral-7b-v0.1`, `mistral-7b-instruct-v0.3`,
+  `phi-3-mini-4k-instruct`, `gemma-2b`, `gemma-7b` (Llama-family BPE
+  with the `<0xXX>` byte-fallback path; both Mistral fixtures
+  additionally exercise the `Metaspace` pre-tokenizer variant of the
+  same semantics — see the runtime gap below; the `v0.3` Instruct
+  fixture is the first to exercise a large (771-entry) added-vocabulary
+  table on the byte-fallback path, including the `[INST]`/`[/INST]`/
+  `[TOOL_CALLS]` chat + tool-call surface forms and a solid 768-slot
+  `[control_N]` block; `phi-3-mini-4k-instruct` uses the Llama-2
+  `Sequence[Prepend, Replace]` normalizer shape over a distinct 32k
+  vocabulary with Phi-3 chat-format specials; `gemma-2b` ships a much
+  larger 256k vocabulary, a bare `Replace` normalizer with no
+  `Prepend`, and 217 chat-format added tokens; `gemma-7b` reuses
+  `gemma-2b`'s tokenizer semantics *verbatim* — the upstream
+  `tokenizer.json` blobs differ in file layout only, so the fixture
+  serves as a distinct real-vocab checkpoint whose parity covaries
+  with gemma-2b by construction).
 
 `microsoft/deberta-v3-base` and `microsoft/mdeberta-v3-base` do not
 publish a `tokenizer.json` under
@@ -385,8 +398,30 @@ including the three previously-blocked fixtures:
 | `phi-3-mini-4k-instruct`       | 19/20       | **20/20**    |
 | every other fixture (18 total) | 20/20       | **20/20**    |
 
+### Wave-19 additions (Mistral-Instruct v0.3 + Command-R v01)
+
+Two additional real-vocab fixtures land alongside the Wave-17 baseline,
+picked to stress lineages of `tokenizer.json` configuration not yet
+exercised at real-vocab scale:
+
+| checkpoint                     | cases | shape peculiarity                                                                                                                                                    |
+| ------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mistral-7b-instruct-v0.3`     | **20/20** | Same Metaspace-BPE-byte_fallback shape as `mistral-7b-v0.1`, but with a 771-entry added_tokens table (v0.1 had 3): `[INST]`/`[/INST]`/`[TOOL_CALLS]` + 768 `[control_N]` slots. |
+| `command-r-v01`                | **20/20** | Byte-level BPE + NFC normalizer + `Sequence[Digits(individual_digits=true), ByteLevel]` pre-tokenizer + `TemplateProcessing(<BOS_TOKEN>)`. 29 `special: false` chat-template markers at ids 255000–255028. Local vocab via the ungated `Xenova/c4ai-command-r-v01-tokenizer` mirror (upstream is gated). |
+
+No new runtime gaps surfaced by either fixture — both run 20/20 against
+the `stringcheese-tokenizer-hf` runtime *and* the
+`stringcheese-tokenizer-hf-native` delegating adapter on the same
+`transformers.AutoTokenizer` reference (transformers 5.14.1 /
+tokenizers 0.22.2). The Mistral-v0.3 fixture, in particular,
+exercises the same `Metaspace` pre-tokenizer branch that the Wave-16
+BPE-side landing added to unblock `mistral-7b-v0.1`; a 771-entry
+added-vocabulary table on the byte-fallback path is a new stress the
+older Llama-family fixtures did not reach (Llama-2 has 3 added
+tokens; Phi-3 has 14).
+
 Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
---features parity-real-vocab --locked` — 22 tests pass (21
+--features parity-real-vocab --locked` — 24 tests pass (23
 per-checkpoint fixtures + 1 meta test).
 
 ## Hand-computed fallback

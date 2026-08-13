@@ -416,6 +416,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "phi_2.json",
     "gemma_7b.json",
     "falcon_7b.json",
+    "mistral_7b_v03.json",
+    "command_r_v01.json",
 ];
 
 #[test]
@@ -747,4 +749,48 @@ fn conformance_gemma_7b() {
 )]
 fn conformance_falcon_7b() {
     run_fixture("falcon_7b.json", "falcon-7b");
+}
+
+// Real mistralai/Mistral-7B-Instruct-v0.3 tokenizer.json — same
+// Llama-family character-BPE + SentencePiece byte_fallback + Metaspace
+// (prepend_scheme=first, split=false) pre-tokenizer as Mistral-7B-v0.1,
+// but over a 32768-entry vocabulary (v0.1 was 32000). The added_tokens
+// table swells from 3 to 771 entries: [INST]/[/INST]/[TOOL_CALLS] and
+// their friends (all special: true) plus a solid block of 768
+// [control_N] slots (ids 3–770). Post-processor is TemplateProcessing
+// that prepends `<s>` (id 1). Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained(
+// 'mistralai/Mistral-7B-Instruct-v0.3')`.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mistral_7b_v03() {
+    run_fixture("mistral_7b_v03.json", "mistral-7b-instruct-v0.3");
+}
+
+// Real CohereForAI/c4ai-command-r-v01 tokenizer.json — byte-level BPE
+// with an NFC normalizer, a `Sequence[Digits(individual_digits=true),
+// ByteLevel]` pre-tokenizer, and a TemplateProcessing post-processor
+// that prepends `<BOS_TOKEN>` (id 5). No SentencePiece byte_fallback —
+// the ByteLevel byte↔char mapping covers non-vocab bytes. 255029-entry
+// vocabulary with 37 added_tokens: 8 special-classical entries at ids
+// 0–7 (<PAD>/<UNK>/<CLS>/<SEP>/<MASK_TOKEN>/<BOS_TOKEN>/<EOS_TOKEN>/
+// <EOP_TOKEN>) plus 29 `special: false` chat-template markers at ids
+// 255000–255028 (<|START_OF_TURN_TOKEN|>, <|END_OF_TURN_TOKEN|>,
+// <|USER_TOKEN|>, …). The upstream `CohereForAI/c4ai-command-r-v01`
+// repo is gated; the tokenizer.json is fetched via the ungated
+// `Xenova/c4ai-command-r-v01-tokenizer` mirror whose blob is
+// byte-identical to the upstream. Reference ids come from
+// `transformers.AutoTokenizer.from_pretrained(
+// 'Xenova/c4ai-command-r-v01-tokenizer')` against that same
+// tokenizer.json.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_command_r_v01() {
+    run_fixture("command_r_v01.json", "command-r-v01");
 }
