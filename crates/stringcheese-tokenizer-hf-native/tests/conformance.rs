@@ -368,6 +368,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "falcon_7b.json",
     "mistral_7b_v03.json",
     "command_r_v01.json",
+    "deepseek_coder_1_3b.json",
+    "llama_3_8b.json",
 ];
 
 #[test]
@@ -670,4 +672,35 @@ fn conformance_mistral_7b_v03() {
 )]
 fn conformance_command_r_v01() {
     run_fixture("command_r_v01.json", "command-r-v01");
+}
+
+// Real deepseek-ai/deepseek-coder-1.3b-base tokenizer.json — Llama-family
+// character-BPE with no byte_fallback, a six-child Sequence pre_tokenizer
+// (four Split(Regex) stages covering newlines / letters / punctuation /
+// CJK block + Digits(individual_digits=true) + ByteLevel), ByteLevel
+// post-processor and decoder. 22 added_tokens split into 18 byte-level
+// filler characters (32000–32017) + 4 chat/fim specials (32018–32021).
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_deepseek_coder_1_3b() {
+    run_fixture("deepseek_coder_1_3b.json", "deepseek-coder-1.3b");
+}
+
+// Real NousResearch/Meta-Llama-3-8B tokenizer.json (ungated byte-identical
+// mirror of the gated meta-llama/Meta-Llama-3-8B) — tiktoken-style
+// byte-level BPE with a 128000-entry vocabulary. No byte_fallback, no
+// normalizer; Sequence[Split(Regex, cl100k_base-family), ByteLevel]
+// pre-tokenizer + Sequence[ByteLevel, TemplateProcessing(<|begin_of_text|>)]
+// post-processor + ByteLevel decoder. 256 added_tokens (all
+// special:true) at ids 128000–128255.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_llama_3_8b() {
+    run_fixture("llama_3_8b.json", "llama-3-8b");
 }
