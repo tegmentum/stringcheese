@@ -2812,6 +2812,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "stringcheese-icu-linebreak"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-linebreak-component"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-icu-linebreak",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen-rt",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
 name = "stringcheese-icu-number"
 version = "0.1.0"
 dependencies = [
