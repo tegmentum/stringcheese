@@ -1,0 +1,32 @@
+[package]
+name = "stringcheese-icu-linebreak"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "UAX #14 line-break iteration capability of the StringCheese ICU alternative. Iterates the byte-offset positions at which a text layout engine may (or must) insert a line break, driving the full UAX #14 rule set (LB1-LB31 + LB30a/LB30b) from per-scalar Line_Break classification tables built into the crate. Exposes the result through the `tegmentum:i18n-linebreak@0.1.0` WIT world. Phase 5 follow-up of the WIT-i18n subsystem (docs/design/wit-i18n.md § 8.7)."
+categories = ["text-processing", "internationalization"]
+keywords = ["linebreak", "uax14", "icu", "i18n", "unicode"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-scud/std"]
+# When enabled, the crate exposes the full line-break engine API.
+# Without this feature the crate compiles down to the pack-descriptor
+# types and the classification enum alone.
+alloc = ["stringcheese-scud/alloc"]
+
+[dependencies]
+stringcheese-scud = { workspace = true }
+
+[dev-dependencies]
+# `wit-parser` provides a strong "the WIT file parses cleanly" gate
+# that does not need the wasm toolchain to be installed. Matches
+# the sibling icu-* crates' approach.
+wit-parser = "0.230"
+
+[lints]
+workspace = true
