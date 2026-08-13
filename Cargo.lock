@@ -2748,9 +2748,13 @@ dependencies = [
 name = "stringcheese-icu-case-component"
 version = "0.1.0"
 dependencies = [
+ "stringcheese-de",
  "stringcheese-en",
+ "stringcheese-fr",
  "stringcheese-icu-case",
+ "stringcheese-ru",
  "stringcheese-tr",
+ "stringcheese-zh",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",
@@ -2773,7 +2777,11 @@ version = "0.1.0"
 dependencies = [
  "stringcheese-de",
  "stringcheese-en",
+ "stringcheese-fr",
  "stringcheese-icu-collation",
+ "stringcheese-ru",
+ "stringcheese-tr",
+ "stringcheese-zh",
  "wasmtime",
  "wasmtime-wasi",
  "wit-bindgen-rt",
@@ -2826,6 +2834,17 @@ name = "stringcheese-icu-segment"
 version = "0.1.0"
 dependencies = [
  "stringcheese-scud",
+ "wit-parser 0.230.0",
+]
+
+[[package]]
+name = "stringcheese-icu-segment-component"
+version = "0.1.0"
+dependencies = [
+ "stringcheese-icu-segment",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-bindgen-rt",
  "wit-parser 0.230.0",
 ]
 
