@@ -93,6 +93,7 @@ members = [
     "crates/stringcheese-icu-datetime",
     "crates/stringcheese-icu-datetime-component",
     "crates/stringcheese-icu-segment",
+    "crates/stringcheese-icu-segment-component",
 ]
 exclude = [
     "fuzz",
@@ -244,6 +245,7 @@ stringcheese-icu-number = { version = "0.1.0", path = "crates/stringcheese-icu-n
 stringcheese-icu-datetime = { version = "0.1.0", path = "crates/stringcheese-icu-datetime", default-features = false }
 stringcheese-icu-datetime-component = { version = "0.1.0", path = "crates/stringcheese-icu-datetime-component", default-features = false }
 stringcheese-icu-segment = { version = "0.1.0", path = "crates/stringcheese-icu-segment", default-features = false }
+stringcheese-icu-segment-component = { version = "0.1.0", path = "crates/stringcheese-icu-segment-component", default-features = false }
 
 [profile.release]
 lto = "thin"

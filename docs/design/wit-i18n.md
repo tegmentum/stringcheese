@@ -501,6 +501,37 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
+### 8.5. Phase 5 progress (2026-08)
+
+**Landed.** The Phase 5 foundation ships across a single wave:
+
+- `stringcheese-scud` — extended with the `CAP_BREAK` capability tag and six new section ids (`SECT_GRAPHEME_CLASSES` / `SECT_WORD_CLASSES` / `SECT_SENTENCE_CLASSES` / `SECT_GRAPHEME_RULES` / `SECT_WORD_RULES` / `SECT_SENTENCE_RULES`) with `GraphemeClass` / `WordClass` / `SentenceClass` enums, a `BreakDataView` zero-copy view, and a `BreakSectionBuilder` writer. Class-override wire format is a sorted `(cp, run_len, class)` table so a pack can tailor the built-in UAX #29 classifier without shipping a full Unicode-wide table. `RULES_UAX29_DEFAULT` marker + `set_default_rules()` builder helper wire the "just use the algorithm's default rules" path.
+- `stringcheese-icu-segment` — the WIT interface at `component/wit/segment/stringcheese-icu-segment.wit` (package `tegmentum:i18n-segment@0.1.0`, parses cleanly under `wit-parser` with smoke tests) plus a `BreakEngine` algorithm side that consumes an optional `BreakPack` and drives the UAX #29 grapheme (§ 3) / word (§ 4) / sentence (§ 5) rules from the built-in classification tables in `classes.rs`. GB1–GB13, WB1–WB16, SB1–SB11 implemented; line breaking (UAX #14) is a follow-up crate `stringcheese-icu-linebreak`. 40 unit tests + 25 hand-authored UAX #29 vectors covering RI parity, ZWJ emoji sequences, CRLF, ExtendedPictographic + Extend + ZWJ interactions, Hangul syllable composition, ATerm-vs-STerm sentence-tail state machine.
+- `stringcheese-icu-segment-component` — the WASM component wrapper that carries the `segment-world` world across the wasm boundary, mirroring the `stringcheese-icu-datetime-component` template's shape (dual `cdylib` + `rlib`, `wit-component` feature gate on `wit-bindgen-rt` 0.44, pre-generated `src/bindings.rs` from `wit-bindgen rust --runtime-path wit_bindgen_rt`, in-process `wasmtime::component::bindgen!` smoke tests, `AtomicPtr`-backed `shared_engine()` singleton). Unlike the collation / datetime component wrappers, the segment component embeds **no** SCUD packs — the algorithm crate's `BreakEngine::new()` runs pure-algorithm-driven UAX #29 rules from the built-in tables, so the reference engine has zero external data to bundle. `supported-locales` returns `[""]` (the root-locale marker) per the WIT contract's Phase 5 note; `supports(loc)` returns `true` for every input for forward compatibility with future locale tailorings. 8 wasmtime smoke tests cover grapheme boundaries (ASCII, empty input, CRLF, family emoji ZWJ sequence), word boundaries (mixed ASCII + punctuation), sentence boundaries (two-sentence split), and both capabilities exports.
+- CI — two new jobs `wasm-i18n-segment` and `wasm-i18n-segment-component` in `.github/workflows/ci.yml`. The segment-component crate is added to the wasm-runtime `--exclude` list for the same duplicate-export-symbol reason the case-component / collation-component / datetime-component crates are excluded.
+
+**Wasm component sizes** (measured locally, aarch64 macOS, `--release`, wasmtime 26 / wasm-tools 1.254): raw module 82 448 B, componentised 104 854 B. Smaller than the datetime component (~114 KiB componentised) because no SCUD packs are embedded — the entire ~82 KiB is UAX #29 classification tables + rule state machines plus the wit-bindgen guest scaffolding.
+
+**Locales covered vs deferred.** Phase 5 ships the locale-neutral default only. UAX #29 grapheme rules are language-independent; word / sentence rules are locale-neutral for every script except:
+
+- **Japanese + Chinese** — CJK word segmentation without whitespace requires a dictionary-based segmenter (MeCab-style). Deferred to a follow-up SCUD pack extension; the WIT `locale` argument is already accepted for forward compatibility.
+- **Thai / Lao / Khmer / Burmese** — Syllable segmentation requires either a dictionary or a rule-based segmenter (ICU's `BreakIterator` ships one of each). Deferred alongside the CJK dictionaries.
+- **Portuguese / French** — Elision-aware word segmentation (`l'homme` → `l'` + `homme`) is a per-locale tailoring; the shipped UAX #29 default keeps them together as one word.
+
+**Deferred.** Documented in the crate roots and left for the follow-up wave:
+
+- **UAX #14 line breaking.** A separate crate `stringcheese-icu-linebreak` — the LB rules ship large enough table state that combining both would balloon the pack.
+- **Dictionary-based CJK word segmentation.** MeCab-style morphological analyzer for Japanese; forward-maximum-match segmenter for Chinese. Both need multi-MB dictionaries that belong in per-locale SCUD packs rather than the algorithm crate.
+- **Interop with `stringcheese-unicode`'s existing grapheme iterator.** Phase 5 does not consolidate the two implementations; a future wave should either delegate `stringcheese-unicode::grapheme_indices` to `BreakEngine::segment_graphemes` or vice versa to eliminate the duplicate table shipping.
+- **Extended grapheme cluster tailoring for Indic scripts (`GB9c`).** The current `GraphemeIter` approximates `GB9c` as `GB9` (Extend after any base). InCB=Consonant handling needs a per-scalar `InCB` classification table which is not yet shipped. Impact: minimal — the `GB9` approximation over-glues by at most one Extend character per Indic sequence.
+
+**Red flags.** A couple worth noting for reviewers:
+
+- **RI parity semantics.** GB12/GB13 (Regional Indicator pair) track the count of RIs in the current run; the parity is checked at the point of comparison. `GraphemeIter` resets the count on any non-RI scalar. Cross-checked against the "🇬a🇬🇧" test case in the algorithm crate's `ri_run_length_is_reset_after_non_ri` unit test.
+- **WB4 fold-through of Extend/Format/ZWJ.** The word iterator's `fold_extend_format_zwj` matches UAX #29's "these classes inherit the previous effective class, except after CR/LF/Newline". This introduces a subtle asymmetry: `prev_effective` is folded, but `prev_raw` (the class of the immediately-preceding scalar) is kept separately so WB3c (`ZWJ × ExtPict`) can consult the actual ZWJ rather than what it folded into. Verified by `wb_zwj_pictographic_no_break`.
+- **Sentence-break state machine simplification.** SB11's "break unless curr is `Lower | Extend | Format`" path folds SB8 into a simpler "assume any non-lowercase continuation ends the sentence" heuristic. Matches CLDR reference behaviour on the shipped test vectors; a full SB8 implementation would need OLetter/Upper/Lower lookahead through unlimited `Numeric | SContinue | SATerm` runs and is deferred.
+- **No pack was authored for the shipped component.** Unlike the collation / datetime components (which each bundle two or three locale packs so the shipped `.wasm` is drivable end-to-end for its full CLDR pattern surface), the segment component's reference engine is just `BreakEngine::new()`. Any future pack-driven tailoring (CJK dictionaries, Thai syllable segmentation) can be added to the component's `reference_engine()` without breaking the WIT surface — `BreakEngine::with_pack(pack)` and multi-pack composition are already supported in the algorithm crate.
+
 ### 8.4. Phase 4 progress (2026-08)
 
 **Landed.** The Phase 4 foundation ships across a single wave:
