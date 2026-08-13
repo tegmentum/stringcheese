@@ -15,8 +15,8 @@ use std::path::PathBuf;
 
 use stringcheese_scud::{
     CAP_CASE, CAP_COLLATION, CaseSectionBuilder, CollationSectionBuilder, ContextKind,
-    SECT_COLLATION_OPTIONS, SECT_CONTEXT, SECT_EXPANSIONS, SECT_FULL_UPPER, SECT_SIMPLE_LOWER,
-    SECT_SIMPLE_UPPER, ScudWriter,
+    SECT_COLLATION_OPTIONS, SECT_CONTEXT, SECT_EXPANSIONS, SECT_FULL_UPPER, SECT_PRIMARY_OVERRIDES,
+    SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -39,30 +39,31 @@ fn main() {
 
 /// Build the collation-tr SCUD pack in memory.
 ///
-/// Turkish collation traditionally orders the Turkish alphabet as
+/// Turkish collation orders the alphabet as
 /// `a b c ç d e f g ğ h ı i j k l m n o ö p r s ş t u ü v y z`.
 /// The distinctive tailoring is the **primary-distinct** ordering
-/// of dotless `ı` before dotted `i` (default UCA treats the two as
-/// primary-equal, tertiary-distinct).
+/// of dotless `ı` before dotted `i` — default UCA treats the two
+/// as primary-equal, tertiary-distinct. CLDR Turkish weighs
+/// `ı` between `h` and `i` at the primary level.
 ///
-/// # Phase 2 deferral
+/// The pack ships primary-weight override rows for the full
+/// Turkish lowercase alphabet via
+/// [`SECT_PRIMARY_OVERRIDES`](stringcheese_scud::SECT_PRIMARY_OVERRIDES).
+/// The `stringcheese-icu-collation` engine picks up the overrides
+/// and ranks characters by their tabled primary weight rather than
+/// DUCET root at compare / sort-key time. Characters outside the
+/// override table (digits, punctuation, non-Turkish letters) fall
+/// back to their ASCII-lowercased codepoint as an approximation.
 ///
-/// The Phase 2 `CollationEngine`'s `primary_fold` ASCII-lowercases
-/// and strips combining marks before delegating to `feruca`
-/// (CLDR-root). It carries no primary-tailoring section to shift
-/// `ı`'s weight relative to `i` — implementing that requires a new
-/// SCUD section (per-locale weight overrides consulted before the
-/// UCA compare) plus the algorithm changes to consume it. The
-/// shipped tr pack therefore uses default UCA ordering for `ı` /
-/// `i` and documents the primary-distinct behaviour as a follow-up
-/// wave. See `docs/design/wit-i18n.md` § 8.2 for the deferral
-/// rationale.
+/// # Coverage
 ///
-/// The pack still ships:
-///
-/// * **ß → ss** — belt-and-braces so Turkish text quoting a German
-///   loanword (`Straße`) collates identically to the English/German
-///   packs.
+/// * **Primary overrides** — every letter of the Turkish alphabet
+///   (a, b, c, ç, d, e, f, g, ğ, h, ı, i, j, k, l, m, n, o, ö, p,
+///   r, s, ş, t, u, ü, v, y, z), assigned monotonically-increasing
+///   primary weights in dictionary order.
+/// * **ß → ss expansions** — belt-and-braces so Turkish text
+///   quoting a German loanword (`Straße`) collates identically to
+///   the English/German packs.
 /// * **Default strength tertiary** — case-sensitive.
 fn build_collation_tr_scud() -> Vec<u8> {
     let mut c = CollationSectionBuilder::new();
@@ -71,6 +72,55 @@ fn build_collation_tr_scud() -> Vec<u8> {
     c.push_expansion(0x00DF, &[0x0073, 0x0073]); // ß → ss
     c.push_expansion(0x1E9E, &[0x0053, 0x0053]); // ẞ → SS
 
+    // Primary overrides — the Turkish alphabet in dictionary
+    // order. Weights are monotonic and leave gaps for future
+    // additions.
+    //
+    // Uppercase letters resolve via the engine's
+    // ASCII-lowercase-then-lookup rule (see
+    // `overridden_key`); non-ASCII uppercase like Ç / Ğ / Ş
+    // additionally ship explicit rows so the fold is
+    // codepoint-exact.
+    let alphabet: &[(u32, u32)] = &[
+        (u32::from(b'a'), 100),
+        (u32::from(b'b'), 110),
+        (u32::from(b'c'), 120),
+        (0x00E7, 130), // ç
+        (u32::from(b'd'), 140),
+        (u32::from(b'e'), 150),
+        (u32::from(b'f'), 160),
+        (u32::from(b'g'), 170),
+        (0x011F, 180), // ğ
+        (u32::from(b'h'), 190),
+        (0x0131, 200), // ı (dotless-i, between h and i)
+        (u32::from(b'i'), 210),
+        (u32::from(b'j'), 220),
+        (u32::from(b'k'), 230),
+        (u32::from(b'l'), 240),
+        (u32::from(b'm'), 250),
+        (u32::from(b'n'), 260),
+        (u32::from(b'o'), 270),
+        (0x00F6, 280), // ö
+        (u32::from(b'p'), 290),
+        (u32::from(b'r'), 300),
+        (u32::from(b's'), 310),
+        (0x015F, 320), // ş
+        (u32::from(b't'), 330),
+        (u32::from(b'u'), 340),
+        (0x00FC, 350), // ü
+        (u32::from(b'v'), 360),
+        (u32::from(b'y'), 370),
+        (u32::from(b'z'), 380),
+    ];
+    for (cp, weight) in alphabet {
+        c.push_primary_override(*cp, *weight, 0, 0);
+    }
+    // İ (dotted capital I, U+0130) — tie with lowercase `i`
+    // (U+0069) at primary. The ASCII fold path already handles
+    // uppercase ASCII → lowercase; the non-ASCII Turkish
+    // uppercase pair is explicit.
+    c.push_primary_override(0x0130, 210, 0, 0);
+
     // Default strength tertiary (case + diacritics + base).
     c.set_default_strength(2);
     c.set_case_insensitive(false);
@@ -78,6 +128,7 @@ fn build_collation_tr_scud() -> Vec<u8> {
     let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("tr"));
     w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
     w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+    w.append_section(SECT_PRIMARY_OVERRIDES, &c.primary_overrides_bytes());
     w.finish()
 }
 

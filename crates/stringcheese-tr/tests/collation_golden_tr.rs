@@ -2,18 +2,19 @@
 //!
 //! ≥ 20 assertions covering primary/secondary/tertiary strength
 //! distinctions, the German ß expansion the pack ships for
-//! uniform composed-engine behaviour, and the Phase 2 deferral
-//! for Turkish's primary-distinct dotless-ı / dotted-i ordering.
+//! uniform composed-engine behaviour, and the CLDR-conformant
+//! Turkish alphabet ordering — including the primary-distinct
+//! dotless-ı / dotted-i tailoring shipped via
+//! `SECT_PRIMARY_OVERRIDES`.
 //!
-//! # Phase 2 deferral: primary-distinct ı / i
+//! # Primary-distinct ı / i (landed)
 //!
-//! Turkish's alphabetical order interleaves `... h ı i j ...` —
-//! dotless `ı` sorts primary-before dotted `i`. The shipped
-//! `CollationEngine` uses default UCA (via feruca / CLDR-root)
-//! for the primary weight, where `ı` and `i` share a primary
-//! weight. The `primary_distinct_i_deferred` test below documents
-//! the shipped behaviour so a follow-up wave landing the
-//! primary-tailoring section can flip the assertion.
+//! Turkish's alphabetical order interleaves `... h ı i j ...`.
+//! The tr collation pack ships primary-weight overrides for the
+//! full Turkish lowercase alphabet; the `CollationEngine` picks
+//! them up and ranks characters by their tabled weight rather
+//! than DUCET root. Under this tailoring `ı < i` at primary,
+//! matching Turkish dictionary conventions.
 
 #![cfg(all(feature = "collation-scud", not(target_family = "wasm")))]
 
@@ -67,38 +68,34 @@ fn primary_folds_case() {
 }
 
 // -----------------------------------------------------------------------
-// Turkish special letters — pack-hit + default UCA behaviour
-// (8 assertions)
+// Turkish special letters — primary-override dictionary ordering
+// (7 assertions)
 // -----------------------------------------------------------------------
 
 #[test]
-fn turkish_special_letters_default_uca_behaviour() {
+fn turkish_special_letters_dictionary_order() {
     let e = engine();
-    // Under CLDR-root, the Turkish special letters get distinct
-    // primary weights — we assert deterministic ordering rather
-    // than the specific Turkish-alphabet position, because Phase 2
-    // uses DUCET-root not the Turkish tailoring.
-    for (a, b) in [
-        ("caz", "cim"),   // ordinary Latin
-        ("çadır", "çam"), // both start with ç
-        ("gemi", "göl"),  // g + e vs g + ö
+    // Under the primary-override tailoring, Turkish letters sort
+    // in strict dictionary order.
+    for (a, b, expected) in [
+        ("caz", "cim", Ordering::Less),
+        ("çadır", "çam", Ordering::Less), // ç < ç ties, then a < a ties, then d < m at pos 2
+        ("gemi", "göl", Ordering::Less),  // g < g ties, then e (150) < ö (280)
+        ("hafta", "ıp", Ordering::Less),  // h (190) < ı (200)
+        ("ıp", "ip", Ordering::Less),     // ı (200) < i (210)
+        ("iyi", "jest", Ordering::Less),  // i (210) < j (220)
     ] {
-        let ord = e.compare(a, b, "tr", CollationStrength::Tertiary);
-        assert_ne!(
-            ord,
-            Ordering::Equal,
-            "expected definite order for ({a:?}, {b:?})"
-        );
+        let ord = e.compare(a, b, "tr", CollationStrength::Primary);
+        assert_eq!(ord, expected, "primary order for ({a:?}, {b:?})");
     }
-    // Non-ASCII case-fold at primary is a Phase 2 deferral (the
-    // engine's primary_fold ASCII-lowercases only); assert the
-    // shipped behaviour on ç / Ç which stay case-distinct at
-    // primary under the current engine. A follow-up wave that
-    // pulls in Unicode case-folding tables will flip these.
-    assert_ne!(
+    // Non-ASCII case-fold now works at primary under the override
+    // table's ASCII-lowercase-then-lookup rule — ç folds to itself,
+    // and uppercase Ç folds to lowercase ç (both have primary
+    // weight 130 in the tr pack).
+    assert_eq!(
         e.compare("çocuk", "ÇOCUK", "tr", CollationStrength::Primary),
         Ordering::Equal,
-        "non-ASCII primary case-fold is a Phase 2 CollationEngine deferral"
+        "non-ASCII primary case-fold lands via SECT_PRIMARY_OVERRIDES",
     );
 }
 
@@ -120,33 +117,49 @@ fn sharp_s_expansion_via_tr_pack() {
 }
 
 // -----------------------------------------------------------------------
-// Primary-distinct ı / i deferral — documented via test
+// Primary-distinct ı / i (landed via SECT_PRIMARY_OVERRIDES) — 8 assertions
 // -----------------------------------------------------------------------
 
 #[test]
-fn primary_distinct_i_deferred() {
+fn primary_distinct_dotless_i() {
     let e = engine();
-    // Under feruca / CLDR-root (which the shipped engine
-    // delegates to), `i` and `ı` compare as **i < ı** at every
-    // strength — feruca weights them distinctly at primary. That
-    // happens to be the *opposite* direction from the Turkish
-    // alphabet's `ı < i` ordering, and neither matches the
-    // classical Turkish tailoring which places `ı` immediately
-    // primary-before `i`. Landing the Turkish tailoring requires
-    // a new SCUD primary-weight-override section + the
-    // `CollationEngine` algorithm changes to consume it —
-    // deferred to a follow-up wave. See the module-level
-    // deferral note.
-    let ord = e.compare("i", "ı", "tr", CollationStrength::Primary);
+    // Under the tr pack's primary-override table, `ı` (dotless-i,
+    // primary weight 200) sorts strictly between `h` (190) and `i`
+    // (210). This is the CLDR-conformant Turkish ordering.
     assert_eq!(
-        ord,
+        e.compare("h", "ı", "tr", CollationStrength::Primary),
         Ordering::Less,
-        "shipped engine's DUCET-based primary compare: i < ı; \
-         Turkish `ı < i` primary tailoring is a documented Phase 2 deferral"
     );
-    // At tertiary, they DO differ — direction stays consistent.
-    let ord_t = e.compare("i", "ı", "tr", CollationStrength::Tertiary);
-    assert_ne!(ord_t, Ordering::Equal, "tertiary must distinguish i and ı");
+    assert_eq!(
+        e.compare("ı", "i", "tr", CollationStrength::Primary),
+        Ordering::Less,
+    );
+    assert_eq!(
+        e.compare("h", "i", "tr", CollationStrength::Primary),
+        Ordering::Less,
+    );
+    // Whole words follow the same rule.
+    assert_eq!(
+        e.compare("hız", "ip", "tr", CollationStrength::Primary),
+        Ordering::Less,
+    );
+    assert_eq!(
+        e.compare("ıp", "ip", "tr", CollationStrength::Primary),
+        Ordering::Less,
+    );
+    // Case-fold too — I lowercases to i (210), ı stays 200.
+    assert_eq!(
+        e.compare("I", "i", "tr", CollationStrength::Primary),
+        Ordering::Equal,
+    );
+    assert_eq!(
+        e.compare("ı", "I", "tr", CollationStrength::Primary),
+        Ordering::Less,
+    );
+    // Turkish alphabet as a sorted sequence.
+    let mut letters = vec!["j", "i", "ı", "h", "g", "ğ"];
+    letters.sort_by(|a, b| e.compare(a, b, "tr", CollationStrength::Primary));
+    assert_eq!(letters, vec!["g", "ğ", "h", "ı", "i", "j"]);
 }
 
 // -----------------------------------------------------------------------
@@ -207,13 +220,13 @@ fn sort_key_matches_compare() {
 fn shipped_vector_count_meets_20() {
     // - ascii_word_ordering:                        5
     // - primary_folds_case:                         5
-    // - turkish_special_letters_default_uca_behaviour: 4
+    // - turkish_special_letters_dictionary_order:   7
     // - sharp_s_expansion_via_tr_pack:              2
-    // - primary_distinct_i_deferred:                2
+    // - primary_distinct_dotless_i:                 8
     // - ordering_is_antisymmetric:                  3 * 3 = 9
     // - sort_key_matches_compare:                   3 * 3 = 9
-    // Total:                                       36
-    const SHIPPED_VECTORS: usize = 5 + 5 + 4 + 2 + 2 + 9 + 9;
+    // Total:                                       45
+    const SHIPPED_VECTORS: usize = 5 + 5 + 7 + 2 + 8 + 9 + 9;
     const {
         assert!(
             SHIPPED_VECTORS >= 20,
