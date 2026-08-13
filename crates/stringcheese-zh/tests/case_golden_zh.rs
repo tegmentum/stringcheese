@@ -129,10 +129,7 @@ fn empty_whitespace_punctuation() {
     assert_eq!(e.to_upper("", "zh"), "");
     assert_eq!(e.to_lower("   ", "zh"), "   ");
     // Full-width comma U+FF0C — punctuation, no case, identity.
-    assert_eq!(
-        e.to_upper("hello\u{FF0C}world", "zh"),
-        "HELLO\u{FF0C}WORLD"
-    );
+    assert_eq!(e.to_upper("hello\u{FF0C}world", "zh"), "HELLO\u{FF0C}WORLD");
 }
 
 // -----------------------------------------------------------------------
@@ -145,8 +142,14 @@ fn fold_operations() {
     assert_eq!(e.fold("HELLO", FoldMode::Simple), "hello");
     assert_eq!(e.fold("Straße", FoldMode::Full), "strasse");
     // Han stays identity under fold.
-    assert_eq!(e.fold("\u{4E2D}\u{56FD}", FoldMode::Simple), "\u{4E2D}\u{56FD}");
-    assert_eq!(e.fold("\u{4E2D}\u{56FD}", FoldMode::Full), "\u{4E2D}\u{56FD}");
+    assert_eq!(
+        e.fold("\u{4E2D}\u{56FD}", FoldMode::Simple),
+        "\u{4E2D}\u{56FD}"
+    );
+    assert_eq!(
+        e.fold("\u{4E2D}\u{56FD}", FoldMode::Full),
+        "\u{4E2D}\u{56FD}"
+    );
 }
 
 // -----------------------------------------------------------------------

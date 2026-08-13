@@ -28,8 +28,7 @@
 use stringcheese_icu_collation::{CollationPack, ScudError};
 
 /// The compiled collation SCUD pack for Russian.
-pub const COLLATION_RU_SCUD: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/collation-ru.scud"));
+pub const COLLATION_RU_SCUD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/collation-ru.scud"));
 
 /// Wrap [`COLLATION_RU_SCUD`] as a [`CollationPack`] ready to feed
 /// to a [`stringcheese_icu_collation::CollationEngine`].

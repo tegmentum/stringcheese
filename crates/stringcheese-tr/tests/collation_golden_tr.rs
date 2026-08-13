@@ -146,11 +146,7 @@ fn primary_distinct_i_deferred() {
     );
     // At tertiary, they DO differ — direction stays consistent.
     let ord_t = e.compare("i", "ı", "tr", CollationStrength::Tertiary);
-    assert_ne!(
-        ord_t,
-        Ordering::Equal,
-        "tertiary must distinguish i and ı"
-    );
+    assert_ne!(ord_t, Ordering::Equal, "tertiary must distinguish i and ı");
 }
 
 // -----------------------------------------------------------------------
@@ -165,11 +161,7 @@ fn ordering_is_antisymmetric() {
         CollationStrength::Secondary,
         CollationStrength::Tertiary,
     ] {
-        for (a, b) in [
-            ("araba", "bebek"),
-            ("kalem", "masa"),
-            ("sandalye", "araba"),
-        ] {
+        for (a, b) in [("araba", "bebek"), ("kalem", "masa"), ("sandalye", "araba")] {
             let ab = e.compare(a, b, "tr", strength);
             let ba = e.compare(b, a, "tr", strength);
             assert_eq!(
@@ -188,11 +180,7 @@ fn ordering_is_antisymmetric() {
 #[test]
 fn sort_key_matches_compare() {
     let e = engine();
-    let pairs = [
-        ("araba", "bebek"),
-        ("kalem", "masa"),
-        ("Straße", "Strasse"),
-    ];
+    let pairs = [("araba", "bebek"), ("kalem", "masa"), ("Straße", "Strasse")];
     for strength in [
         CollationStrength::Primary,
         CollationStrength::Secondary,

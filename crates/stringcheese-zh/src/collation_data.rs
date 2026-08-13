@@ -29,8 +29,7 @@
 use stringcheese_icu_collation::{CollationPack, ScudError};
 
 /// The compiled collation SCUD pack for Chinese.
-pub const COLLATION_ZH_SCUD: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/collation-zh.scud"));
+pub const COLLATION_ZH_SCUD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/collation-zh.scud"));
 
 /// Wrap [`COLLATION_ZH_SCUD`] as a [`CollationPack`] ready to feed
 /// to a [`stringcheese_icu_collation::CollationEngine`].

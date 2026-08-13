@@ -15,11 +15,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{chinese_cardinals, chinese_ordinals};
 use stringcheese_scud::{
-    CAP_CASE, CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
-    CollationSectionBuilder, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_EXPANSIONS,
-    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD,
-    SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER, ScudWriter,
+    CAP_CASE, CAP_COLLATION, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder, CollationSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
+    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_EXPANSIONS, SECT_FULL_FOLD, SECT_FULL_UPPER,
+    SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER,
+    SECT_SIMPLE_UPPER, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.

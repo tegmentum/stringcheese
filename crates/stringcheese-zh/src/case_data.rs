@@ -64,8 +64,14 @@ mod tests {
         let engine = CaseEngine::new(alloc::vec![case_pack().unwrap()]);
         // 你好世界 — "Hello world" in Chinese. Han characters have
         // no case; upper and lower are both identity.
-        assert_eq!(engine.to_upper("\u{4F60}\u{597D}", "zh"), "\u{4F60}\u{597D}");
-        assert_eq!(engine.to_lower("\u{4F60}\u{597D}", "zh"), "\u{4F60}\u{597D}");
+        assert_eq!(
+            engine.to_upper("\u{4F60}\u{597D}", "zh"),
+            "\u{4F60}\u{597D}"
+        );
+        assert_eq!(
+            engine.to_lower("\u{4F60}\u{597D}", "zh"),
+            "\u{4F60}\u{597D}"
+        );
     }
 
     #[test]

@@ -35,8 +35,7 @@ use stringcheese_icu_collation::{CollationPack, ScudError};
 /// Generated at build time and embedded via `include_bytes!`; the
 /// exact byte count is available at runtime as
 /// `COLLATION_FR_SCUD.len()`.
-pub const COLLATION_FR_SCUD: &[u8] =
-    include_bytes!(concat!(env!("OUT_DIR"), "/collation-fr.scud"));
+pub const COLLATION_FR_SCUD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/collation-fr.scud"));
 
 /// Wrap [`COLLATION_FR_SCUD`] as a [`CollationPack`] ready to feed
 /// to a [`stringcheese_icu_collation::CollationEngine`].

@@ -171,12 +171,7 @@ fn empty_and_whitespace_and_punctuation() {
 #[test]
 fn to_lower_is_idempotent() {
     let e = engine();
-    for input in [
-        "bonjour",
-        "français",
-        "château",
-        "œuvre d'art",
-    ] {
+    for input in ["bonjour", "français", "château", "œuvre d'art"] {
         let once = e.to_lower(input, "fr");
         let twice = e.to_lower(&once, "fr");
         assert_eq!(once, twice, "to_lower not idempotent on {input:?}");
