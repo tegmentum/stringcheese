@@ -343,7 +343,26 @@ impl<'a> CaseEngine<'a> {
     /// which shares the Turkic dotted / dotless-I case tailorings.
     /// Alias resolution never re-consults the fallback chain — a match
     /// on `az` returns the `tr` pack directly.
+    ///
+    /// Callers that already have the original query locale available
+    /// should prefer [`pack_for_with_origin`](Self::pack_for_with_origin)
+    /// so an `az-Cyrl-*` query does not misfire the `az → tr` alias
+    /// at the bare-`az` rung of the fallback chain (Cyrillic-script
+    /// Azerbaijani does not share the Turkic-I rules). This bare
+    /// `pack_for` variant passes the tag itself as the origin, so it
+    /// is safe for single-tag lookups (e.g. `supports("de-DE")`).
     fn pack_for(&self, tag: &str) -> Option<&CasePack<'a>> {
+        self.pack_for_with_origin(tag, tag)
+    }
+
+    /// Look up a pack for `tag`, using `origin` (the original query
+    /// locale before fallback-chain stripping) to gate alias
+    /// resolution. Callers walking the fallback chain pass the
+    /// original query as `origin` so an `az-Cyrl-*` query does not
+    /// incorrectly fire the `az → tr` alias at the bare-`az` rung
+    /// of the chain (Cyrillic-script Azerbaijani does not share the
+    /// Turkic dotted / dotless-I rules).
+    fn pack_for_with_origin(&self, tag: &str, origin: &str) -> Option<&CasePack<'a>> {
         if let Some(pack) = self
             .packs
             .iter()
@@ -351,7 +370,7 @@ impl<'a> CaseEngine<'a> {
         {
             return Some(pack);
         }
-        if let Some(alias) = case_locale_alias(tag) {
+        if let Some(alias) = case_locale_alias_for_origin(tag, origin) {
             return self
                 .packs
                 .iter()
@@ -363,7 +382,7 @@ impl<'a> CaseEngine<'a> {
     /// Iterate every pack whose locale is a prefix of `locale` under
     /// the CLDR fallback chain, most-specific first.
     fn packs_for_locale<'e>(&'e self, locale: &'e str) -> impl Iterator<Item = &'e CasePack<'a>> {
-        walk_fallback_chain(locale).filter_map(move |tag| self.pack_for(tag))
+        walk_fallback_chain(locale).filter_map(move |tag| self.pack_for_with_origin(tag, locale))
     }
 
     fn map_lower_char(&self, c: char, locale: &str, out: &mut String) {
@@ -481,11 +500,13 @@ impl<'a> CaseEngine<'a> {
 ///
 /// The alias is deliberately narrow: it fires only on the exact tag,
 /// not on prefixes. Query `az-Cyrl` (Azerbaijani in Cyrillic script,
-/// which does *not* share the Turkic-I rules) walks the fallback
-/// chain `az-Cyrl → az → ""`; at `az` the alias fires and returns the
-/// Turkish pack. Cyrillic-script Azerbaijani text under this shape is
-/// a documented Phase 6 red flag — the fix ships alongside a
-/// dedicated `az-Cyrl` pack in a follow-up wave.
+/// which does *not* share the Turkic-I rules) is filtered by an
+/// explicit deny-list — `case_locale_alias("az-Cyrl")` returns
+/// `None`. The higher-level [`case_locale_alias_for_origin`] helper
+/// additionally suppresses the `az → tr` alias when the origin query
+/// (before fallback-chain stripping) carries a Cyrl script tag, so
+/// walking `az-Cyrl-AZ → az-Cyrl → az → ""` does not misfire the
+/// alias at the bare-`az` rung.
 ///
 /// The Phase 6 table is intentionally minimal (just `az → tr`); larger
 /// tables (Lithuanian's soft-dotted-i, Greek final-sigma tailoring at
@@ -499,6 +520,44 @@ pub fn case_locale_alias(tag: &str) -> Option<&'static str> {
         return Some("tr");
     }
     None
+}
+
+/// Origin-aware variant of [`case_locale_alias`].
+///
+/// Consults [`case_locale_alias`] as usual, but suppresses the
+/// `az → tr` alias when the `origin` locale carries a `Cyrl` script
+/// tag — Cyrillic-script Azerbaijani (`az-Cyrl-*`) does not share
+/// the Turkic dotted / dotless-I case rules with Turkish, so the
+/// alias must not fire even after the fallback-chain walk strips
+/// the `-Cyrl` subtag down to a bare `az`.
+///
+/// This is the hook that resolves the Phase 6 red flag around
+/// `az-Cyrl-AZ` incorrectly inheriting Turkish tailorings. Bare
+/// `az` still fires the alias (default script for Azerbaijani per
+/// CLDR is Latin, so aliasing to `tr` is correct). Explicit
+/// `az-Latn-*` still fires the alias.
+#[must_use]
+pub fn case_locale_alias_for_origin(tag: &str, origin: &str) -> Option<&'static str> {
+    if locale_has_script(origin, "Cyrl") {
+        return None;
+    }
+    case_locale_alias(tag)
+}
+
+/// True iff `locale` carries the given four-letter script subtag.
+///
+/// BCP 47 script subtags are exactly four ASCII letters and appear
+/// as the second subtag when present (after the two-or-three-letter
+/// language). Matches case-insensitively so `az-cyrl-AZ` and
+/// `AZ-Cyrl` both hit.
+fn locale_has_script(locale: &str, script: &str) -> bool {
+    debug_assert_eq!(script.len(), 4);
+    for part in locale.split('-') {
+        if part.len() == 4 && part.eq_ignore_ascii_case(script) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Walk the CLDR-defined fallback chain for a BCP 47 tag.
@@ -809,13 +868,51 @@ mod tests {
         assert_eq!(case_locale_alias("az"), Some("tr"));
         assert_eq!(case_locale_alias("AZ"), Some("tr")); // case-insensitive
         assert_eq!(case_locale_alias("az-Latn"), Some("tr"));
-        // Cyrillic-script Azerbaijani is *not* Turkic-I; the alias
-        // deliberately does not fire on `az-Cyrl` — the walk-up to
-        // bare `az` triggers the alias, though, which is a documented
-        // Phase 6 red flag until a dedicated `az-Cyrl` pack lands.
+        // Cyrillic-script Azerbaijani is *not* Turkic-I — the exact
+        // `az-Cyrl` tag never fires the alias.
         assert_eq!(case_locale_alias("az-Cyrl"), None);
         assert_eq!(case_locale_alias("tr"), None);
         assert_eq!(case_locale_alias("en"), None);
+    }
+
+    #[test]
+    fn case_locale_alias_for_origin_gates_on_script_tag() {
+        // The origin-aware helper honours an explicit `az-Cyrl-*`
+        // origin — the `az → tr` alias is suppressed at every rung
+        // of the fallback walk (including bare `az`).
+        assert_eq!(
+            case_locale_alias_for_origin("az", "az-Cyrl-AZ"),
+            None,
+            "az-Cyrl origin must not inherit Turkish-I tailorings",
+        );
+        assert_eq!(case_locale_alias_for_origin("az", "az-Cyrl"), None,);
+        // Bare `az` (no script tag) still fires the alias — CLDR's
+        // default script for Azerbaijani is Latin, so treating it
+        // as Turkic-I is correct.
+        assert_eq!(case_locale_alias_for_origin("az", "az"), Some("tr"));
+        // Explicit `az-Latn-*` still fires the alias.
+        assert_eq!(case_locale_alias_for_origin("az", "az-Latn-AZ"), Some("tr"),);
+        assert_eq!(
+            case_locale_alias_for_origin("az-Latn", "az-Latn"),
+            Some("tr"),
+        );
+    }
+
+    #[test]
+    fn az_cyrl_does_not_inherit_turkish_tailorings() {
+        // End-to-end: a caller loading only the tr pack and querying
+        // under `az-Cyrl-AZ` should NOT get Turkic-I behaviour. The
+        // walk-up to bare `az` used to misfire the alias; the
+        // origin-aware `pack_for_with_origin` now suppresses it.
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        // Default Unicode: "i".to_upper() → "I", not "İ".
+        assert_eq!(engine.to_upper("i", "az-Cyrl"), "I");
+        assert_eq!(engine.to_upper("i", "az-Cyrl-AZ"), "I");
+        // Similarly for lowercase — no Turkic-I dotless-fold.
+        assert_eq!(engine.to_lower("I", "az-Cyrl"), "i");
+        assert_eq!(engine.to_lower("I", "az-Cyrl-AZ"), "i");
     }
 
     #[test]

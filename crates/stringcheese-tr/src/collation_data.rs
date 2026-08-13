@@ -6,26 +6,29 @@
 //! ready to hand to a
 //! [`stringcheese_icu_collation::CollationEngine`].
 //!
-//! # Phase 2 deferral: primary-distinct dotless-ı / dotted-i
+//! # Primary-distinct dotless-ı / dotted-i (landed)
 //!
 //! Turkish's alphabetical order interleaves `... h ı i j ...` —
-//! dotless `ı` sorts primary-before dotted `i`. Default UCA (which
-//! the shipped Phase 2 `CollationEngine` delegates to) treats
-//! `ı` and `i` as primary-equal, tertiary-distinct.
+//! dotless `ı` sorts primary-before dotted `i`. Default UCA
+//! (feruca / CLDR-root) treats them as primary-equal,
+//! tertiary-distinct.
 //!
-//! Bridging the two requires a new SCUD primary-tailoring section
-//! plus the `CollationEngine` algorithm changes to consume it —
-//! neither of which lands in Phase 6's data-only rollout. The pack
-//! ships default UCA behaviour for `ı` / `i` and documents the
-//! deferral here; the `collation_golden_tr.rs` tests assert what
-//! the engine actually does, with a `primary_distinct_i_deferred`
-//! test that a follow-up wave can flip when the algorithm lands.
+//! The pack ships primary-weight override rows for the full
+//! Turkish lowercase alphabet via the `SECT_PRIMARY_OVERRIDES`
+//! section, assigning `ı` a primary weight between `h` and `i`.
+//! The engine consults the override table at compare / sort-key
+//! time so Turkish text sorts in CLDR-conformant dictionary order.
 //!
 //! # Coverage
 //!
+//! * Primary-weight overrides for the full Turkish alphabet
+//!   (a, b, c, ç, d, e, f, g, ğ, h, ı, i, j, k, l, m, n, o, ö, p,
+//!   r, s, ş, t, u, ü, v, y, z).
 //! * German ß / ẞ expansions (belt-and-braces uniform behaviour).
 //! * Default strength tertiary.
-//! * Everything else: DUCET-root behaviour via feruca.
+//! * Characters outside the override table (digits, punctuation,
+//!   non-Turkish letters) fall back to their ASCII-lowercased
+//!   codepoint as a primary-weight approximation.
 
 use stringcheese_icu_collation::{CollationPack, ScudError};
 

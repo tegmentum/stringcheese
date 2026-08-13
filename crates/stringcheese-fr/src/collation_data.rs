@@ -12,21 +12,13 @@
 //!   `stringcheese-collate::UcaCollator`) — French alphabetical
 //!   ordering matches DUCET-root for the Latin script.
 //! * Ligature expansions Æ/æ → AE/ae, Œ/œ → OE/oe.
+//! * **Backwards-secondary rule** — accents tie-break right-to-left
+//!   within a word, producing the classic French sort
+//!   `cote < côte < coté < côté`. The tailoring rides on the
+//!   `SECT_COLLATION_OPTIONS` backwards-secondary bit; the
+//!   `stringcheese-icu-collation` engine reverses the per-position
+//!   secondary sequence before compare when the bit is set.
 //! * Default strength tertiary (case-sensitive).
-//!
-//! # Phase 2 deferrals
-//!
-//! * **French backwards-secondary rule.** The French tailoring
-//!   compares accents right-to-left within a word so
-//!   `cote < coté < côte < côté` (the classic French sort). The
-//!   Phase 2 `CollationEngine`'s `primary_fold` strips combining
-//!   marks and delegates the base-letter compare to feruca
-//!   (CLDR-root); it does not carry the reversed accent-comparison
-//!   state a French backwards-secondary implementation would need.
-//!   The shipped pack instead uses default UCA ordering; the
-//!   `collation_golden_fr.rs` tests assert this reality with
-//!   a documented reference to the deferral. See
-//!   `docs/design/wit-i18n.md` § 8.2 for the deferral rationale.
 
 use stringcheese_icu_collation::{CollationPack, ScudError};
 

@@ -2,18 +2,19 @@
 //!
 //! ≥ 20 assertions covering primary/secondary/tertiary strength
 //! distinctions, ligature expansions, French alphabetical ordering,
-//! and sort-key consistency.
+//! the **backwards-secondary** accent tie-break, and sort-key
+//! consistency.
 //!
-//! # Phase 2 deferral: French backwards-secondary
+//! # Backwards-secondary landing
 //!
 //! Classical French sort orders accents right-to-left within a
-//! word: `cote < coté < côte < côté`. The Phase 2 `CollationEngine`'s
-//! `primary_fold` strips combining marks and delegates to feruca
-//! (CLDR-root); it does not implement the reversed accent-comparison
-//! state a French backwards-secondary implementation would need.
-//! The `backwards_secondary_deferred` test below documents the
-//! actual (DUCET-root) behaviour so a follow-up wave that lands
-//! the algorithm feature flips the assertion.
+//! word: `cote < côte < coté < côté` — words are compared at the
+//! primary level on their base letters (all four fold to "cote"),
+//! then the level-2 tie-break scans accents from the RIGHT.
+//! Landed via the `SECT_COLLATION_OPTIONS` backwards-secondary bit
+//! consumed by `stringcheese-icu-collation::CollationEngine`. The
+//! `backwards_secondary_classic_quartet` test below asserts the
+//! full four-way ordering.
 
 #![cfg(all(feature = "collation-scud", not(target_family = "wasm")))]
 
@@ -132,29 +133,51 @@ fn ligature_expansions() {
 }
 
 // -----------------------------------------------------------------------
-// Backwards-secondary deferral — documented via test (2 assertions)
+// Backwards-secondary classic tie-break sequence (7 assertions)
 // -----------------------------------------------------------------------
 
 #[test]
-fn backwards_secondary_deferred() {
-    // Classical French sort: cote < coté < côte < côté.
-    // Under the shipped Phase 2 engine, the accent comparison
-    // happens left-to-right (DUCET default), which produces a
-    // different order. This test documents the shipped behaviour;
-    // when the algorithm lands the backwards-secondary rule, the
-    // assertion should flip.
+fn backwards_secondary_classic_quartet() {
+    // Classical French dictionary order: base letters all fold to
+    // "cote" at primary, so the tie-break scans accents from the
+    // RIGHT. Reversed per-position secondary sequences:
+    //   cote → [0, 0, 0, 0]
+    //   côte → [0, 0, ô, 0]
+    //   coté → [é, 0, 0, 0]
+    //   côté → [é, 0, ô, 0]
+    // Bytewise sort gives cote < côte < coté < côté.
     let e = engine();
-    let ord_cote_vs_cote = e.compare("cote", "coté", "fr", CollationStrength::Tertiary);
-    // DUCET orders "coté" > "cote" (the é adds tertiary weight after
-    // the plain 'e'); the French backwards-secondary rule would
-    // produce the same direction here (identical up to the last
-    // accent) so both algorithms happen to agree on this pair.
-    assert_eq!(ord_cote_vs_cote, Ordering::Less);
-    // Reflexivity survives regardless of tailoring.
-    assert_eq!(
-        e.compare("côté", "côté", "fr", CollationStrength::Tertiary),
-        Ordering::Equal,
-    );
+    let mut words = vec!["côté", "coté", "cote", "côte"];
+    words.sort_by(|a, b| e.compare(a, b, "fr", CollationStrength::Tertiary));
+    assert_eq!(words, vec!["cote", "côte", "coté", "côté"]);
+}
+
+#[test]
+fn backwards_secondary_all_tie_at_primary() {
+    // All four words fold to the same primary key ("cote") when
+    // combining marks are stripped and precomposed accented Latin
+    // letters are decomposed to base + mark.
+    let e = engine();
+    for a in ["cote", "côte", "coté", "côté"] {
+        for b in ["cote", "côte", "coté", "côté"] {
+            assert_eq!(
+                e.compare(a, b, "fr", CollationStrength::Primary),
+                Ordering::Equal,
+                "primary should tie for ({a:?}, {b:?})",
+            );
+        }
+    }
+}
+
+#[test]
+fn backwards_secondary_survives_reflexivity() {
+    let e = engine();
+    for w in ["cote", "côte", "coté", "côté"] {
+        assert_eq!(
+            e.compare(w, w, "fr", CollationStrength::Tertiary),
+            Ordering::Equal,
+        );
+    }
 }
 
 // -----------------------------------------------------------------------
@@ -228,11 +251,13 @@ fn shipped_vector_count_meets_20() {
     // - secondary_folds_case:                    2
     // - tertiary_distinguishes_case_and_diacritics: 2
     // - ligature_expansions:                     4
-    // - backwards_secondary_deferred:            2
+    // - backwards_secondary_classic_quartet:     1 (four-way sort)
+    // - backwards_secondary_all_tie_at_primary:  16 (4x4)
+    // - backwards_secondary_survives_reflexivity: 4
     // - ordering_is_antisymmetric_across_strengths: 3 * 4 = 12
     // - sort_key_matches_compare:                3 * 4 = 12
-    // Total:                                    44
-    const SHIPPED_VECTORS: usize = 5 + 5 + 2 + 2 + 4 + 2 + 12 + 12;
+    // Total:                                    63
+    const SHIPPED_VECTORS: usize = 5 + 5 + 2 + 2 + 4 + 1 + 16 + 4 + 12 + 12;
     const {
         assert!(
             SHIPPED_VECTORS >= 20,

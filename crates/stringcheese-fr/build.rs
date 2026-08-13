@@ -138,27 +138,22 @@ fn build_case_fr_scud() -> Vec<u8> {
 
 /// Build the collation-fr SCUD pack in memory.
 ///
-/// French collation is nearly-default UCA: alphabetical ordering
-/// matches DUCET-root for the Latin script. The one tailoring
-/// worth remembering — the **backwards-secondary** rule (accents
-/// compared right-to-left within a word, so `côte < coté`
-/// rather than `coté < côte`) — is a **documented Phase 2
-/// `CollationEngine` deferral**. The engine's `primary_fold` strips
-/// combining marks and delegates to feruca (CLDR-root); it does
-/// not carry the reversed accent-comparison state a French
-/// backwards-secondary implementation would need. See
-/// `docs/design/wit-i18n.md` § 8.2 for the deferral rationale.
+/// French collation ships two tailorings on top of default UCA:
 ///
-/// The shipped pack encodes:
-///
+/// * **Backwards-secondary** — accents are compared right-to-left
+///   within a word, so `côte < coté` rather than the DUCET-default
+///   `coté < côte`. The classic four-way sort `cote < côte <
+///   coté < côté` follows from this rule. Landed via the
+///   [`stringcheese_scud::SECT_COLLATION_OPTIONS`] backwards-
+///   secondary bit; the `stringcheese-icu-collation` engine
+///   reverses the per-position secondary sequence before compare
+///   when the bit is set.
 /// * **Ligatures** — Æ/æ expands to `AE`/`ae`, Œ/œ to `OE`/`oe`.
 ///   These are DUCET contractions written as explicit expansions
 ///   so `sort_key` stays bytewise-consistent for these characters.
-/// * **Default strength** — tertiary (case-sensitive). Matches
-///   French dictionary ordering conventions.
 ///
-/// Nothing else is tailored; French otherwise agrees with root
-/// UCA at primary/secondary/tertiary strength.
+/// The pack ships default strength tertiary (case-sensitive),
+/// matching French dictionary ordering conventions.
 fn build_collation_fr_scud() -> Vec<u8> {
     let mut c = CollationSectionBuilder::new();
 
@@ -170,6 +165,9 @@ fn build_collation_fr_scud() -> Vec<u8> {
 
     c.set_default_strength(2); // Tertiary
     c.set_case_insensitive(false);
+    // French backwards-secondary rule (accents tie-break
+    // right-to-left within a word). See UTS #10 § 3.14.
+    c.set_backwards_secondary(true);
 
     let mut w = ScudWriter::new(CAP_COLLATION, CLDR_VERSION, Some("fr"));
     w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());

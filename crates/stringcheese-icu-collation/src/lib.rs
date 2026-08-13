@@ -290,8 +290,32 @@ impl<'a> CollationEngine<'a> {
     /// Walks the CLDR fallback chain: the pack with the most
     /// specific tag matching `locale` wins, then progressively
     /// less-specific ancestors, then no pack (root DUCET only).
+    ///
+    /// Two locale tailorings switch the compare path off the
+    /// default UCA delegation:
+    ///
+    /// * **Primary-weight overrides** (Turkish) — when the winning
+    ///   pack carries a
+    ///   [`SECT_PRIMARY_OVERRIDES`](stringcheese_scud::SECT_PRIMARY_OVERRIDES)
+    ///   section, the engine ranks characters by their override
+    ///   entry rather than DUCET root weights. Characters without an
+    ///   override use their ASCII-lowercased codepoint as a
+    ///   primary-weight approximation.
+    /// * **Backwards-secondary** (French) — when the winning pack
+    ///   sets the backwards-secondary options-blob bit, the engine
+    ///   reverses the secondary weight sequence before comparing so
+    ///   accents tie-break right-to-left within a word.
     #[must_use]
     pub fn compare(&self, a: &str, b: &str, locale: &str, strength: CollationStrength) -> Ordering {
+        let pack = self.active_pack(locale);
+        if let Some(p) = pack {
+            if p.data.has_primary_overrides() {
+                return self.compare_with_primary_overrides(a, b, locale, strength);
+            }
+            if p.data.backwards_secondary() == Some(true) {
+                return self.compare_with_backwards_secondary(a, b, locale, strength);
+            }
+        }
         let expanded_a = self.normalize_for_strength(a, locale, strength);
         let expanded_b = self.normalize_for_strength(b, locale, strength);
         let ord = <stringcheese_collate::UcaCollator as stringcheese_collate::Collator>::compare(
@@ -303,6 +327,141 @@ impl<'a> CollationEngine<'a> {
             return a.cmp(b);
         }
         ord
+    }
+
+    /// Compare `a` and `b` using the active pack's primary-weight
+    /// override table.
+    ///
+    /// Builds a per-character weight sequence for each operand:
+    /// characters listed in the pack's
+    /// [`SECT_PRIMARY_OVERRIDES`](stringcheese_scud::SECT_PRIMARY_OVERRIDES)
+    /// section use the tabled `(primary, secondary, tertiary)`
+    /// tuple; other characters use their ASCII-lowercased codepoint
+    /// as the primary weight and 0 for secondary + tertiary. Pack
+    /// expansions apply first (so `ß → ss` still fires under
+    /// Turkish). Level-1 keys compare, then level-2, then level-3,
+    /// per the requested strength.
+    fn compare_with_primary_overrides(
+        &self,
+        a: &str,
+        b: &str,
+        locale: &str,
+        strength: CollationStrength,
+    ) -> Ordering {
+        let ka = self.overridden_key(a, locale, strength);
+        let kb = self.overridden_key(b, locale, strength);
+        match ka.cmp(&kb) {
+            Ordering::Equal if matches!(strength, CollationStrength::Identical) => a.cmp(b),
+            ord => ord,
+        }
+    }
+
+    /// Compare `a` and `b` under the French backwards-secondary
+    /// tailoring.
+    ///
+    /// The base primary compare delegates to feruca (via
+    /// `normalize_for_strength(Primary)`); on a tie, the engine
+    /// extracts the secondary weight sequence for each operand,
+    /// reverses it, and lex-compares. On a further tie, the
+    /// tertiary / identical strengths fall back to the default UCA
+    /// compare.
+    fn compare_with_backwards_secondary(
+        &self,
+        a: &str,
+        b: &str,
+        locale: &str,
+        strength: CollationStrength,
+    ) -> Ordering {
+        // Level-1 (primary): pack-expand, decompose precomposed
+        // Latin accented letters (so côte and cote fold identically),
+        // then strip combining marks + ASCII-lowercase before
+        // delegating to feruca. The extra decomposition step matters
+        // for French — feruca on its own weighs `ô` and `o` with
+        // different secondaries, but for backwards-secondary we need
+        // the primary to tie on identical base letters regardless
+        // of the accent form.
+        let base_a = decompose_and_primary_fold(a, locale, self);
+        let base_b = decompose_and_primary_fold(b, locale, self);
+        let primary_ord =
+            <stringcheese_collate::UcaCollator as stringcheese_collate::Collator>::compare(
+                &self.uca, &base_a, &base_b,
+            );
+        if primary_ord != Ordering::Equal || matches!(strength, CollationStrength::Primary) {
+            return primary_ord;
+        }
+        // Level-2 (secondary): extract per-position diacritics,
+        // reverse, lex-compare. This is the backwards-secondary
+        // tie-break — accents at the END of the word are the
+        // primary tie-breaker.
+        let sec_a = reversed_secondary_weights(a, locale, self);
+        let sec_b = reversed_secondary_weights(b, locale, self);
+        let sec_ord = sec_a.cmp(&sec_b);
+        if sec_ord != Ordering::Equal || matches!(strength, CollationStrength::Secondary) {
+            return sec_ord;
+        }
+        // Tertiary+ fall back to the default UCA compare (which
+        // carries case-sensitivity via feruca's tertiary weights).
+        let full_a = self.normalize_for_strength(a, locale, strength);
+        let full_b = self.normalize_for_strength(b, locale, strength);
+        let ord = <stringcheese_collate::UcaCollator as stringcheese_collate::Collator>::compare(
+            &self.uca, &full_a, &full_b,
+        );
+        if matches!(strength, CollationStrength::Identical) && ord == Ordering::Equal {
+            return a.cmp(b);
+        }
+        ord
+    }
+
+    /// Build a bytewise-comparable weight key for `text` using the
+    /// active pack's primary-override table.
+    fn overridden_key(&self, text: &str, locale: &str, strength: CollationStrength) -> Vec<u8> {
+        // Expand once using the pack's expansion table so `ß → ss`
+        // still fires under Turkish; the override table then
+        // applies per-character to the expanded form.
+        let mut expanded = String::with_capacity(text.len());
+        for c in text.chars() {
+            self.expand_char(c, locale, &mut expanded);
+        }
+        // Look up each character's (primary, secondary, tertiary)
+        // weight, falling back to (lowercased_codepoint, 0, 0) when
+        // no override is present.
+        let pack = self.active_pack(locale);
+        let mut primary = Vec::with_capacity(expanded.len() * 4);
+        let mut secondary = Vec::with_capacity(expanded.len() * 4);
+        let mut tertiary = Vec::with_capacity(expanded.len() * 4);
+        for c in expanded.chars() {
+            let cp = c as u32;
+            // Case-fold before override lookup so uppercase pack
+            // hits its lowercase override row (Ç → ç, Ğ → ğ, …).
+            // `char::to_lowercase()` produces one scalar for every
+            // Latin uppercase letter we care about; if it expands
+            // (e.g. `İ → i̇`), we take the first scalar as the
+            // lookup key — every Turkish letter has a single-scalar
+            // lowercase form.
+            let lower_cp = c.to_lowercase().next().map_or(cp, |lc| lc as u32);
+            let (pw, sw, tw) = pack
+                .and_then(|p| p.data.primary_override(lower_cp))
+                .unwrap_or((lower_cp, 0, cp));
+            primary.extend_from_slice(&pw.to_be_bytes());
+            secondary.extend_from_slice(&sw.to_be_bytes());
+            tertiary.extend_from_slice(&tw.to_be_bytes());
+        }
+        let mut out = Vec::with_capacity(primary.len() * 3 + 4);
+        out.extend_from_slice(&primary);
+        if !matches!(strength, CollationStrength::Primary) {
+            out.push(0x00);
+            out.extend_from_slice(&secondary);
+        }
+        if matches!(
+            strength,
+            CollationStrength::Tertiary
+                | CollationStrength::Quaternary
+                | CollationStrength::Identical
+        ) {
+            out.push(0x00);
+            out.extend_from_slice(&tertiary);
+        }
+        out
     }
 
     /// Produce a bytewise-comparable sort key for `text` under the
@@ -333,6 +492,26 @@ impl<'a> CollationEngine<'a> {
     /// before uppercase for the same base letter).
     #[must_use]
     pub fn sort_key(&self, text: &str, locale: &str, strength: CollationStrength) -> Vec<u8> {
+        // Primary-override packs (Turkish): produce a bytewise key
+        // from the override weights so `sort_key` cmp matches the
+        // `compare` result under the same tailoring.
+        let pack = self.active_pack(locale);
+        if pack.is_some_and(|p| p.data.has_primary_overrides()) {
+            let mut out = Vec::with_capacity(text.len() * 4 + 4);
+            out.push(strength.as_u8());
+            out.push(0);
+            let key = self.overridden_key(text, locale, strength);
+            out.extend_from_slice(&key);
+            if matches!(strength, CollationStrength::Identical) {
+                out.push(0);
+                out.extend_from_slice(text.as_bytes());
+            }
+            return out;
+        }
+        // Backwards-secondary packs (French): the key concatenates
+        // the primary-fold key with the reversed secondary sequence
+        // so `sort_key` cmp mirrors the two-phase compare above.
+        let backwards_sec = pack.is_some_and(|p| p.data.backwards_secondary() == Some(true));
         // Expand once — every level derives from the same
         // pack-normalized form.
         let mut expanded = String::with_capacity(text.len());
@@ -340,17 +519,34 @@ impl<'a> CollationEngine<'a> {
             self.expand_char(c, locale, &mut expanded);
         }
         // Level-1: strip case + combining marks (matches Primary
-        // compare).
-        let level1 = primary_fold(&expanded);
+        // compare). Backwards-secondary packs additionally
+        // decompose precomposed accented letters so `côte` and
+        // `cote` produce the same level-1 key.
+        let level1 = if backwards_sec {
+            decompose_and_primary_fold(text, locale, self)
+        } else {
+            primary_fold(&expanded)
+        };
         let mut out = Vec::with_capacity(expanded.len() * 2 + 8);
         out.push(strength.as_u8());
         out.push(0);
         out.extend_from_slice(level1.as_bytes());
-        // Level-2 (case-folded, diacritics preserved).
+        // Level-2 (secondary weights).
         if !matches!(strength, CollationStrength::Primary) {
             out.push(0x02);
-            let level2 = ascii_casefold(&expanded);
-            out.extend_from_slice(level2.as_bytes());
+            if backwards_sec {
+                // French tailoring: encode the reversed per-position
+                // secondary sequence so bytewise cmp of two keys
+                // agrees with the compare_with_backwards_secondary
+                // tie-break.
+                let sec = reversed_secondary_weights(text, locale, self);
+                for w in sec {
+                    out.extend_from_slice(&w.to_be_bytes());
+                }
+            } else {
+                let level2 = ascii_casefold(&expanded);
+                out.extend_from_slice(level2.as_bytes());
+            }
         }
         // Level-3 (case marker). Tertiary+ needs to encode "which
         // characters were uppercase in the original" so bytewise
@@ -468,6 +664,154 @@ fn ascii_casefold(s: &str) -> String {
         }
     }
     out
+}
+
+/// Pack-expand `text`, decompose recognised precomposed Latin
+/// accented letters into base + combining mark, drop the combining
+/// marks, and ASCII-lowercase. Produces a level-1 (primary) form
+/// that ties on identical base letters regardless of accents or
+/// case. Used by the backwards-secondary compare path so
+/// `côte` and `cote` land in the same primary equivalence class.
+#[cfg(feature = "alloc")]
+fn decompose_and_primary_fold(text: &str, locale: &str, engine: &CollationEngine<'_>) -> String {
+    let mut expanded = String::with_capacity(text.len());
+    for c in text.chars() {
+        engine.expand_char(c, locale, &mut expanded);
+    }
+    let mut out = String::with_capacity(expanded.len());
+    for c in expanded.chars() {
+        if is_combining_mark(c) {
+            continue;
+        }
+        let base = decompose_precomposed(c).map_or(c, |(b, _)| b);
+        if base.is_ascii_alphabetic() {
+            out.push(base.to_ascii_lowercase());
+        } else {
+            out.push(base);
+        }
+    }
+    out
+}
+
+/// Extract the reversed secondary-weight sequence for `text` under
+/// the given locale — the tie-breaker for the French
+/// backwards-secondary tailoring.
+///
+/// Walks the string once, pack-expanding each character, then
+/// emitting a `u32` per source scalar carrying the diacritic weight
+/// at that position:
+///
+/// * Combining marks (U+0300..U+036F etc.) attach to the previous
+///   base slot rather than emitting their own — this matches
+///   pre-NFD decomposed input like `cafe\u{0301}`.
+/// * Precomposed Latin-1 accented letters emit the diacritic's
+///   canonical combining mark (`é → U+0301`, `ô → U+0302`, …)
+///   through the hand-written [`decompose_precomposed`] table.
+/// * Everything else emits `0` (no accent at this position).
+///
+/// The resulting sequence is then reversed so that
+/// `Vec<u32>::cmp` compares the last-position accent first.
+#[cfg(feature = "alloc")]
+fn reversed_secondary_weights(text: &str, locale: &str, engine: &CollationEngine<'_>) -> Vec<u32> {
+    let mut expanded = String::with_capacity(text.len());
+    for c in text.chars() {
+        engine.expand_char(c, locale, &mut expanded);
+    }
+    let mut out: Vec<u32> = Vec::with_capacity(expanded.len());
+    for c in expanded.chars() {
+        if is_combining_mark(c) {
+            if let Some(last) = out.last_mut() {
+                // Attach this mark to the previous base slot. If
+                // multiple marks stack, use the last one seen (a
+                // simplification; UCA-full stacks all marks
+                // separately, but real French text rarely has
+                // multi-mark stacks that matter for sort order).
+                *last = c as u32;
+            }
+            continue;
+        }
+        if let Some((_, mark)) = decompose_precomposed(c) {
+            out.push(mark);
+        } else {
+            out.push(0);
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// Decompose a precomposed Latin-1 / Latin-Extended letter into
+/// `(base, combining_mark)` if it is a recognised accented form.
+/// Returns `None` for base letters and non-Latin characters.
+///
+/// This is a hand-written subset of NFD covering the accented
+/// characters common in French, German, and other Western European
+/// text; adding rows is cheap when a locale's pack needs a new
+/// letter. Uppercase pairs live alongside their lowercase forms so
+/// `Café` and `café` produce the same reversed-secondary sequence.
+#[cfg(feature = "alloc")]
+fn decompose_precomposed(c: char) -> Option<(char, u32)> {
+    // Combining diacritic codes: 0x300 grave, 0x301 acute, 0x302
+    // circumflex, 0x303 tilde, 0x308 diaeresis, 0x30A ring, 0x327
+    // cedilla.
+    Some(match c {
+        // Latin-1 supplement — lowercase.
+        '\u{00E0}' => ('a', 0x0300),
+        '\u{00E1}' => ('a', 0x0301),
+        '\u{00E2}' => ('a', 0x0302),
+        '\u{00E3}' => ('a', 0x0303),
+        '\u{00E4}' => ('a', 0x0308),
+        '\u{00E5}' => ('a', 0x030A),
+        '\u{00E7}' => ('c', 0x0327),
+        '\u{00E8}' => ('e', 0x0300),
+        '\u{00E9}' => ('e', 0x0301),
+        '\u{00EA}' => ('e', 0x0302),
+        '\u{00EB}' => ('e', 0x0308),
+        '\u{00EC}' => ('i', 0x0300),
+        '\u{00ED}' => ('i', 0x0301),
+        '\u{00EE}' => ('i', 0x0302),
+        '\u{00EF}' => ('i', 0x0308),
+        '\u{00F1}' => ('n', 0x0303),
+        '\u{00F2}' => ('o', 0x0300),
+        '\u{00F3}' => ('o', 0x0301),
+        '\u{00F4}' => ('o', 0x0302),
+        '\u{00F5}' => ('o', 0x0303),
+        '\u{00F6}' => ('o', 0x0308),
+        '\u{00F9}' => ('u', 0x0300),
+        '\u{00FA}' => ('u', 0x0301),
+        '\u{00FB}' => ('u', 0x0302),
+        '\u{00FC}' => ('u', 0x0308),
+        '\u{00FD}' => ('y', 0x0301),
+        '\u{00FF}' => ('y', 0x0308),
+        // Latin-1 supplement — uppercase.
+        '\u{00C0}' => ('A', 0x0300),
+        '\u{00C1}' => ('A', 0x0301),
+        '\u{00C2}' => ('A', 0x0302),
+        '\u{00C3}' => ('A', 0x0303),
+        '\u{00C4}' => ('A', 0x0308),
+        '\u{00C5}' => ('A', 0x030A),
+        '\u{00C7}' => ('C', 0x0327),
+        '\u{00C8}' => ('E', 0x0300),
+        '\u{00C9}' => ('E', 0x0301),
+        '\u{00CA}' => ('E', 0x0302),
+        '\u{00CB}' => ('E', 0x0308),
+        '\u{00CC}' => ('I', 0x0300),
+        '\u{00CD}' => ('I', 0x0301),
+        '\u{00CE}' => ('I', 0x0302),
+        '\u{00CF}' => ('I', 0x0308),
+        '\u{00D1}' => ('N', 0x0303),
+        '\u{00D2}' => ('O', 0x0300),
+        '\u{00D3}' => ('O', 0x0301),
+        '\u{00D4}' => ('O', 0x0302),
+        '\u{00D5}' => ('O', 0x0303),
+        '\u{00D6}' => ('O', 0x0308),
+        '\u{00D9}' => ('U', 0x0300),
+        '\u{00DA}' => ('U', 0x0301),
+        '\u{00DB}' => ('U', 0x0302),
+        '\u{00DC}' => ('U', 0x0308),
+        '\u{00DD}' => ('Y', 0x0301),
+        _ => return None,
+    })
 }
 
 /// True iff `c` sits in one of the Unicode combining-mark
@@ -741,5 +1085,281 @@ mod tests {
         assert!(is_combining_mark('\u{1DC0}')); // Combining dotted grave
         assert!(!is_combining_mark('a'));
         assert!(!is_combining_mark('ä'));
+    }
+
+    // -------------------------------------------------------------------
+    // Backwards-secondary (French) tailoring
+    // -------------------------------------------------------------------
+
+    fn build_test_fr_backwards_secondary() -> alloc::vec::Vec<u8> {
+        let mut c = CollationSectionBuilder::new();
+        c.set_default_strength(CollationStrength::Tertiary.as_u8());
+        c.set_backwards_secondary(true);
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("fr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.finish()
+    }
+
+    #[test]
+    fn backwards_secondary_orders_classic_french_quartet() {
+        // Classical French dictionary order with the backwards-
+        // secondary rule: at primary all four tie, so the tie-break
+        // scans accents from the right — the rightmost accent (or
+        // its absence) is the primary discriminator.
+        //
+        // The engine's per-position secondary sequence, reversed:
+        //   cote → [0,   0, 0, 0]
+        //   côte → [0,   0, ô, 0]
+        //   coté → [é,   0, 0, 0]
+        //   côté → [é,   0, ô, 0]
+        //
+        // Bytewise sort of the reversed sequences gives
+        // `cote < côte < coté < côté`.
+        let fr = build_test_fr_backwards_secondary();
+        let pack = CollationPack::from_scud_bytes(&fr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        let mut words = vec!["côté", "coté", "cote", "côte"];
+        words.sort_by(|a, b| engine.compare(a, b, "fr", CollationStrength::Tertiary));
+        assert_eq!(words, vec!["cote", "côte", "coté", "côté"]);
+    }
+
+    #[test]
+    fn backwards_secondary_ties_at_primary() {
+        // All four words fold to the same primary key ("cote") when
+        // combining marks are stripped.
+        let fr = build_test_fr_backwards_secondary();
+        let pack = CollationPack::from_scud_bytes(&fr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        for pair in [("cote", "côte"), ("cote", "coté"), ("cote", "côté")] {
+            assert_eq!(
+                engine.compare(pair.0, pair.1, "fr", CollationStrength::Primary),
+                Ordering::Equal,
+                "primary should tie for {pair:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn backwards_secondary_handles_decomposed_input() {
+        // Feeding decomposed input (`cafe\u{0301}` == `café`) must
+        // produce the same reversed secondary sequence as the
+        // precomposed form.
+        let fr = build_test_fr_backwards_secondary();
+        let pack = CollationPack::from_scud_bytes(&fr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("café", "cafe\u{0301}", "fr", CollationStrength::Secondary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn backwards_secondary_falls_back_to_primary_when_base_letters_differ() {
+        let fr = build_test_fr_backwards_secondary();
+        let pack = CollationPack::from_scud_bytes(&fr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("bonjour", "chateau", "fr", CollationStrength::Tertiary),
+            Ordering::Less,
+        );
+        assert_eq!(
+            engine.compare("chien", "chat", "fr", CollationStrength::Tertiary),
+            Ordering::Greater,
+        );
+    }
+
+    #[test]
+    fn backwards_secondary_sort_key_matches_compare() {
+        let fr = build_test_fr_backwards_secondary();
+        let pack = CollationPack::from_scud_bytes(&fr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        let pairs = [
+            ("cote", "coté"),
+            ("cote", "côte"),
+            ("côte", "coté"),
+            ("côte", "côté"),
+            ("coté", "côté"),
+        ];
+        for (a, b) in pairs {
+            let ka = engine.sort_key(a, "fr", CollationStrength::Tertiary);
+            let kb = engine.sort_key(b, "fr", CollationStrength::Tertiary);
+            assert_eq!(
+                ka.cmp(&kb),
+                engine.compare(a, b, "fr", CollationStrength::Tertiary),
+                "sort_key vs compare disagreed for ({a:?}, {b:?})",
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Primary-weight overrides (Turkish) tailoring
+    // -------------------------------------------------------------------
+
+    fn build_test_tr_primary_overrides() -> alloc::vec::Vec<u8> {
+        let mut c = CollationSectionBuilder::new();
+        // Full Turkish lowercase alphabet — assign primary weights
+        // in Turkish alphabet order.
+        for (i, (cp, _)) in TURKISH_ALPHABET.iter().enumerate() {
+            // TURKISH_ALPHABET has <30 entries so u32::try_from is
+            // never going to fail; clippy prefers the explicit
+            // fallible cast anyway.
+            let pw = 100 + u32::try_from(i).unwrap() * 10;
+            c.push_primary_override(*cp, pw, 0, 0);
+        }
+        c.set_default_strength(CollationStrength::Tertiary.as_u8());
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("tr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.append_section(
+            stringcheese_scud::SECT_PRIMARY_OVERRIDES,
+            &c.primary_overrides_bytes(),
+        );
+        w.finish()
+    }
+
+    /// The Turkish alphabet in dictionary order, lowercase.
+    /// `(codepoint, letter)` pairs. ASCII codepoints are written
+    /// as hex literals so the table stays a `const` (u8→u32 via
+    /// `From` is not yet stable in const context on Rust 1.88).
+    const TURKISH_ALPHABET: &[(u32, char)] = &[
+        (0x0061, 'a'),
+        (0x0062, 'b'),
+        (0x0063, 'c'),
+        (0x00E7, 'ç'),
+        (0x0064, 'd'),
+        (0x0065, 'e'),
+        (0x0066, 'f'),
+        (0x0067, 'g'),
+        (0x011F, 'ğ'),
+        (0x0068, 'h'),
+        (0x0131, 'ı'),
+        (0x0069, 'i'),
+        (0x006A, 'j'),
+        (0x006B, 'k'),
+        (0x006C, 'l'),
+        (0x006D, 'm'),
+        (0x006E, 'n'),
+        (0x006F, 'o'),
+        (0x00F6, 'ö'),
+        (0x0070, 'p'),
+        (0x0072, 'r'),
+        (0x0073, 's'),
+        (0x015F, 'ş'),
+        (0x0074, 't'),
+        (0x0075, 'u'),
+        (0x00FC, 'ü'),
+        (0x0076, 'v'),
+        (0x0079, 'y'),
+        (0x007A, 'z'),
+    ];
+
+    #[test]
+    fn primary_overrides_place_dotless_i_between_h_and_i() {
+        let tr = build_test_tr_primary_overrides();
+        let pack = CollationPack::from_scud_bytes(&tr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("h", "ı", "tr", CollationStrength::Primary),
+            Ordering::Less,
+        );
+        assert_eq!(
+            engine.compare("ı", "i", "tr", CollationStrength::Primary),
+            Ordering::Less,
+        );
+        assert_eq!(
+            engine.compare("h", "i", "tr", CollationStrength::Primary),
+            Ordering::Less,
+        );
+    }
+
+    #[test]
+    fn primary_overrides_sort_turkish_alphabet_correctly() {
+        let tr = build_test_tr_primary_overrides();
+        let pack = CollationPack::from_scud_bytes(&tr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        // Shuffle the Turkish alphabet, then sort it — should
+        // recover the dictionary order.
+        let expected: alloc::vec::Vec<String> = TURKISH_ALPHABET
+            .iter()
+            .map(|(_, c)| c.to_string())
+            .collect();
+        let mut shuffled = expected.clone();
+        shuffled.reverse();
+        shuffled.sort_by(|a, b| engine.compare(a, b, "tr", CollationStrength::Primary));
+        assert_eq!(shuffled, expected);
+    }
+
+    #[test]
+    fn primary_overrides_case_folded_at_primary() {
+        // Uppercase Ç should tie with lowercase ç at primary under
+        // the override table's ASCII-lowercase-then-lookup rule.
+        let tr = build_test_tr_primary_overrides();
+        let pack = CollationPack::from_scud_bytes(&tr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("araba", "ARABA", "tr", CollationStrength::Primary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn primary_overrides_apply_pack_expansions() {
+        // The tr collation pack often ships ß → ss as an expansion.
+        // Verify the expansion still fires under the override path.
+        let mut c = CollationSectionBuilder::new();
+        c.push_expansion(0x00DF, &[u32::from(b's'), u32::from(b's')]);
+        for (i, (cp, _)) in TURKISH_ALPHABET.iter().enumerate() {
+            let pw = 100 + u32::try_from(i).unwrap() * 10;
+            c.push_primary_override(*cp, pw, 0, 0);
+        }
+        c.set_default_strength(CollationStrength::Tertiary.as_u8());
+        let mut w = ScudWriter::new(CAP_COLLATION, "44.1", Some("tr"));
+        w.append_section(SECT_EXPANSIONS, &c.expansion_bytes());
+        w.append_section(SECT_COLLATION_OPTIONS, &c.options_bytes());
+        w.append_section(
+            stringcheese_scud::SECT_PRIMARY_OVERRIDES,
+            &c.primary_overrides_bytes(),
+        );
+        let bytes = w.finish();
+        let pack = CollationPack::from_scud_bytes(&bytes).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        assert_eq!(
+            engine.compare("straße", "strasse", "tr", CollationStrength::Primary),
+            Ordering::Equal,
+        );
+    }
+
+    #[test]
+    fn primary_overrides_sort_key_matches_compare() {
+        let tr = build_test_tr_primary_overrides();
+        let pack = CollationPack::from_scud_bytes(&tr).unwrap();
+        let engine = CollationEngine::new(vec![pack]);
+        for (a, b) in [
+            ("h", "ı"),
+            ("ı", "i"),
+            ("araba", "bebek"),
+            ("cadde", "cami"),
+            ("hı", "hi"),
+        ] {
+            let ka = engine.sort_key(a, "tr", CollationStrength::Primary);
+            let kb = engine.sort_key(b, "tr", CollationStrength::Primary);
+            assert_eq!(
+                ka.cmp(&kb),
+                engine.compare(a, b, "tr", CollationStrength::Primary),
+                "sort_key vs compare disagreed for ({a:?}, {b:?})",
+            );
+        }
+    }
+
+    #[test]
+    fn decompose_precomposed_covers_french_accents() {
+        assert_eq!(decompose_precomposed('é'), Some(('e', 0x0301)));
+        assert_eq!(decompose_precomposed('è'), Some(('e', 0x0300)));
+        assert_eq!(decompose_precomposed('ô'), Some(('o', 0x0302)));
+        assert_eq!(decompose_precomposed('ç'), Some(('c', 0x0327)));
+        assert_eq!(decompose_precomposed('É'), Some(('E', 0x0301)));
+        assert_eq!(decompose_precomposed('a'), None);
+        assert_eq!(decompose_precomposed('z'), None);
     }
 }
