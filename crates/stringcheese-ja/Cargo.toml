@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Japanese language pack for the StringCheese toolkit: ~100-150-word stopword list, character-type-based tokenizer (dictionary-free), Kunrei-shiki (ISO 3602) romanization phonetic hookup, and a minimal polite/plural stemmer. Implements stringcheese-lang::Language."
+description = "Japanese language pack for the StringCheese toolkit: ~100-150-word stopword list, character-type-based tokenizer (dictionary-free), Kunrei-shiki (ISO 3602) romanization phonetic hookup, minimal polite/plural stemmer, and (opt-in) a ~500-entry SCUD word-break dictionary for FMM-based CJK word segmentation. Implements stringcheese-lang::Language."
 categories = ["text-processing", "internationalization"]
 keywords = ["japanese", "tokenizer", "romanization", "kunrei", "stopwords"]
 build = "build.rs"
@@ -15,6 +15,7 @@ build = "build.rs"
 # the shipped rules.
 include = [
     "build.rs",
+    "build_dict.rs",
     "src/**/*.rs",
     "Cargo.toml",
 ]
@@ -47,6 +48,13 @@ number-scud = ["dep:stringcheese-icu-number", "stringcheese-icu-number/std"]
 # the Gregorian calendar; the Japanese Imperial calendar (Reiwa,
 # Heisei, …) is a documented follow-up.
 datetime-scud = ["dep:stringcheese-icu-datetime", "stringcheese-icu-datetime/std"]
+# Ship the break-ja.scud pack (WIT-i18n Phase 5 CJK word-break
+# dictionary for Japanese). Adds a `word_dict_data` module exposing
+# `WORD_DICT_JA_SCUD: &'static [u8]` and a helper for constructing
+# a `stringcheese_icu_segment::BreakPack`. The starter dictionary
+# is a ~500-entry hand-curated list; full IPADIC / JMdict
+# integration is a documented data-only follow-up.
+break-scud = ["dep:stringcheese-icu-segment", "stringcheese-icu-segment/std"]
 
 [dependencies]
 stringcheese-lang = { workspace = true }
@@ -56,6 +64,7 @@ stringcheese-phonetic = { workspace = true }
 stringcheese-icu-plural = { workspace = true, optional = true }
 stringcheese-icu-number = { workspace = true, optional = true }
 stringcheese-icu-datetime = { workspace = true, optional = true }
+stringcheese-icu-segment = { workspace = true, optional = true }
 
 [build-dependencies]
 # Build-time codegen for the plural-ja / number-ja SCUD packs.

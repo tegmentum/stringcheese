@@ -151,6 +151,8 @@ pub mod romaji;
 pub mod stemmer;
 pub mod stopwords;
 pub mod tokenizer;
+#[cfg(feature = "break-scud")]
+pub mod word_dict_data;
 
 #[cfg(all(test, feature = "std", not(target_family = "wasm")))]
 mod properties;
