@@ -39,6 +39,16 @@ Three properties simultaneously:
 
 ICU parity (the 80/90/95 % is the target; callers needing historical calendar edge cases, deep transliteration graphs, or every ICU corner reach for ICU4X); translation (localising operations *on* text, not translating text itself); transliteration graphs (ICU's ruled transliterator); complex script shaping (OpenType shaping, bidi visual runs, and display-time concerns handled by HarfBuzz); regex with Unicode properties (already out of umbrella scope).
 
+### 1.5. When to reach for ICU4X instead of extending stringcheese
+
+A concrete rule for judging new capability requests, learned from shipping Phases 1-6:
+
+- **Data-expressible via existing hooks** (a new SCUD pack, a new row in `SECT_PRIMARY_OVERRIDES`, a new options bit): fine to add. Cost is measured in tens of bytes per locale.
+- **New algorithm branch, well-bounded and small** (< 300 LOC, gated on a SCUD-data trigger so unused packs pay nothing): fine to add. Turkish primary-distinct, French backwards-secondary, and Russian case-second all fit here and cost < 400 LOC in aggregate.
+- **New algorithm branch that is one of a large CLDR family** (traditional Spanish ch/ll, full Japanese kana-first tailored weights, Chinese pinyin collation, non-Gregorian calendars, dictionary-based Thai / Khmer / Lao / Burmese segmentation, datetime skeleton matching): use ICU4X directly. These are the tip of icebergs — saying yes to one commits to saying yes to twenty more, and the endpoint is reimplementing `icu_collator` / `icu_segmenter` / `icu_datetime` piecemeal. The value stringcheese adds (small per-language SCUD packs, WIT surface, tiny algorithm) evaporates at that scale.
+
+This rule is why the Phase 6 charter (§ 8) is being retired: pursuing "full six-capability coverage for {en, fr, de, es, ja, zh, ar}" would push us past the third bullet in a hurry.
+
 ---
 
 ## 2. Which ICU capabilities we expose
@@ -86,6 +96,26 @@ Relationship to [`stringcheese-unicode`](../../crates/stringcheese-unicode/src/l
 ### 2.7. Deferred capabilities
 
 Explicitly out of first-wave scope: transliteration (ruled transforms), regex with Unicode properties, bidi (UAX #9), deep locale display names, time-zone-aware operations (IANA TZDB, its release cadence, calendar arithmetic across zone transitions). Each is an *addable* crate; nothing forecloses them.
+
+The following items, previously listed as "deferred to a follow-up wave," are now reclassified per the § 1.5 rule as **use ICU4X directly** — they are not slated to be added to stringcheese:
+
+- Dictionary-based Thai / Khmer / Lao / Burmese word segmentation (each needs a script-specific model or dictionary at scale)
+- Full Japanese kana-first tailored collation weights (~150 override entries and it is one of many similar CLDR tailorings)
+- Chinese pinyin collation (needs a ~40 000-entry Han → pinyin table)
+- Full CJK stroke-based collation beyond the shipped ~264-glyph scaffold (~20 000 glyphs)
+- Non-Gregorian calendars (Islamic / Hebrew / Buddhist / Japanese Imperial — each is a distinct algorithm)
+- Datetime skeleton-based formatting ("yMMMd" → auto-picked pattern) and relative/interval formatting
+- Full JMdict / CC-CEDICT CJK word-break dictionaries beyond the shipped ~2 000-word starters
+- UAX #14 East-Asian-Width interactions beyond the LB1-LB31 spine, and CSS-specific line-break/word-break tailorings
+- Timezone conversion for datetime
+- MessageFormat / ICU MessageFormat 2
+
+The following remain **addable to stringcheese** per the § 1.5 rule (small hook + SCUD data):
+
+- Additional locale packs for capabilities that already exist (case, collation options, plural, number, datetime patterns)
+- Small locale-specific option bits with < 100 LOC algorithm cost each
+- Small primary-override rows added to existing packs
+- Additional tokenizer conformance checkpoints (independent of the icu4x-vs-stringcheese question)
 
 ---
 
@@ -497,7 +527,7 @@ Delivery is per capability, one phase per new WIT + first pack + SCUD supplement
 
 **Phase 5 — Break iteration.** Done when grapheme/word/sentence/line iterators pass UAX #29 and UAX #14 conformance for language-neutral cases; word segmentation dictionaries for Thai, Japanese, and Chinese ship as SCUD supplements; interoperation with `stringcheese-unicode`'s existing grapheme iteration is verified (no double-implementation).
 
-**Phase 6 — Multi-language coverage.** Done when `stringcheese-en`, `stringcheese-fr`, `stringcheese-de`, `stringcheese-es`, `stringcheese-ja`, `stringcheese-zh`, `stringcheese-ar` all ship with the full six capabilities each; the published correctness report includes an i18n section listing locale coverage, capability coverage, and cross-pack fallback tests.
+**Phase 6 — Multi-language coverage.** *Retired 2026-08.* Original charter targeted "full six-capability coverage for {en, fr, de, es, ja, zh, ar}." Closing that charter would push us past the § 1.5 iceberg rule (Japanese kana-first collation, Chinese pinyin/stroke, Arabic collation quality, dictionary-based CJK segmentation, etc.). What actually shipped under the Phase 6 banner is a broad-but-shallow rollout: case + collation for {en, de, fr, tr, ru, zh, es, ja, ar} (case-mapping algorithm is small; collation ships default UCA + a few well-bounded tailorings), plural + number for 11 locales, datetime patterns for 11 locales, break iteration + line breaking as locale-neutral algorithms plus a CJK dictionary starter. Further coverage happens on a "small hook + SCUD data" cadence per § 1.5 rather than as a coordinated multi-capability charter.
 
 Each phase is independently releasable; a caller who needs only case mapping never has to wait for the plural or date/time phases.
 
@@ -545,11 +575,14 @@ Approximated / partial: LB1's `SA → AL` fold is a Phase 5 approximation — th
 - **Component embedding.** `stringcheese-icu-case-component` grows from embedding `{en, tr}` to embedding `{en, de, fr, tr, ru, zh}`; `stringcheese-icu-collation-component` grows from `{en, de}` to `{en, de, fr, tr, ru, zh}`. Each smoke-test suite gains one-or-two per-locale wasmtime tests exercising the new packs end-to-end, plus an Azerbaijani-alias smoke on the case component.
 - **CI.** `wasm-i18n-case` and `wasm-i18n-collation` jobs extended from two-locale coverage to six-locale coverage. Each job runs the per-locale `case_golden_<lang>` / `collation_golden_<lang>` suite plus a size-reporting step listing all six SCUD blobs.
 
-**Locales covered vs the Phase 6 charter.** Phase 6's completion charter (§ 8, above) lists `{en, fr, de, es, ja, zh, ar}` as the seven languages that must ship the full six capabilities each. Case + collation are now covered for `{en, de, fr, tr, ru, zh}` — six of the seven; the missing pieces are:
+**Locale coverage snapshot** (as of 2026-08 — the Phase 6 charter itself is retired per § 8 above and § 1.5). What ships:
 
-- `es`, `ja`, `ar` — no case or collation packs yet. The Phase 3 plural + number packs for these landed in Wave 3.
-- `tr`, `ru` are Phase 6 additions over the charter's baseline seven, giving richer coverage for Turkic and Cyrillic scripts.
-- Full-capability coverage (adding datetime + break for every locale) remains a follow-up wave.
+- Case + collation: `{en, de, fr, tr, ru, zh}` — small, well-bounded tailorings only (Turkish primary-distinct via `SECT_PRIMARY_OVERRIDES`, French backwards-secondary, Russian case-second, German phonebook, Chinese stroke scaffold).
+- Plural + number: 11 locales
+- Datetime patterns: 11 locales
+- Break iteration + line breaking: locale-neutral algorithms + CJK word-break dictionary starter for `{ja, zh}`
+
+Further coverage happens per § 1.5's "small hook + SCUD data" rule. Anything requiring production-quality CLDR tailorings at scale (Japanese kana-first collation, Chinese pinyin, dictionary-based Thai/Khmer/Lao/Burmese, non-Gregorian calendars, datetime skeletons) is now marked "use ICU4X directly" in § 2.7 rather than treated as a stringcheese follow-up.
 
 **Red flags.** A couple worth noting for reviewers:
 
