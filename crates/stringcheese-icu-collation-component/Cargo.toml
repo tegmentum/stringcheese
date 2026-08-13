@@ -27,6 +27,10 @@ std = [
     "stringcheese-icu-collation/std",
     "stringcheese-en/std",
     "stringcheese-de/std",
+    "stringcheese-fr/std",
+    "stringcheese-tr/std",
+    "stringcheese-ru/std",
+    "stringcheese-zh/std",
 ]
 
 # `wit-component` opts into the WIT `Guest` implementations and the
@@ -48,13 +52,20 @@ wit-component = ["std", "dep:wit-bindgen-rt"]
 # `CollationPack`, `CollationStrength`, and the `CollationError`
 # variants the WIT `collation-error` mirrors.
 stringcheese-icu-collation = { workspace = true, features = ["alloc"] }
-# English and German SCUD packs. Embedded so the shipped .wasm is
-# drivable end-to-end for the smoke test — the German phonebook
-# tailoring (`ä → ae`, `ß → ss`, ...) ships inside the same
-# component. The `collation-scud` feature exposes each pack's
-# `collation_data::collation_pack()` helper.
+# English, German, French, Turkish, Russian, and Chinese SCUD packs
+# — the WIT-i18n Phase 6 six-locale roster. Embedded so the shipped
+# .wasm is drivable end-to-end for the smoke test: the German
+# phonebook tailoring (`ä → ae`, `ß → ss`, ...) ships inside the
+# same component, and the fr / tr / ru / zh packs contribute their
+# own expansions plus the shared ß → ss row for uniform
+# cross-locale behaviour. The `collation-scud` feature exposes
+# each pack's `collation_data::collation_pack()` helper.
 stringcheese-en = { workspace = true, features = ["collation-scud"] }
 stringcheese-de = { workspace = true, features = ["collation-scud"] }
+stringcheese-fr = { workspace = true, features = ["collation-scud"] }
+stringcheese-tr = { workspace = true, features = ["collation-scud"] }
+stringcheese-ru = { workspace = true, features = ["collation-scud"] }
+stringcheese-zh = { workspace = true, features = ["collation-scud"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 # Pulled in only when the `wit-component` feature is enabled — see
