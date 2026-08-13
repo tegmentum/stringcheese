@@ -1,6 +1,6 @@
 //! Build-time codegen for the Chinese (Simplified) pack.
 //!
-//! Two SCUD artifacts emitted into `$OUT_DIR`:
+//! Six SCUD artifacts emitted into `$OUT_DIR`:
 //!
 //! 1. `plural-zh.scud` — CLDR 44 Chinese plural rules. Chinese lacks
 //!    grammatical number so the CLDR rule set is `other` only; the
@@ -8,6 +8,15 @@
 //!    through to [`PluralCategory::Other`](
 //!    stringcheese_icu_plural::PluralCategory::Other).
 //! 2. `number-zh.scud` — CLDR 44 Chinese number-formatting patterns.
+//! 3. `case-zh.scud` — ASCII a-z ↔ A-Z plus German ß expansions.
+//! 4. `collation-zh.scud` — DUCET-root + German ß expansions.
+//! 5. `datetime-zh.scud` — CLDR 44.1 Gregorian date/time patterns.
+//! 6. `word-dict-zh.scud` — ~500-entry starter word dictionary for
+//!    the FMM-based CJK word segmenter. Full `CC-CEDICT` integration
+//!    is a documented data-only follow-up.
+
+#[path = "build_dict.rs"]
+mod build_dict;
 
 use std::env;
 use std::fs;
@@ -15,13 +24,15 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{chinese_cardinals, chinese_ordinals};
 use stringcheese_scud::{
-    CAP_CASE, CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, CaseSectionBuilder,
-    CollationSectionBuilder, DateTimeLength, DateTimeSectionBuilder, NumberSectionBuilder,
-    PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES, SECT_COLLATION_OPTIONS,
-    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_EXPANSIONS,
-    SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_MONTH_ABBR, SECT_MONTH_NAMES, SECT_ORDINAL_RULES,
-    SECT_PERCENT_PATTERN, SECT_SIMPLE_FOLD, SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER,
-    SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
+    BreakSectionBuilder, CAP_BREAK, CAP_CASE, CAP_COLLATION, CAP_DATETIME, CAP_NUMBER, CAP_PLURAL,
+    CaseSectionBuilder, CollationSectionBuilder, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_COLLATION_OPTIONS, SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN,
+    SECT_ERA_NAMES, SECT_EXPANSIONS, SECT_FULL_FOLD, SECT_FULL_UPPER, SECT_GRAPHEME_CLASSES,
+    SECT_GRAPHEME_RULES, SECT_MONTH_ABBR, SECT_MONTH_NAMES, SECT_ORDINAL_RULES,
+    SECT_PERCENT_PATTERN, SECT_SENTENCE_CLASSES, SECT_SENTENCE_RULES, SECT_SIMPLE_FOLD,
+    SECT_SIMPLE_LOWER, SECT_SIMPLE_UPPER, SECT_TIME_PATTERNS, SECT_WEEKDAY_ABBR,
+    SECT_WEEKDAY_NAMES, SECT_WORD_CLASSES, SECT_WORD_DICT, SECT_WORD_RULES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -55,7 +66,42 @@ fn main() {
     fs::write(&datetime_path, &datetime_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
 
+    let word_dict_path = out_dir.join("word-dict-zh.scud");
+    let word_dict_bytes = build_word_dict_zh_scud();
+    fs::write(&word_dict_path, &word_dict_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", word_dict_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_dict.rs");
+}
+
+/// Build the word-dict-zh SCUD pack in memory.
+///
+/// Ships a ~500-entry hand-curated starter dictionary drawn from
+/// HSK levels 1-4 vocabulary and public-domain Simplified Chinese
+/// frequency lists — enough to give the FMM segmenter a working
+/// sample on common vocabulary. Ships a `RULES_UAX29_DEFAULT`
+/// marker on all three UAX #29 axes for non-CJK runs; the segment
+/// engine consults the dictionary only for CJK-script runs and
+/// falls through to UAX #29 defaults elsewhere.
+///
+/// Full `CC-CEDICT` integration (~130k entries, multi-MB) is a
+/// documented data-only follow-up SCUD pack.
+fn build_word_dict_zh_scud() -> Vec<u8> {
+    let mut b = BreakSectionBuilder::new();
+    b.set_default_rules();
+    for word in build_dict::ZH_WORDS {
+        b.push_dict_entry(word);
+    }
+    let mut w = ScudWriter::new(CAP_BREAK, CLDR_VERSION, Some("zh"));
+    w.append_section(SECT_GRAPHEME_CLASSES, &b.grapheme_classes_bytes());
+    w.append_section(SECT_WORD_CLASSES, &b.word_classes_bytes());
+    w.append_section(SECT_SENTENCE_CLASSES, &b.sentence_classes_bytes());
+    w.append_section(SECT_GRAPHEME_RULES, &b.grapheme_rules_bytes());
+    w.append_section(SECT_WORD_RULES, &b.word_rules_bytes());
+    w.append_section(SECT_SENTENCE_RULES, &b.sentence_rules_bytes());
+    w.append_section(SECT_WORD_DICT, &b.word_dict_bytes());
+    w.finish()
 }
 
 /// Build the datetime-zh SCUD pack in memory.

@@ -2455,37 +2455,31 @@ impl<'a> WordDictView<'a> {
     ///
     /// # Algorithm
     ///
-    /// A binary search locates the largest index whose entry `<=
-    /// input`. That entry is the candidate longest prefix — if it is
-    /// a prefix of `input`, it is by construction the longest such
-    /// prefix in the sorted table. Otherwise no dictionary entry is a
-    /// prefix of `input`.
+    /// Binary-searches for the last entry `<=` `input`, then walks
+    /// backwards through the sorted table while entries share their
+    /// leading bytes with `input`, returning the longest prefix
+    /// found. This lets a call fail-fast when `input` sorts far away
+    /// from any dictionary entry, but stays correct when the
+    /// candidate largest-<= entry is itself not a prefix (e.g. dict
+    /// carries `"北京"` and `"北京大学"`, input is `"北京很大"` — the
+    /// largest-<= entry `"北京大学"` is not a prefix, but the earlier
+    /// entry `"北京"` is).
     ///
     /// # Complexity
     ///
-    /// `O(log n)` binary-search comparisons plus one prefix check
-    /// against the candidate entry. For an `n = 2000` dictionary
-    /// with average byte-length 6, this is roughly 66 byte
-    /// comparisons per lookup.
+    /// `O(log n)` for the binary search plus `O(k)` for the linear
+    /// walk over entries that share a common prefix with `input`.
+    /// For a well-distributed 2000-entry dictionary the linear walk
+    /// visits only a handful of entries in the worst case.
     #[must_use]
     pub fn longest_prefix_match(&self, input: &[u8]) -> Option<usize> {
         if input.is_empty() || self.count == 0 {
             return None;
         }
         // Binary search for the last entry <= input (lexicographic
-        // over raw bytes). That entry is the only candidate for a
-        // longest-prefix match: any strictly-greater entry that also
-        // is a prefix would have to equal the same first `len` bytes
-        // AND be equal-or-shorter than the candidate.
-        //
-        // Concretely: sort order over bytes places a prefix `p` of
-        // some string `s` immediately before `s` iff `p < s`. So the
-        // longest prefix of `input` present in the dict is the
-        // largest entry `<=` `input`.
+        // over raw bytes).
         let mut lo = 0usize;
         let mut hi = self.count;
-        // Invariant: every entry at index < lo is <= input; every
-        // entry at index >= hi is > input.
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let entry = self.entry(mid)?;
@@ -2498,12 +2492,28 @@ impl<'a> WordDictView<'a> {
         if lo == 0 {
             return None;
         }
-        let candidate = self.entry(lo - 1)?;
-        if input.starts_with(candidate) {
-            Some(candidate.len())
-        } else {
-            None
+        // Walk backwards from the candidate — the first entry that
+        // is a prefix of `input` is the longest such entry in the
+        // sorted table, because any longer-prefix entry would sort
+        // strictly after the current candidate.
+        //
+        // The walk terminates as soon as an entry no longer shares
+        // its first byte with `input`: since the table is sorted,
+        // no earlier entry can be a prefix once the common-first-
+        // byte invariant is broken.
+        let first_byte = input[0];
+        let mut i = lo;
+        while i > 0 {
+            i -= 1;
+            let entry = self.entry(i)?;
+            if entry.is_empty() || entry[0] != first_byte {
+                return None;
+            }
+            if input.starts_with(entry) {
+                return Some(entry.len());
+            }
         }
+        None
     }
 
     /// True iff the dictionary contains exactly `word` as an entry.
@@ -4826,6 +4836,33 @@ mod tests {
         let view = file.as_break_data().unwrap();
         let dict = view.word_dict().unwrap();
         assert!(dict.longest_prefix_match(b"").is_none());
+    }
+
+    #[test]
+    fn word_dict_walks_back_past_non_prefix_neighbour() {
+        // Regression: dict has "北京" and "北京大学"; input is
+        // "北京很大". The binary-search "largest <=" hits the
+        // non-prefix "北京大学" — the walk-back must find "北京"
+        // and return 6. Same shape as the ja/zh test cases.
+        let bytes = build_break_pack_with_dict(&[
+            "\u{5317}\u{4EAC}",                 // 北京
+            "\u{5317}\u{4EAC}\u{5927}\u{5B66}", // 北京大学
+        ]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        let input = "\u{5317}\u{4EAC}\u{5F88}\u{5927}"; // 北京很大
+        assert_eq!(dict.longest_prefix_match(input.as_bytes()), Some(6));
+    }
+
+    #[test]
+    fn word_dict_no_match_when_first_bytes_differ() {
+        let bytes = build_break_pack_with_dict(&["hello", "\u{5317}\u{4EAC}"]);
+        let file = ScudFile::from_slice(&bytes).unwrap();
+        let view = file.as_break_data().unwrap();
+        let dict = view.word_dict().unwrap();
+        // Neither "hello" nor "北京" is a prefix of "world".
+        assert!(dict.longest_prefix_match(b"world").is_none());
     }
 
     #[test]
