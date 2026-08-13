@@ -90,8 +90,10 @@ the suite must surface.
 | `falcon-7b`                      | `falcon_7b.json`                    | 20    | Byte-level BPE, null normalizer + Sequence[Punctuation(Contiguous), ByteLevel, Digits, Split(Regex="[0-9][0-9][0-9]")] pre-tokenizer, null post-processor, ByteLevel decoder, 65024-entry vocabulary with 12 special tokens (`>>TITLE<<`, `>>ABSTRACT<<`, …, `<|endoftext|>`) | `transformers.AutoTokenizer.from_pretrained('tiiuae/falcon-7b')` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `mistral-7b-instruct-v0.3`       | `mistral_7b_v03.json`               | 20    | Character-BPE + SentencePiece byte_fallback + Metaspace(prepend_scheme=first, split=false) pre-tokenizer, null normalizer, TemplateProcessing post-processor prepending `<s>` (id 1), Sequence[Replace, ByteFallback, Fuse, Strip] decoder. 32768-entry vocabulary with **771** added_tokens (v0.1 had 3): [INST]/[/INST]/[TOOL_CALLS]/[AVAILABLE_TOOLS]/[/AVAILABLE_TOOLS]/[TOOL_RESULTS]/[/TOOL_RESULTS] chat + tool-call surface forms plus a solid block of 768 `[control_N]` slots at ids 3–770 | `transformers.AutoTokenizer.from_pretrained('mistralai/Mistral-7B-Instruct-v0.3')` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `command-r-v01`                  | `command_r_v01.json`                | 20    | Byte-level BPE + NFC normalizer + Sequence[Digits(individual_digits=true), ByteLevel] pre-tokenizer + TemplateProcessing post-processor prepending `<BOS_TOKEN>` (id 5), ByteLevel decoder. 255029-entry vocabulary with 37 added_tokens: 8 special classical entries at ids 0–7 (`<PAD>`, `<UNK>`, `<CLS>`, `<SEP>`, `<MASK_TOKEN>`, `<BOS_TOKEN>`, `<EOS_TOKEN>`, `<EOP_TOKEN>`) plus 29 **`special: false`** chat-template markers at ids 255000–255028 (`<\|START_OF_TURN_TOKEN\|>`, `<\|END_OF_TURN_TOKEN\|>`, `<\|USER_TOKEN\|>`, `<\|CHATBOT_TOKEN\|>`, `<\|SYSTEM_TOKEN\|>`, …). Local vocab is fetched via the ungated `Xenova/c4ai-command-r-v01-tokenizer` mirror because the upstream `CohereForAI/c4ai-command-r-v01` repo is gated | `transformers.AutoTokenizer.from_pretrained('Xenova/c4ai-command-r-v01-tokenizer')` against the byte-identical mirror of the upstream tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
+| `deepseek-coder-1.3b`            | `deepseek_coder_1_3b.json`          | 20    | Llama-family character-BPE with **no** SentencePiece byte_fallback, empty `Sequence` normalizer, a **six-child** `Sequence` pre-tokenizer (`Split(Regex="[\r\n]")` + `Split(Regex="\s?\p{L}+")` + `Split(Regex="\s?\p{P}+")` + `Split(Regex="[一-龥ࠀ-一가-퟿]+")` + `Digits(individual_digits=true)` + `ByteLevel`), `ByteLevel` post-processor and decoder. 32000-entry vocabulary with 22 added_tokens in two blocks: 18 byte-level filler characters at ids 32000–32017 (`õ`, `÷`, `Á`, …, `normalized: true`, `special: false`) plus DeepSeek's chat/fim specials at ids 32018–32021 (`<\|fim▁begin\|>`, `<\|fim▁hole\|>`, `<\|fim▁end\|>`, `<pad>`, `<\|User\|>`, `<\|Assistant\|>`, `<\|EOT\|>`; the fim markers use full-width `｜` bar) | `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)` against the shipped `deepseek-ai/deepseek-coder-1.3b-base/tokenizer.json` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `llama-3-8b`                     | `llama_3_8b.json`                   | 20    | **Tiktoken-style byte-level BPE** (major shape change from Llama-2's SentencePiece BPE): 128000-entry vocabulary, **no byte_fallback**, **no normalizer**, no `Prepend`; `Sequence[Split(Regex, cl100k_base-family split pattern), ByteLevel]` pre-tokenizer + `Sequence[ByteLevel, TemplateProcessing(<\|begin_of_text\|>)]` post-processor (**first fixture pairing a `Sequence` post-processor with `TemplateProcessing`**) + `ByteLevel` decoder. 256 added_tokens all `special: true` at ids 128000–128255: `<\|begin_of_text\|>` (128000), `<\|end_of_text\|>` (128001), `<\|start_header_id\|>`, `<\|end_header_id\|>`, `<\|eot_id\|>`, and 251 `<\|reserved_special_token_N\|>` slots. Local vocab is fetched via the ungated `NousResearch/Meta-Llama-3-8B` mirror because the upstream `meta-llama/Meta-Llama-3-8B` repo is gated | `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)` against the local `NousResearch/Meta-Llama-3-8B/tokenizer.json` (byte-identical to the gated upstream; transformers 5.14.1 / tokenizers 0.22.2) |
 
-Total: **21 checkpoints × (40 or 20) cases = 620 triples**, all
+Total: **23 checkpoints × (40 or 20) cases = 660 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
@@ -423,6 +425,32 @@ tokens; Phi-3 has 14).
 Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
 --features parity-real-vocab --locked` — 24 tests pass (23
 per-checkpoint fixtures + 1 meta test).
+
+### Wave-20 additions (DeepSeek-Coder-1.3B + Meta-Llama-3-8B)
+
+Two additional real-vocab fixtures land alongside the Wave-19 baseline,
+picked to stress lineages of `tokenizer.json` configuration not yet
+exercised at real-vocab scale:
+
+| checkpoint                     | cases | shape peculiarity                                                                                                                                                    |
+| ------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deepseek-coder-1.3b`          | **20/20** | Llama-family character-BPE with **no** SentencePiece byte_fallback and an empty `Sequence` normalizer. Six-child `Sequence` pre-tokenizer combining four distinct `Split(Regex)` stages (newline / letters / punctuation / CJK block), `Digits(individual_digits=true)`, and `ByteLevel` — the largest `Sequence` pre-tokenizer any fixture exercises. `ByteLevel` post-processor and decoder. 32000-entry vocabulary with 22 added_tokens split into 18 byte-level filler characters (`õ`, `÷`, `Á`, …, `normalized: true`) at ids 32000–32017 plus DeepSeek's chat/fim specials (`<｜fim▁begin｜>`, `<｜fim▁hole｜>`, `<｜fim▁end｜>`, `<pad>`, `<\|User\|>`, `<\|Assistant\|>`, `<\|EOT\|>`) at ids 32018–32021. |
+| `llama-3-8b`                   | **20/20** | Tiktoken-style byte-level BPE — **major shape change from Llama-2** (which used SentencePiece BPE + byte_fallback). 128000-entry vocabulary, no byte_fallback, no normalizer; `Sequence[Split(Regex, cl100k_base-family split pattern), ByteLevel]` pre-tokenizer + `Sequence[ByteLevel, TemplateProcessing(<\|begin_of_text\|>)]` post-processor (**first fixture pairing a `Sequence` post-processor with `TemplateProcessing`**) + `ByteLevel` decoder. 256 added_tokens all `special: true` at ids 128000–128255. Local vocab via the ungated `NousResearch/Meta-Llama-3-8B` mirror because the upstream `meta-llama/Meta-Llama-3-8B` repo is gated. |
+
+No new runtime gaps surfaced by either fixture — both run 20/20 against
+the `stringcheese-tokenizer-hf` runtime *and* the
+`stringcheese-tokenizer-hf-native` delegating adapter on the same
+`transformers.PreTrainedTokenizerFast` reference (transformers 5.14.1 /
+tokenizers 0.22.2). DeepSeek's six-child `Sequence` pre-tokenizer routes
+through the same `sequence_to_pipeline` general path the Wave-17
+Falcon-7b landing added, and Llama-3-8B's `Sequence[ByteLevel,
+TemplateProcessing]` post-processor exercises the `PostProcessor::Sequence`
+branch already added to the runtime.
+
+Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
+--features parity-real-vocab --locked` — 26 tests pass (25
+per-checkpoint fixtures + 1 meta test); the sibling
+`stringcheese-tokenizer-hf-native` runner mirrors this at 25 + 1.
 
 ## Hand-computed fallback
 

@@ -418,6 +418,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "falcon_7b.json",
     "mistral_7b_v03.json",
     "command_r_v01.json",
+    "deepseek_coder_1_3b.json",
+    "llama_3_8b.json",
 ];
 
 #[test]
@@ -793,4 +795,51 @@ fn conformance_mistral_7b_v03() {
 )]
 fn conformance_command_r_v01() {
     run_fixture("command_r_v01.json", "command-r-v01");
+}
+
+// Real deepseek-ai/deepseek-coder-1.3b-base tokenizer.json — Llama-family
+// character-BPE (`model.type == "BPE"`) with **no** SentencePiece
+// byte_fallback and an empty `Sequence` normalizer. The pre_tokenizer is
+// a six-child `Sequence`: `Split(Regex="[\r\n]")` (isolate newlines),
+// `Split(Regex="\s?\p{L}+")` (Unicode letters), `Split(Regex="\s?\p{P}+")`
+// (Unicode punctuation), `Split(Regex="[一-龥ࠀ-一가-퟿]+")` (CJK block),
+// `Digits(individual_digits=true)`, then `ByteLevel`. Post-processor and
+// decoder are both `ByteLevel`. 32000-entry vocabulary with 22
+// added_tokens split into two blocks: 18 byte-level filler characters
+// at ids 32000–32017 (`õ`, `÷`, `Á`, …, all `normalized: true`, non-
+// special) and DeepSeek's chat/fim specials at ids 32018–32021
+// (`<｜fim▁begin｜>`, `<｜fim▁hole｜>`, `<｜fim▁end｜>`, `<pad>`, `<|User|>`,
+// `<|Assistant|>`, `<|EOT|>`). Reference ids come from
+// `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)`
+// against the shipped tokenizer.json.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_deepseek_coder_1_3b() {
+    run_fixture("deepseek_coder_1_3b.json", "deepseek-coder-1.3b");
+}
+
+// Real NousResearch/Meta-Llama-3-8B tokenizer.json (an ungated
+// byte-identical mirror of the gated meta-llama/Meta-Llama-3-8B) —
+// tiktoken-style byte-level BPE with a 128000-entry vocabulary. Major
+// shape change from Llama-2: no SentencePiece byte_fallback, no
+// normalizer, no `Prepend` — the pipeline is `Sequence[Split(Regex, the
+// cl100k_base-family split pattern), ByteLevel]` pre-tokenizer +
+// `Sequence[ByteLevel, TemplateProcessing(<|begin_of_text|>)]`
+// post-processor + `ByteLevel` decoder. 256 added_tokens at ids
+// 128000–128255, all `special: true`: `<|begin_of_text|>` (128000),
+// `<|end_of_text|>` (128001), `<|start_header_id|>`, `<|end_header_id|>`,
+// `<|eot_id|>`, and 251 `<|reserved_special_token_N|>` slots. Reference
+// ids come from `transformers.PreTrainedTokenizerFast(tokenizer_file=...)
+// .encode(input)` against the local NousResearch mirror
+// tokenizer.json.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_llama_3_8b() {
+    run_fixture("llama_3_8b.json", "llama-3-8b");
 }
