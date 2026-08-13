@@ -157,7 +157,7 @@ fn unshipped_han_falls_through_to_codepoint_order() {
     // primary weights are ~40000. So 一 (shipped, stroke 1) <
     // 龙 (un-shipped).
     let ord = e.compare("\u{4E00}", "\u{9F99}", "zh", CollationStrength::Tertiary);
-    assert_eq!(ord, Ordering::Less, "shipped 一 sorts before un-shipped 龙",);
+    assert_eq!(ord, Ordering::Less, "shipped 一 sorts before un-shipped 龙");
 }
 
 // -----------------------------------------------------------------------
