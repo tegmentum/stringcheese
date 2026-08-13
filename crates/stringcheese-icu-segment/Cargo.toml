@@ -1,0 +1,33 @@
+[package]
+name = "stringcheese-icu-segment"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Break-iteration capability of the StringCheese ICU alternative. Iterates Unicode grapheme cluster, word, and sentence boundaries per UAX #29 using per-locale data supplied through one or more `stringcheese-scud` break packs, and exposes the result through the `tegmentum:i18n-segment@0.1.0` WIT world. Phase 5 of the WIT-i18n subsystem (docs/design/wit-i18n.md § 8.5)."
+categories = ["text-processing", "internationalization"]
+keywords = ["segmentation", "icu", "uax29", "i18n", "unicode"]
+
+[features]
+default = ["std"]
+# When enabled, the crate uses the standard library. Implies `alloc`.
+std = ["alloc", "stringcheese-scud/std"]
+# When enabled, the crate exposes the full break-engine API. Without
+# this feature the crate compiles down to the pack-descriptor types
+# and the classification enums alone.
+alloc = ["stringcheese-scud/alloc"]
+
+[dependencies]
+stringcheese-scud = { workspace = true }
+
+[dev-dependencies]
+# `wit-parser` provides a strong "the WIT file parses cleanly" gate
+# that does not need the wasm toolchain to be installed. Matches
+# the `stringcheese-icu-datetime` / `stringcheese-icu-plural` /
+# `stringcheese-icu-number` crates' approach.
+wit-parser = "0.230"
+
+[lints]
+workspace = true
