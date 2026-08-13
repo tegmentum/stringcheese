@@ -146,6 +146,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "datetime-scud")]
+pub mod datetime_data;
 #[cfg(feature = "alloc")]
 pub mod normalize;
 #[cfg(feature = "number-scud")]

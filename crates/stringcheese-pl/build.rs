@@ -17,9 +17,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{polish_cardinals, polish_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
+    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
+    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -38,7 +40,90 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-pl.scud");
+    let datetime_bytes = build_datetime_pl_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-pl SCUD pack in memory.
+///
+/// Polish date/time formatting (CLDR 44.1, `gregorian.json`):
+///
+/// * Date patterns:
+///   * short — `dd.MM.y` (`22.09.2024`)
+///   * medium — `d MMM y` (`22 wrz 2024`)
+///   * long — `d MMMM y` (`22 września 2024`)
+///   * full — `EEEE, d MMMM y` (`niedziela, 22 września 2024`)
+/// * Time patterns (Polish uses 24-hour throughout):
+///   * short — `HH:mm`
+///   * medium/long/full — `HH:mm:ss`
+/// * Month names in the CLDR `format` (genitive) context:
+///   `stycznia`, `lutego`, …; `stand-alone` (nominative) is a
+///   documented follow-up.
+/// * Era names — `p.n.e.` (BC), `n.e.` (AD).
+fn build_datetime_pl_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "dd.MM.y");
+    d.set_date_pattern(DateTimeLength::Medium, "d MMM y");
+    d.set_date_pattern(DateTimeLength::Long, "d MMMM y");
+    d.set_date_pattern(DateTimeLength::Full, "EEEE, d MMMM y");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    d.set_month_names([
+        "stycznia",
+        "lutego",
+        "marca",
+        "kwietnia",
+        "maja",
+        "czerwca",
+        "lipca",
+        "sierpnia",
+        "wrze\u{015B}nia",
+        "pa\u{017A}dziernika",
+        "listopada",
+        "grudnia",
+    ]);
+    d.set_month_abbreviations([
+        "sty",
+        "lut",
+        "mar",
+        "kwi",
+        "maj",
+        "cze",
+        "lip",
+        "sie",
+        "wrz",
+        "pa\u{017A}",
+        "lis",
+        "gru",
+    ]);
+    d.set_weekday_names([
+        "niedziela",
+        "poniedzia\u{0142}ek",
+        "wtorek",
+        "\u{015B}roda",
+        "czwartek",
+        "pi\u{0105}tek",
+        "sobota",
+    ]);
+    d.set_weekday_abbreviations(["niedz.", "pon.", "wt.", "\u{015B}r.", "czw.", "pt.", "sob."]);
+    d.set_am_pm("AM", "PM");
+    d.set_eras("p.n.e.", "n.e.");
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("pl"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-pl SCUD pack in memory.

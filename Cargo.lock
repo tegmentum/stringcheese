@@ -2436,6 +2436,7 @@ name = "stringcheese-ar"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2640,6 +2641,7 @@ name = "stringcheese-es"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2908,6 +2910,7 @@ name = "stringcheese-it"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -2919,6 +2922,7 @@ name = "stringcheese-ja"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -3091,6 +3095,7 @@ name = "stringcheese-pl"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -3103,6 +3108,7 @@ name = "stringcheese-pt"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -3126,6 +3132,7 @@ dependencies = [
  "proptest",
  "stringcheese-icu-case",
  "stringcheese-icu-collation",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",
@@ -3336,6 +3343,7 @@ dependencies = [
  "proptest",
  "stringcheese-icu-case",
  "stringcheese-icu-collation",
+ "stringcheese-icu-datetime",
  "stringcheese-icu-number",
  "stringcheese-icu-plural",
  "stringcheese-lang",

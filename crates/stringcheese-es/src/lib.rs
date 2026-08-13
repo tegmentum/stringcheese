@@ -118,6 +118,8 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "datetime-scud")]
+pub mod datetime_data;
 #[cfg(feature = "number-scud")]
 pub mod number_data;
 #[cfg(feature = "alloc")]

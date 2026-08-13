@@ -16,9 +16,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{japanese_cardinals, japanese_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
+    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
+    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -37,7 +39,102 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-ja.scud");
+    let datetime_bytes = build_datetime_ja_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-ja SCUD pack in memory.
+///
+/// Japanese date/time formatting (CLDR 44.1, `gregorian.json`,
+/// Gregorian calendar — the Imperial `japanese` calendar is a
+/// documented follow-up):
+///
+/// * Date patterns:
+///   * short — `y/MM/dd` (`2024/09/22`)
+///   * medium — `y/MM/dd`
+///   * long — `y年M月d日` (`2024年9月22日`)
+///   * full — `y年M月d日EEEE` (`2024年9月22日日曜日`)
+/// * Time patterns (24-hour default):
+///   * short — `HH:mm`
+///   * medium/long/full — `HH:mm:ss`
+/// * Month names — numeric-with-suffix (`1月`..`12月`); Japanese
+///   uses the same shape for wide and abbreviated forms.
+/// * Weekday names — `日曜日` (Sunday-first) through `土曜日`;
+///   abbreviated to single-character `日`..`土`.
+/// * AM/PM — `午前` (AM) / `午後` (PM). Shipped for completeness.
+/// * Era names — `紀元前` (BC), `西暦` (AD).
+fn build_datetime_ja_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    d.set_date_pattern(DateTimeLength::Short, "y/MM/dd");
+    d.set_date_pattern(DateTimeLength::Medium, "y/MM/dd");
+    d.set_date_pattern(DateTimeLength::Long, "y\u{5E74}M\u{6708}d\u{65E5}");
+    d.set_date_pattern(DateTimeLength::Full, "y\u{5E74}M\u{6708}d\u{65E5}EEEE");
+    d.set_time_pattern(DateTimeLength::Short, "HH:mm");
+    d.set_time_pattern(DateTimeLength::Medium, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Long, "HH:mm:ss");
+    d.set_time_pattern(DateTimeLength::Full, "HH:mm:ss");
+    // Wide + abbreviated month names both use numeric + 月 suffix
+    // in CLDR Japanese.
+    d.set_month_names([
+        "1\u{6708}",
+        "2\u{6708}",
+        "3\u{6708}",
+        "4\u{6708}",
+        "5\u{6708}",
+        "6\u{6708}",
+        "7\u{6708}",
+        "8\u{6708}",
+        "9\u{6708}",
+        "10\u{6708}",
+        "11\u{6708}",
+        "12\u{6708}",
+    ]);
+    d.set_month_abbreviations([
+        "1\u{6708}",
+        "2\u{6708}",
+        "3\u{6708}",
+        "4\u{6708}",
+        "5\u{6708}",
+        "6\u{6708}",
+        "7\u{6708}",
+        "8\u{6708}",
+        "9\u{6708}",
+        "10\u{6708}",
+        "11\u{6708}",
+        "12\u{6708}",
+    ]);
+    d.set_weekday_names([
+        "\u{65E5}\u{66DC}\u{65E5}", // 日曜日 (Sunday)
+        "\u{6708}\u{66DC}\u{65E5}", // 月曜日 (Monday)
+        "\u{706B}\u{66DC}\u{65E5}", // 火曜日
+        "\u{6C34}\u{66DC}\u{65E5}", // 水曜日
+        "\u{6728}\u{66DC}\u{65E5}", // 木曜日
+        "\u{91D1}\u{66DC}\u{65E5}", // 金曜日
+        "\u{571F}\u{66DC}\u{65E5}", // 土曜日
+    ]);
+    d.set_weekday_abbreviations([
+        "\u{65E5}", // 日
+        "\u{6708}", // 月
+        "\u{706B}", "\u{6C34}", "\u{6728}", "\u{91D1}", "\u{571F}",
+    ]);
+    d.set_am_pm("\u{5348}\u{524D}", "\u{5348}\u{5F8C}"); // 午前 / 午後
+    // Gregorian eras. The Japanese Imperial calendar (Reiwa /
+    // Heisei / Shōwa …) is a documented follow-up.
+    d.set_eras("\u{7D00}\u{5143}\u{524D}", "\u{897F}\u{66A6}"); // 紀元前 / 西暦
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("ja"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-ja SCUD pack in memory.

@@ -21,9 +21,11 @@ use std::path::PathBuf;
 
 use stringcheese_icu_plural::builder::{arabic_cardinals, arabic_ordinals};
 use stringcheese_scud::{
-    CAP_NUMBER, CAP_PLURAL, NumberSectionBuilder, PluralSectionBuilder, SECT_CARDINAL_RULES,
-    SECT_CURRENCY_TABLE, SECT_DECIMAL_PATTERN, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN,
-    ScudWriter,
+    CAP_DATETIME, CAP_NUMBER, CAP_PLURAL, DateTimeLength, DateTimeSectionBuilder,
+    NumberSectionBuilder, PluralSectionBuilder, SECT_AM_PM, SECT_CARDINAL_RULES,
+    SECT_CURRENCY_TABLE, SECT_DATE_PATTERNS, SECT_DECIMAL_PATTERN, SECT_ERA_NAMES, SECT_MONTH_ABBR,
+    SECT_MONTH_NAMES, SECT_ORDINAL_RULES, SECT_PERCENT_PATTERN, SECT_TIME_PATTERNS,
+    SECT_WEEKDAY_ABBR, SECT_WEEKDAY_NAMES, ScudWriter,
 };
 
 /// CLDR version the shipped tables were compiled against.
@@ -42,7 +44,114 @@ fn main() {
     fs::write(&number_path, &number_bytes)
         .unwrap_or_else(|e| panic!("writing {}: {e}", number_path.display()));
 
+    let datetime_path = out_dir.join("datetime-ar.scud");
+    let datetime_bytes = build_datetime_ar_scud();
+    fs::write(&datetime_path, &datetime_bytes)
+        .unwrap_or_else(|e| panic!("writing {}: {e}", datetime_path.display()));
+
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Build the datetime-ar SCUD pack in memory.
+///
+/// Arabic date/time formatting (CLDR 44.1, `gregorian.json`):
+///
+/// * Date patterns (with U+200F RTL MARK between numeric fields
+///   and slashes so a bidi-aware renderer produces right-to-left
+///   visual order):
+///   * short — `d‏/M‏/y`
+///   * medium — `dd‏/MM‏/y`
+///   * long — `d MMMM y`
+///   * full — `EEEE، d MMMM y` (Arabic comma U+060C after the
+///     weekday)
+/// * Time patterns:
+///   * short — `h:mm a` (12-hour with AM/PM)
+///   * medium/long/full — `h:mm:ss a`
+/// * Month names in Arabic (`يناير`, `فبراير`, …). CLDR ships the
+///   same strings for full and abbreviated forms.
+/// * Weekday names — `الأحد` (Sunday-first) through `السبت`.
+/// * AM/PM markers — `ص` (ante meridiem) / `م` (post meridiem).
+/// * Era names — `ق.م` (BC), `م` (AD).
+///
+/// **Deferred: RTL bidi rendering.** The pattern strings include
+/// the RTL marks CLDR ships; stringcheese emits them into the
+/// output verbatim so a downstream bidi-aware shaper produces the
+/// culturally-correct visual result. stringcheese does not itself
+/// perform bidi shaping.
+fn build_datetime_ar_scud() -> Vec<u8> {
+    let mut d = DateTimeSectionBuilder::new();
+    // U+200F = RIGHT-TO-LEFT MARK. Falls through the pattern
+    // interpreter as a literal since it is not ASCII alphabetic.
+    d.set_date_pattern(DateTimeLength::Short, "d\u{200F}/M\u{200F}/y");
+    d.set_date_pattern(DateTimeLength::Medium, "dd\u{200F}/MM\u{200F}/y");
+    d.set_date_pattern(DateTimeLength::Long, "d MMMM y");
+    // U+060C = ARABIC COMMA.
+    d.set_date_pattern(DateTimeLength::Full, "EEEE\u{060C} d MMMM y");
+    d.set_time_pattern(DateTimeLength::Short, "h:mm a");
+    d.set_time_pattern(DateTimeLength::Medium, "h:mm:ss a");
+    d.set_time_pattern(DateTimeLength::Long, "h:mm:ss a");
+    d.set_time_pattern(DateTimeLength::Full, "h:mm:ss a");
+    d.set_month_names([
+        "\u{064A}\u{0646}\u{0627}\u{064A}\u{0631}", // يناير
+        "\u{0641}\u{0628}\u{0631}\u{0627}\u{064A}\u{0631}", // فبراير
+        "\u{0645}\u{0627}\u{0631}\u{0633}",         // مارس
+        "\u{0623}\u{0628}\u{0631}\u{064A}\u{0644}", // أبريل
+        "\u{0645}\u{0627}\u{064A}\u{0648}",         // مايو
+        "\u{064A}\u{0648}\u{0646}\u{064A}\u{0648}", // يونيو
+        "\u{064A}\u{0648}\u{0644}\u{064A}\u{0648}", // يوليو
+        "\u{0623}\u{063A}\u{0633}\u{0637}\u{0633}", // أغسطس
+        "\u{0633}\u{0628}\u{062A}\u{0645}\u{0628}\u{0631}", // سبتمبر
+        "\u{0623}\u{0643}\u{062A}\u{0648}\u{0628}\u{0631}", // أكتوبر
+        "\u{0646}\u{0648}\u{0641}\u{0645}\u{0628}\u{0631}", // نوفمبر
+        "\u{062F}\u{064A}\u{0633}\u{0645}\u{0628}\u{0631}", // ديسمبر
+    ]);
+    // CLDR ships the same strings for full and abbreviated forms.
+    d.set_month_abbreviations([
+        "\u{064A}\u{0646}\u{0627}\u{064A}\u{0631}",
+        "\u{0641}\u{0628}\u{0631}\u{0627}\u{064A}\u{0631}",
+        "\u{0645}\u{0627}\u{0631}\u{0633}",
+        "\u{0623}\u{0628}\u{0631}\u{064A}\u{0644}",
+        "\u{0645}\u{0627}\u{064A}\u{0648}",
+        "\u{064A}\u{0648}\u{0646}\u{064A}\u{0648}",
+        "\u{064A}\u{0648}\u{0644}\u{064A}\u{0648}",
+        "\u{0623}\u{063A}\u{0633}\u{0637}\u{0633}",
+        "\u{0633}\u{0628}\u{062A}\u{0645}\u{0628}\u{0631}",
+        "\u{0623}\u{0643}\u{062A}\u{0648}\u{0628}\u{0631}",
+        "\u{0646}\u{0648}\u{0641}\u{0645}\u{0628}\u{0631}",
+        "\u{062F}\u{064A}\u{0633}\u{0645}\u{0628}\u{0631}",
+    ]);
+    d.set_weekday_names([
+        "\u{0627}\u{0644}\u{0623}\u{062D}\u{062F}", // الأحد
+        "\u{0627}\u{0644}\u{0627}\u{062B}\u{0646}\u{064A}\u{0646}", // الاثنين
+        "\u{0627}\u{0644}\u{062B}\u{0644}\u{0627}\u{062B}\u{0627}\u{0621}", // الثلاثاء
+        "\u{0627}\u{0644}\u{0623}\u{0631}\u{0628}\u{0639}\u{0627}\u{0621}", // الأربعاء
+        "\u{0627}\u{0644}\u{062E}\u{0645}\u{064A}\u{0633}", // الخميس
+        "\u{0627}\u{0644}\u{062C}\u{0645}\u{0639}\u{0629}", // الجمعة
+        "\u{0627}\u{0644}\u{0633}\u{0628}\u{062A}", // السبت
+    ]);
+    d.set_weekday_abbreviations([
+        "\u{0627}\u{0644}\u{0623}\u{062D}\u{062F}",
+        "\u{0627}\u{0644}\u{0627}\u{062B}\u{0646}\u{064A}\u{0646}",
+        "\u{0627}\u{0644}\u{062B}\u{0644}\u{0627}\u{062B}\u{0627}\u{0621}",
+        "\u{0627}\u{0644}\u{0623}\u{0631}\u{0628}\u{0639}\u{0627}\u{0621}",
+        "\u{0627}\u{0644}\u{062E}\u{0645}\u{064A}\u{0633}",
+        "\u{0627}\u{0644}\u{062C}\u{0645}\u{0639}\u{0629}",
+        "\u{0627}\u{0644}\u{0633}\u{0628}\u{062A}",
+    ]);
+    // AM = "ص" (sabāh, "morning"), PM = "م" (masā', "evening").
+    d.set_am_pm("\u{0635}", "\u{0645}");
+    // BC = "ق.م" (qabl al-milad), AD = "م" (milad).
+    d.set_eras("\u{0642}.\u{0645}", "\u{0645}");
+    let mut w = ScudWriter::new(CAP_DATETIME, CLDR_VERSION, Some("ar"));
+    w.append_section(SECT_DATE_PATTERNS, &d.date_patterns_bytes());
+    w.append_section(SECT_TIME_PATTERNS, &d.time_patterns_bytes());
+    w.append_section(SECT_MONTH_NAMES, &d.month_names_bytes());
+    w.append_section(SECT_MONTH_ABBR, &d.month_abbr_bytes());
+    w.append_section(SECT_WEEKDAY_NAMES, &d.weekday_names_bytes());
+    w.append_section(SECT_WEEKDAY_ABBR, &d.weekday_abbr_bytes());
+    w.append_section(SECT_AM_PM, &d.am_pm_bytes());
+    w.append_section(SECT_ERA_NAMES, &d.era_names_bytes());
+    w.finish()
 }
 
 /// Build the plural-ar SCUD pack in memory.
