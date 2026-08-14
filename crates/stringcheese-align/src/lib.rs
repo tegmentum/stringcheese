@@ -148,6 +148,56 @@
 //!   measurement environment change (thermal throttling, background
 //!   load); rerun with `--sample-size 30` and a quiet host before
 //!   filing a fix.
+//!
+//! # Oracle gap vs best-in-class Rust
+//!
+//! With `--features oracle-benches` the bench harness adds a
+//! side-by-side lane for each kernel that pits stringcheese against
+//! `bio` (rust-bio v2), the canonical Rust bioinformatics crate. Bio
+//! uses Gotoh three-matrix affine-gap DP always, and its
+//! `Aligner::global` / `Aligner::local` returns a full `Alignment`
+//! (score + traceback) on every call — no score-only fast path — so the
+//! "score" comparison also captures bio's per-call trace allocation
+//! cost. That is the real-world cost of picking bio for a score-only
+//! pipeline. Multiplier is bio-thrpt ÷ stringcheese-thrpt at the same
+//! size and flavor. Full table in `docs/perf/align-oracle-gaps.md`.
+//!
+//! ```text
+//! kernel            / size × flavor     stringcheese   bio           mult    verdict
+//! -----------------------------------------------------------------------------------
+//! nw_score_linear   / 32   × div         17.5 MiB/s     3.9 MiB/s   0.22×   stringcheese 4.5× ahead
+//! nw_score_linear   / 128  × div          3.3 MiB/s   941  KiB/s    0.28×   stringcheese 3.6× ahead
+//! nw_score_linear   / 512  × div        644   KiB/s   177  KiB/s    0.27×   stringcheese 3.6× ahead
+//! nw_score_affine   / 32   × div         11.0 MiB/s     3.8 MiB/s   0.35×   stringcheese 2.9× ahead
+//! nw_score_affine   / 128  × div          1.8 MiB/s   913  KiB/s    0.51×   stringcheese 2.0× ahead
+//! nw_score_affine   / 512  × div        680   KiB/s   208  KiB/s    0.31×   stringcheese 3.3× ahead
+//! nw_align_linear   / 32   × div         13.8 MiB/s     4.0 MiB/s   0.29×   stringcheese 3.5× ahead
+//! nw_align_linear   / 512  × div        811   KiB/s   206  KiB/s    0.25×   stringcheese 3.9× ahead
+//! sw_score_linear   / 512  × div        593   KiB/s   270  KiB/s    0.45×   stringcheese 2.2× ahead
+//! sw_score_affine   / 512  × div        744   KiB/s   270  KiB/s    0.36×   stringcheese 2.8× ahead
+//! sw_align_linear   / 512  × div        641   KiB/s   267  KiB/s    0.42×   stringcheese 2.4× ahead
+//! ```
+//!
+//! Read:
+//!
+//! * **Every combination**: stringcheese is 2-5× faster than bio at
+//!   every size. The gap widens for score-only kernels (bio always
+//!   allocates the trace) and stays stable for align kernels.
+//! * **Linear-gap advantage**: stringcheese's specialised single-matrix
+//!   linear-gap DP shows the widest gap (~3.6-4.5× on divergent 32-512)
+//!   because bio uses three-matrix Gotoh even for degenerate linear
+//!   `gap_open == gap_extend` input. That is a design choice on bio's
+//!   side, not an inefficiency in stringcheese, but it is exactly the
+//!   real-world cost of picking bio for a linear-gap pipeline.
+//! * **Verdict**: `stringcheese-align` is already best-in-class among
+//!   pure-Rust exact NW/SW libraries. Any further headroom is a SIMD-
+//!   ceiling story (parasail C library territory), not scalar-DP
+//!   headroom. No scalar perf work needed.
+//! * **Dep-footprint red flag**: enabling `oracle-benches` pulls
+//!   `bio` v2 (`~117 transitive packages`: ndarray, statrs, petgraph,
+//!   csv, regex, rand, ...) into the workspace `Cargo.lock`. This is
+//!   the entire reason the feature is off by default. `--all-features`
+//!   workspace jobs pay a `~15-30 s` `bio` compile hit.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

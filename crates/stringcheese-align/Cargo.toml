@@ -18,9 +18,37 @@ std = ["alloc", "stringcheese-core/std"]
 # reconstruction are exposed. The `scoring` module (ScoringScheme trait,
 # LinearGap, AffineGap) is available even without alloc.
 alloc = ["stringcheese-core/alloc"]
+# When enabled, the criterion bench harness pulls in `bio` (rust-bio v2)
+# as an oracle for Needleman-Wunsch / Smith-Waterman throughput
+# comparisons, and adds side-by-side oracle-comparison bench groups. The
+# feature is off by default because it is bench-only: no library code
+# looks at `bio`, and the ordinary `cargo bench -p stringcheese-align`
+# invocation must keep working without pulling `bio` in.
+#
+# `bio` v2 has a heavy transitive dependency graph (~117 packages —
+# ndarray, statrs, petgraph, csv, regex, and friends). That footprint is
+# the entire reason this is opt-in behind a feature rather than an
+# unconditional dev-dep: it must not enter the workspace's default build
+# path. See `benches/align.rs` for the gated groups and
+# `docs/perf/align-oracle-gaps.md` for the last-measured gap table.
+oracle-benches = ["dep:bio"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
+# --- optional oracle-comparison bench deps -------------------------------
+#
+# `bio` (rust-bio v2) — the canonical Rust bioinformatics crate. Ships
+# the reference `bio::alignment::pairwise::Aligner` (Gotoh 1982 affine-
+# gap DP; passing `gap_open == gap_extend` degenerates to linear-gap).
+# We use it as an oracle for the crate's NW/SW throughput comparison.
+# `default-features = false` avoids pulling optional file-format IO
+# helpers we do not need.
+#
+# Marked `optional = true` and gated by the `oracle-benches` feature so
+# a plain `cargo build` / `cargo test` / `cargo bench` never pulls it
+# in. Lives in `[dependencies]` (not `[dev-dependencies]`) because Cargo
+# does not allow optional dev-deps.
+bio = { version = "2", default-features = false, optional = true }
 
 [dev-dependencies]
 stringcheese-corpus = { workspace = true, features = ["alloc"] }

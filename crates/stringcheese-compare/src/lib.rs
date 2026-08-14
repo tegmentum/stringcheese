@@ -134,6 +134,59 @@
 //!   measurement environment change (thermal throttling, background
 //!   load); rerun with `--sample-size 30` and a quiet host before
 //!   filing a fix.
+//!
+//! # Oracle gap vs best-in-class Rust
+//!
+//! With `--features oracle-benches` the bench harness adds a
+//! side-by-side lane for each kernel that the ecosystem already ships
+//! (`strsim` for scalar Levenshtein / OSA / Damerau / Hamming / Jaro /
+//! Jaro-Winkler; `triple_accel` for SIMD-accelerated Levenshtein and
+//! Hamming). Multiplier is oracle-thrpt ÷ stringcheese-thrpt at the
+//! same size, so `> 1` means the oracle is faster than stringcheese and
+//! `< 1` means stringcheese wins. Full table in
+//! `docs/perf/compare-oracle-gaps.md`; the summary here is the pairs
+//! that matter for perf-lever ranking.
+//!
+//! ```text
+//! kernel        / size       stringcheese   strsim         triple_accel   verdict
+//! -------------------------------------------------------------------------------
+//! levenshtein   / 32          15   MiB/s     10  MiB/s      7  MiB/s      competitive
+//! levenshtein   / 256          1.1 MiB/s      3.1 MiB/s   910 KiB/s        medium gap (strsim 2.8×)
+//! levenshtein   / 2048       135   KiB/s    447  KiB/s    119 KiB/s        medium gap (strsim 3.3×)
+//! osa           / 32          10.8 MiB/s     17.1 MiB/s   —                competitive (strsim 1.6×)
+//! osa           / 2048       152   KiB/s    276  KiB/s    —                competitive (strsim 1.8×)
+//! damerau       / 32           4.3 MiB/s      8.3 MiB/s   —                competitive (strsim 1.9×)
+//! damerau       / 2048        61   KiB/s    117  KiB/s    —                competitive (strsim 1.9×)
+//! hamming       / 32           3.1 GiB/s    956  MiB/s      8.0 GiB/s      medium gap (triple_accel 2.6×)
+//! hamming       / 2048         5.8 GiB/s      1.0 GiB/s    12.1 GiB/s      medium gap (triple_accel 2.1×)
+//! jaro          / 32         139   MiB/s     54  MiB/s    —                stringcheese 2.6× ahead
+//! jaro          / 2048         2.4 MiB/s   895  KiB/s     —                stringcheese 2.8× ahead
+//! jaro_winkler  / 32          86   MiB/s     46  MiB/s    —                stringcheese 1.9× ahead
+//! jaro_winkler  / 2048         2.3 MiB/s   887  KiB/s     —                stringcheese 2.6× ahead
+//! ```
+//!
+//! Read:
+//!
+//! * **`levenshtein`** shows the biggest headroom: strsim's scalar DP
+//!   is ~3× faster at n ≥ 256. The gap traces to LLVM autovectorising
+//!   strsim's tight `chars()`-driven inner loop; stringcheese's generic
+//!   trait-abstracted DP does not vectorise. `triple_accel` on aarch64
+//!   is a *wash* with stringcheese here — its exponential-doubling
+//!   `levenshtein_exp` strategy pays a fixed multi-iteration overhead
+//!   that wipes out the SIMD win at unbounded edit distance. A SIMD
+//!   Myers bit-parallel or striped-DP implementation is the real
+//!   perf lever, not a straight port to `triple_accel`.
+//! * **`hamming`** — stringcheese's block-compare fast path is 5-6×
+//!   faster than strsim's per-byte scan and within ~2× of
+//!   `triple_accel`'s NEON kernel. The residual 2× is real SIMD
+//!   headroom; already memory-bandwidth-bound at large n.
+//! * **`osa`, `damerau`, `jaccard_set_bigrams`** — competitive, no
+//!   action needed.
+//! * **`jaro`, `jaro_winkler`** — stringcheese is 2-3× faster than
+//!   strsim; no action needed.
+//!
+//! See `docs/perf/oracle-gap-summary.md` for the ranked "next perf
+//! targets" list across both this crate and `stringcheese-align`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // The crate is `deny(unsafe_code)` rather than `forbid(unsafe_code)` so

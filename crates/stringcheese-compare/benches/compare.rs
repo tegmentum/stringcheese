@@ -580,6 +580,283 @@ fn bench_jaccard_set(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Oracle-comparison groups (feature-gated on `oracle-benches`).
+//
+// Goal: side-by-side throughput of stringcheese vs best-in-class Rust
+// distance-kernel crates on identical inputs. Not a correctness oracle
+// — the DP kernels here all compute the same integer distance / real
+// similarity by construction — but a *perf* oracle: it answers "is
+// stringcheese competitive, or is there real headroom vs the ecosystem?"
+//
+// Oracles chosen (both `optional = true` in `Cargo.toml`, zero
+// transitive deps):
+//
+// * `strsim` (0.11) — pure-Rust Levenshtein / Damerau-Levenshtein /
+//   OSA / Hamming / Jaro / Jaro-Winkler. Standard scalar impls; the
+//   Levenshtein path uses the two-row rolling-array DP and generic
+//   `Vec<usize>` scratch (allocates each call).
+// * `triple_accel` (0.4) — SIMD-accelerated Levenshtein / Hamming. On
+//   aarch64 this uses NEON; on x86_64 it dispatches AVX2 / SSE4.1.
+//
+// Every oracle group cycles the same `LENGTHS` grid as the primary
+// groups and uses the same `ascii_pair` / `utf8_pair` corpora so the
+// gap-ratio numbers are directly comparable to the baseline table.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_levenshtein(c: &mut Criterion) {
+    // Compares `stringcheese`, `strsim`, and `triple_accel` on the same
+    // ASCII input. `strsim::levenshtein` takes `&str`; every ASCII byte
+    // slice is trivially valid UTF-8, so `from_utf8_unchecked` would work
+    // but the checked variant is functionally free at these input sizes.
+    let mut group = c.benchmark_group("compare/oracle/levenshtein");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        // stringcheese lane — mirrors `bench_levenshtein`'s ASCII path
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                let mut ws = LevenshteinWorkspace::new();
+                bencher.iter(|| {
+                    Levenshtein.distance_with_workspace(
+                        black_box(a.as_slice()),
+                        black_box(b.as_slice()),
+                        &mut ws,
+                    )
+                });
+            },
+        );
+
+        // strsim lane — scalar `&str`-oriented reference impl
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::levenshtein(black_box(a), black_box(b)));
+            },
+        );
+
+        // triple_accel lane — SIMD-accelerated byte-slice impl. This is
+        // the "best-in-class SIMD" reference for edit distance.
+        group.bench_with_input(
+            BenchmarkId::new("triple_accel/ascii", len),
+            &(a, b),
+            |bencher, (a, b)| {
+                bencher.iter(|| {
+                    triple_accel::levenshtein(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_damerau_osa(c: &mut Criterion) {
+    // strsim's `osa_distance` and stringcheese's `Osa` compute the same
+    // restricted-Damerau semimetric.
+    let mut group = c.benchmark_group("compare/oracle/osa");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                let mut ws = OsaWorkspace::new();
+                bencher.iter(|| {
+                    Osa.distance_with_workspace(
+                        black_box(a.as_slice()),
+                        black_box(b.as_slice()),
+                        &mut ws,
+                    )
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::osa_distance(black_box(a), black_box(b)));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_damerau_full(c: &mut Criterion) {
+    // strsim's `damerau_levenshtein` computes the true unrestricted
+    // Damerau distance; matches stringcheese's `Damerau`.
+    let mut group = c.benchmark_group("compare/oracle/damerau");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                let mut ws: DamerauWorkspace<u8> = DamerauWorkspace::new();
+                bencher.iter(|| {
+                    Damerau.distance_with_workspace(
+                        black_box(a.as_slice()),
+                        black_box(b.as_slice()),
+                        &mut ws,
+                    )
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::damerau_levenshtein(black_box(a), black_box(b)));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_hamming(c: &mut Criterion) {
+    // Two oracles: `strsim::hamming` (scalar), `triple_accel::hamming`
+    // (SIMD). stringcheese's `Hamming::distance_bytes` already dispatches
+    // to a fast block-compare, so we expect this to be the tightest race
+    // in the suite (all three are memory-bandwidth-bound).
+    let mut group = c.benchmark_group("compare/oracle/hamming");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                bencher.iter(|| {
+                    Hamming.distance_bytes(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::hamming(black_box(a), black_box(b)).unwrap());
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("triple_accel/ascii", len),
+            &(a, b),
+            |bencher, (a, b)| {
+                bencher.iter(|| {
+                    triple_accel::hamming(black_box(a.as_slice()), black_box(b.as_slice()))
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_jaro(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compare/oracle/jaro");
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                let mut ws = JaroWorkspace::new();
+                bencher.iter(|| {
+                    Jaro.similarity_with_workspace(
+                        black_box(a.as_slice()),
+                        black_box(b.as_slice()),
+                        &mut ws,
+                    )
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::jaro(black_box(a), black_box(b)));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_jaro_winkler(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compare/oracle/jaro_winkler");
+    let jw = JaroWinkler::classic();
+    for &len in LENGTHS {
+        group.throughput(Throughput::Bytes(len as u64));
+        let (a, b) = ascii_pair(len);
+        let a_str = core::str::from_utf8(&a).expect("ascii pair is valid utf-8");
+        let b_str = core::str::from_utf8(&b).expect("ascii pair is valid utf-8");
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &(a.clone(), b.clone()),
+            |bencher, (a, b)| {
+                let mut ws = JaroWorkspace::new();
+                bencher.iter(|| {
+                    jw.similarity_with_workspace(
+                        black_box(a.as_slice()),
+                        black_box(b.as_slice()),
+                        &mut ws,
+                    )
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("strsim/ascii", len),
+            &(a_str, b_str),
+            |bencher, &(a, b)| {
+                bencher.iter(|| strsim::jaro_winkler(black_box(a), black_box(b)));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+criterion_group!(
+    oracle_benches,
+    bench_oracle_levenshtein,
+    bench_oracle_damerau_osa,
+    bench_oracle_damerau_full,
+    bench_oracle_hamming,
+    bench_oracle_jaro,
+    bench_oracle_jaro_winkler,
+);
+
 criterion_group!(
     benches,
     bench_levenshtein,
@@ -591,4 +868,8 @@ criterion_group!(
     bench_lcs,
     bench_jaccard_set,
 );
+
+#[cfg(feature = "oracle-benches")]
+criterion_main!(benches, oracle_benches);
+#[cfg(not(feature = "oracle-benches"))]
 criterion_main!(benches);

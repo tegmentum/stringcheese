@@ -33,9 +33,33 @@ alloc = ["stringcheese-core/alloc"]
 # `alloc`. Default builds keep the scalar rolling-rows kernel intact so the
 # `no_std` and `alloc`-only configurations are unaffected.
 simd = ["std"]
+# When enabled, the criterion bench harness pulls in best-in-class Rust
+# distance-kernel oracle crates (`strsim` for Levenshtein / Damerau /
+# OSA / Hamming / Jaro / Jaro-Winkler; `triple_accel` for SIMD-accelerated
+# Levenshtein) and adds side-by-side oracle-comparison bench groups. The
+# feature is off by default because it is bench-only: no library code
+# looks at either oracle crate, and the ordinary `cargo bench -p
+# stringcheese-compare` invocation must keep working without pulling
+# either extra crate. See `benches/compare.rs` for the gated groups and
+# `docs/perf/compare-oracle-gaps.md` for the last-measured gap table.
+oracle-benches = ["dep:strsim", "dep:triple_accel"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
+# --- optional oracle-comparison bench deps -------------------------------
+#
+# `strsim` (0.11) — pure-Rust standard implementations of Levenshtein /
+# Damerau-Levenshtein / OSA / Hamming / Jaro / Jaro-Winkler. Zero
+# transitive deps. `triple_accel` (0.4) — SIMD-accelerated (AVX2 / SSE4 /
+# NEON) Levenshtein / Hamming. Zero transitive deps.
+#
+# Both are marked `optional = true` and gated by the `oracle-benches`
+# feature; a plain `cargo build` / `cargo test` / `cargo bench` never
+# pulls them in. They live in `[dependencies]` (not `[dev-dependencies]`)
+# because Cargo does not allow optional dev-deps, and both crates are
+# small enough that the additional Cargo.lock entries are cheap.
+strsim = { version = "0.11", optional = true }
+triple_accel = { version = "0.4", optional = true }
 
 [dev-dependencies]
 # Golden-case schema (workspace-inherited so version and path stay in sync
