@@ -26,6 +26,33 @@
 //! let parts: Vec<&str> = split("aü日", SegmentUnit::CodePoints).collect();
 //! assert_eq!(parts, vec!["a", "ü", "日"]);
 //! ```
+//!
+//! ## Relationship to `stringcheese-icu-segment`
+//!
+//! This crate is the **in-process convenience splitter**: one
+//! [`SegmentUnit`] enum, one [`split`] entry point, returns
+//! `Box<dyn Iterator<Item = &str>>` over the caller's own input
+//! slice. Basic units (bytes, code points, `\n`-lines) are
+//! zero-dependency; grapheme / word / sentence units delegate to
+//! ICU4X's `icu_segmenter` under the `icu` feature. Reach for it
+//! when the caller wants string slices and is happy with a Rust-side
+//! API.
+//!
+//! [`stringcheese-icu-segment`] is the Phase-5 WIT-i18n crate that
+//! ships an independent UAX #29 rule-engine (`BreakEngine` over
+//! built-in classification tables), returns **byte-offset lists**
+//! rather than slices, consumes optional SCUD `BreakPack` data
+//! (including CJK dictionary word-break tailoring), and ships behind
+//! a WASM component boundary. Reach for it when the caller needs
+//! WIT-shaped access, boundary offsets rather than slices, or
+//! dictionary-based CJK word segmentation from a SCUD pack.
+//!
+//! The two implementations do not share code — this crate delegates
+//! to ICU4X; the icu-segment crate walks UAX #29 rules directly. Pick
+//! by shape (slices vs offsets, in-process vs WIT), not by
+//! correctness of segmentation.
+//!
+//! [`stringcheese-icu-segment`]: https://docs.rs/stringcheese-icu-segment
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]

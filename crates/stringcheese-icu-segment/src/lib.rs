@@ -56,6 +56,31 @@
 //! Inherited from `stringcheese-scud`: SCUD packs are trusted
 //! input. This crate does not defend against maliciously crafted
 //! packs.
+//!
+//! # When to reach for `stringcheese-segment` instead
+//!
+//! This crate is the **UAX #29 rule-engine, pack-driven, WIT-fronted**
+//! break iterator. It returns boundary byte-offset lists (not slices),
+//! implements the grapheme / word / sentence state machines from its
+//! own classification tables, and consumes an optional SCUD
+//! [`BreakPack`] for CJK dictionary tailorings. Ship it when the
+//! caller crosses a WIT boundary, wants offsets rather than slices,
+//! or needs dictionary word-break for Japanese / Chinese.
+//!
+//! [`stringcheese-segment`] is the **in-process convenience splitter**:
+//! one `SegmentUnit` enum, one `split()` entry point, iterator of
+//! `&str` slices over the caller's input. Basic units (bytes, code
+//! points, `\n`-lines) are zero-dependency; grapheme / word / sentence
+//! units delegate to ICU4X's `icu_segmenter` under its `icu` feature.
+//! Reach for it when the caller wants slices, is running in-process,
+//! and does not need CJK dictionary tailoring or a WIT surface.
+//!
+//! The two implementations do not share code — `stringcheese-segment`
+//! delegates to ICU4X; this crate walks UAX #29 rules directly. Pick
+//! by shape (offsets vs slices, WIT vs in-process), not by correctness
+//! of segmentation.
+//!
+//! [`stringcheese-segment`]: https://docs.rs/stringcheese-segment
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

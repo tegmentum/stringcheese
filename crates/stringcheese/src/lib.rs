@@ -120,8 +120,17 @@ pub use stringcheese_tokenizer as tokenizer;
 
 /// Unicode-aware segmentation: bytes, code points, graphemes,
 /// words, sentences, lines. `SegmentUnit` names the boundary
-/// explicitly at every call site. Re-exported from the
-/// `stringcheese-segment` crate.
+/// explicitly at every call site. Returns `&str` slices; ICU4X
+/// backs the grapheme / word / sentence units under the crate's
+/// `icu` feature. Re-exported from the `stringcheese-segment` crate.
+///
+/// A separate `stringcheese-icu-segment` crate (Phase-5 WIT-i18n)
+/// implements the UAX #29 rule state machines from scratch, returns
+/// **boundary byte offsets** rather than slices, consumes SCUD
+/// `BreakPack` data (including CJK dictionary word-break tailoring),
+/// and ships behind a WASM component boundary. The umbrella does not
+/// re-export it; callers who cross a WIT boundary or want offsets
+/// rather than slices depend on `stringcheese-icu-segment` directly.
 pub use stringcheese_segment as segment;
 
 /// String statistics and characterisation: Shannon entropy,
@@ -175,11 +184,20 @@ pub use stringcheese_normalize as normalize;
 /// Re-exported from the `stringcheese-textsplit` crate.
 pub use stringcheese_textsplit as textsplit;
 
-/// Locale-aware collation: `UcaCollator` (Unicode Collation
+/// Root-locale collation: `UcaCollator` (Unicode Collation
 /// Algorithm via feruca), `NaturalCollator` (`file2 < file10`),
 /// `AsciiCiCollator` (ASCII case-insensitive fast path), all
 /// behind a common `Collator` trait. Re-exported from the
 /// `stringcheese-collate` crate.
+///
+/// Locale-tailored collation (Turkish dotless-i, French backwards-
+/// secondary, Russian case-second, German phonebook, …) plus a WIT-
+/// shaped `sort_key` surface live in the separately-published
+/// `stringcheese-icu-collation` crate — the Phase-2 WIT-i18n crate
+/// that wraps this crate's `UcaCollator` with per-locale SCUD packs.
+/// The umbrella does not re-export it; callers who need locale-aware
+/// collation add `stringcheese-icu-collation` to their `Cargo.toml`
+/// explicitly.
 pub use stringcheese_collate as collate;
 
 /// Script-to-script transliteration: `DeunicodeTransliterator`
