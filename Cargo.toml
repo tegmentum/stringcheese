@@ -251,6 +251,16 @@ stringcheese-icu-segment-component = { version = "0.1.0", path = "crates/stringc
 stringcheese-icu-linebreak = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak", default-features = false }
 stringcheese-icu-linebreak-component = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak-component", default-features = false }
 
+# Third-party dev-dep(s) shared across the compute-heavy crates that
+# now ship a criterion bench harness (`stringcheese-compare`,
+# `stringcheese-align`, ...). Every bench-adopting crate consumes this
+# via `criterion.workspace = true` under `[dev-dependencies]` so the
+# version stays in lockstep with the reference bench crate
+# (`crates/stringcheese-tokenizer-hf-bench`) that predates this
+# consolidation. `default-features = false` + `html_reports` matches
+# the shape used by that crate.
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

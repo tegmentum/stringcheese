@@ -700,6 +700,95 @@ jobs:
             -- --test --nocapture
 
   # ------------------------------------------------------------------
+  # stringcheese-compare bench compile-check (optional, non-blocking).
+  #
+  # `stringcheese-compare` is the biggest compute-heavy crate in the
+  # workspace and ships every distance/similarity kernel the toolkit
+  # exposes (Levenshtein, Damerau, Hamming, Jaro/Jaro-Winkler, LCS,
+  # set-similarity, MinHash). Its criterion bench harness lives at
+  # `crates/stringcheese-compare/benches/compare.rs`; see the crate-
+  # level `//!` docs of `src/lib.rs` for the baseline table and the
+  # bench file's header for the group / flavor / size layout.
+  #
+  # This job runs `cargo bench --no-run` so a regression that BREAKS
+  # THE BENCH BUILD (renamed public API, feature-flag rewiring, dev-
+  # dep drift) fails CI loudly. It deliberately does NOT execute the
+  # bench — actual measurements on shared runners are noisy and the
+  # baseline table lives in the crate's module docs. Contributors who
+  # need real numbers run the bench locally on a quiet host.
+  #
+  # `continue-on-error: true` matches the tokenizer-hf-bench job's
+  # posture — this is a compile signal, not a gating perf signal.
+  # ------------------------------------------------------------------
+  compare-bench:
+    name: compare bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: compare-bench-stable
+
+      - name: Compile the compare bench (no run)
+        # `--no-run` compiles the bench binary but skips measurement.
+        # This catches API drift and dev-dep resolution failures
+        # without pinning a perf budget on a shared runner.
+        run: |
+          cargo bench \
+            -p stringcheese-compare \
+            --bench compare \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # stringcheese-align bench compile-check (optional, non-blocking).
+  #
+  # `stringcheese-align` owns the v0.2 Needleman-Wunsch (global) and
+  # Smith-Waterman (local) alignment kernels with linear- and affine-
+  # gap scoring. Its criterion bench harness lives at
+  # `crates/stringcheese-align/benches/align.rs`; see the crate-level
+  # `//!` docs of `src/lib.rs` for the baseline table and the bench
+  # file's header for the group / flavor / size layout.
+  #
+  # Same rationale as the compare-bench job above — `--no-run` for a
+  # fast compile-only smoke check, `continue-on-error: true` so a
+  # noisy or transient bench-only failure never wedges an unrelated
+  # PR.
+  # ------------------------------------------------------------------
+  align-bench:
+    name: align bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: align-bench-stable
+
+      - name: Compile the align bench (no run)
+        run: |
+          cargo bench \
+            -p stringcheese-align \
+            --bench align \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # Tokenizer WIT component smoke test.
   #
   # Phase 7 of the tokenizer subsystem design
