@@ -251,6 +251,14 @@ stringcheese-icu-segment-component = { version = "0.1.0", path = "crates/stringc
 stringcheese-icu-linebreak = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak", default-features = false }
 stringcheese-icu-linebreak-component = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak-component", default-features = false }
 
+# `criterion` — shared bench harness for the compute-heavy non-tokenizer
+# crates. Kept at workspace scope so every crate that adopts a bench
+# tracks the same version (initial adopters: `stringcheese-manip`; the
+# workspace-external `stringcheese-tokenizer-hf-bench` and
+# `stringcheese-bench` pin the same 0.5 line independently — see their
+# manifests for the rationale).
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

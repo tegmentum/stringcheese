@@ -700,6 +700,52 @@ jobs:
             -- --test --nocapture
 
   # ------------------------------------------------------------------
+  # manip bench compile-check (optional, non-blocking).
+  #
+  # `stringcheese-manip` ships a criterion bench (`benches/manip.rs`)
+  # covering 12 hot public operations × 3 input sizes × 2 Unicode
+  # flavors. The bench file itself lives inside the crate — no
+  # workspace-external oracle deps, no vocab downloads, no network —
+  # so a full `cargo bench` run is a local-only operation.
+  #
+  # This job only verifies the bench still LINKS (`cargo bench
+  # --no-run`) so an API-breaking rename or a criterion API shift
+  # surfaces as a red mark here, not as a surprise the next time
+  # someone actually runs the bench. The measurement itself is not
+  # attempted in CI — criterion needs a stable-throughput host to
+  # produce trustworthy numbers, and GitHub-hosted runners are neither
+  # stable nor quiet.
+  #
+  # `continue-on-error: true` matches the tokenizer-hf-bench job's
+  # posture: a broken bench compile is a follow-up, not a blocker
+  # for unrelated PRs.
+  # ------------------------------------------------------------------
+  manip-bench:
+    name: manip bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: manip-bench-stable
+
+      - name: Compile-check the bench
+        run: |
+          cargo bench \
+            -p stringcheese-manip \
+            --bench manip \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # Tokenizer WIT component smoke test.
   #
   # Phase 7 of the tokenizer subsystem design
