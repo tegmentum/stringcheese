@@ -96,6 +96,39 @@
 //!
 //! [`GramSet`]: https://docs.rs/stringcheese-ngram
 //!
+//! # Bench baselines
+//!
+//! `benches/index.rs` is a criterion binary that measures
+//! candidate-generation throughput across all three index families at
+//! two corpus scales (1 000 and 10 000 records). Run with:
+//!
+//! ```text
+//! cargo bench -p stringcheese-index --bench index
+//! ```
+//!
+//! Baseline numbers (aarch64 Apple M-series, macOS 15, rustc 1.97.1,
+//! release + LTO; `--quick` sample budget, ±30 % ballpark):
+//!
+//! ```text
+//! group                                    1 000            10 000
+//! ------------------------------------------------------------------
+//! index/bk_tree/build                      1.68 M rec/s     1.16 M rec/s
+//! index/bk_tree/find_within r=1             48.9 K qps       6.8 K qps
+//! index/vp_tree/from_corpus                1.25 M rec/s      907 K rec/s
+//! index/vp_tree/find_within r=1             24.9 K qps       2.6 K qps
+//! index/vp_tree/find_k_nearest k=5           9.5 K qps        785 elem/s
+//! index/qgram/build                        1.21 M rec/s     1.38 M rec/s
+//! index/qgram/overlap_candidates o=2         588 K qps        51 K qps
+//! index/qgram/length_filter_candidates      1.07 M qps         40 K qps
+//! ```
+//!
+//! See the bench file's module doc for candidate-fanout counts:
+//! metric-space trees surface ~6 hits per query at r=1 on the
+//! 1 000-record corpus and ~91 on the 10 000-record corpus;
+//! `overlap_candidates` surfaces ~193 candidates at 1k and ~1 883 at
+//! 10k; `length_filter_candidates` at θ=0.6 surfaces the entire
+//! valid length window, ~55 000 at 1k and ~549 000 at 10k.
+//!
 //! # `no_std`
 //!
 //! The crate is `#![no_std]` compatible. Every index in it requires heap
