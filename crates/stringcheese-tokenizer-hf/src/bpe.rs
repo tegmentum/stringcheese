@@ -44,9 +44,19 @@ pub enum VocabularyBuilderError {
 /// [`hashbrown::HashMap`] keyed on the *concatenation* of the two
 /// pieces. Lookup allocates one `Vec<u8>` per call (down from two)
 /// and hits an O(1) hash lookup afterwards.
+///
+/// The hasher is pinned to [`rustc_hash::FxBuildHasher`] rather than
+/// hashbrown's default `ahash`. Merge keys are almost always 2-8
+/// bytes — well below the length where `ahash`'s stronger mixing pays
+/// for its per-call setup cost — and the encode hot loop pays one
+/// [`Self::rank_slice`] call per candidate merge, so a leaner hash
+/// step compounds. `FxHash`'s multiply-xor-shift kernel is what rustc
+/// itself uses for its interning maps, and it is a zero-sized
+/// `BuildHasher`, so `[BpeMergeTable]` carries no per-instance state
+/// beyond the map itself.
 #[derive(Debug, Default, Clone)]
 pub struct BpeMergeTable {
-    ranks: hashbrown::HashMap<Vec<u8>, u32>,
+    ranks: hashbrown::HashMap<Vec<u8>, u32, rustc_hash::FxBuildHasher>,
 }
 
 impl BpeMergeTable {
@@ -55,7 +65,7 @@ impl BpeMergeTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ranks: hashbrown::HashMap::new(),
+            ranks: hashbrown::HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
