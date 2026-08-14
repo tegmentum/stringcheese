@@ -2417,6 +2417,7 @@ dependencies = [
 name = "stringcheese-align"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-core",
  "stringcheese-corpus",
@@ -2516,6 +2517,7 @@ dependencies = [
 name = "stringcheese-compare"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-core",
  "stringcheese-corpus",

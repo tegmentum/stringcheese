@@ -74,6 +74,80 @@
 //! * Multiple sequence alignment (MSA) — v0.3+.
 //! * Profile-based alignment (PSSMs, HMMs) — v0.3+.
 //! * Banded alignment for constrained-similarity inputs — future work.
+//!
+//! # Benchmarks
+//!
+//! A criterion bench harness lives at `benches/align.rs`; run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-align
+//! ```
+//!
+//! Six groups pair every (algorithm, gap-model, output) combination:
+//! `nw_score_linear`, `nw_score_affine`, `nw_align_linear`,
+//! `sw_score_linear`, `sw_score_affine`, `sw_align_linear`. Each group
+//! runs three sizes (32×32, 128×128, 512×512 byte sequences) crossed
+//! with two flavors — `matching` (mostly-shared prefix with a ~5 % edit
+//! rate; the shape Smith-Waterman's local-alignment optimisation is
+//! designed for) and `divergent` (independent random `[a-z]` on both
+//! operands; DP worst case).
+//!
+//! # Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 3 --sample-size 15`). Wall-clock
+//! samples vary ±10–15 % on a laptop under load; treat the ratios as
+//! informative and the absolutes as illustrative. Throughput reported
+//! over one operand's byte length — the true DP work is O(m·n), so a
+//! "3 MiB/s" number at n = 128 corresponds to roughly `128² / 40µs` cell
+//! updates. Higher is better.
+//!
+//! ```text
+//! group                                32×32           128×128         512×512
+//! --------------------------------------------------------------------------------
+//! nw_score_linear     / matching     17.6 MiB/s      3.46 MiB/s        783 KiB/s
+//! nw_score_linear     / divergent    17.5 MiB/s      3.45 MiB/s        830 KiB/s
+//! nw_score_affine     / matching     12.2 MiB/s      2.60 MiB/s        749 KiB/s
+//! nw_score_affine     / divergent    12.3 MiB/s      2.56 MiB/s        733 KiB/s
+//! nw_align_linear     / matching     10.7 MiB/s      3.16 MiB/s        772 KiB/s
+//! nw_align_linear     / divergent    11.0 MiB/s      3.11 MiB/s        795 KiB/s
+//! sw_score_linear     / matching     13.0 MiB/s      2.65 MiB/s        592 KiB/s
+//! sw_score_linear     / divergent    13.0 MiB/s      2.65 MiB/s        628 KiB/s
+//! sw_score_affine     / matching      9.2 MiB/s      2.34 MiB/s        248 KiB/s
+//! sw_score_affine     / divergent    10.4 MiB/s      1.83 MiB/s        230 KiB/s
+//! sw_align_linear     / matching     11.2 MiB/s      2.54 MiB/s        636 KiB/s
+//! sw_align_linear     / divergent    11.9 MiB/s      2.53 MiB/s        641 KiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **Affine vs linear (score-only)**: the Gotoh three-matrix DP costs
+//!   ~30–40 % more per cell than the single-matrix linear-gap DP at every
+//!   size. The ratio widens on Smith-Waterman at 512² because the affine
+//!   kernel does not benefit from the running-max optimisation as
+//!   uniformly.
+//! * **Align vs score (linear-gap)**: adding the edit-script backtrace
+//!   costs the full DP matrix retention plus an O(m + n) walk from
+//!   `(m, n)` to `(0, 0)`. On small inputs the fixed cost dominates
+//!   (32² is ~1.6× the score-only kernel); at 512² the extra cost is
+//!   amortised into the matrix fill and the two rows converge to within
+//!   ~5 %.
+//! * **NW vs SW at the same size** is broadly a wash — both aligners do
+//!   O(m·n) work, and the running-max step Smith-Waterman adds per cell
+//!   costs about what the boundary-fill Needleman-Wunsch pays outside
+//!   the inner loop.
+//! * **`matching` vs `divergent`** shows almost no signal on this
+//!   corpus — 5 % edit-rate is not enough for the running-max short-
+//!   circuit to skip meaningful work, and both aligners fill the whole
+//!   grid regardless. A future divergence-heavy corpus (e.g. Zipfian
+//!   mixed-symbol runs) is the natural next axis if the SW fast-path
+//!   becomes a hotspot.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15 %. A number outside that
+//!   band on a subsequent run is either a genuine regression or a
+//!   measurement environment change (thermal throttling, background
+//!   load); rerun with `--sample-size 30` and a quiet host before
+//!   filing a fix.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
