@@ -131,6 +131,76 @@
 //!   opt-in `stringcheese-<language>` packs (e.g., `stringcheese-en`,
 //!   `stringcheese-de`); the core `stringcheese-manip` API is
 //!   language-agnostic.
+//!
+//! # Baseline performance
+//!
+//! `benches/manip.rs` (criterion, `cargo bench -p stringcheese-manip
+//! --bench manip`) covers 12 hot public operations across three
+//! character-count sizes (64 / 1024 / 65536) in two Unicode flavors
+//! (ASCII fast path vs a diverse UTF-8 pool spanning Latin diacritics,
+//! Cyrillic, Greek, Arabic, Devanagari, CJK, and supplementary-plane
+//! emoji). That is 12 × 3 × 2 = 72 measurements per full run.
+//!
+//! Numbers below are median throughput of one representative
+//! measurement (`--warm-up-time 1 --measurement-time 2 --sample-size
+//! 10`) on aarch64 Apple M-series, macOS 15, rustc 1.97.1, release +
+//! `lto = "thin"` (the workspace's `[profile.release]`). Wall-clock
+//! samples vary ±10-20 % on a laptop under load; treat the order-of-
+//! magnitude column as the load-bearing part, not the last digit.
+//! Throughput is reported in MiB/s of *input bytes* — higher is
+//! better.
+//!
+//! ```text
+//! operation                                ASCII 64/1024/65536      UTF-8 64/1024/65536
+//! ----------------------------------------------------------------------------------------
+//! inspect/grapheme_count                    57 /   58 /   79 MiB/s   106 /  103 /   56 MiB/s
+//! trim/trim                                  4.7/  69.7/ 4505.8 GiB/s  6.5/ 133.9/6386.5 GiB/s  [scans edges only — see note]
+//! case/to_lowercase                         2.3/  16.7/   23.4 GiB/s  232 /  262 /  259 MiB/s
+//! case/to_uppercase                         3.2/  18.1/   26.0 GiB/s  179 /  204 /  205 MiB/s
+//! split/split_whitespace                   734 / 1023 / 1053  MiB/s  1124 / 1107 / 1121  MiB/s
+//! join/join                                644 / 1034 /  942  MiB/s  1193 / 1902 / 1930  MiB/s
+//! replace/replace                          791 / 1173 / 1212  MiB/s  2008 / 3024 / 3263  MiB/s
+//! replace/replace_many                      41 /  176 /  219  MiB/s    40 /  200 /  271  MiB/s
+//! normalize/collapse_whitespace            807 /  843 /  769  MiB/s   592 /  730 /  747  MiB/s
+//! normalize/nfc                             83 /   99 /   96  MiB/s   120 /   46 /   42  MiB/s
+//! find/find_all                            118 /  152 /  222  MiB/s   193 /  123 /  124  MiB/s
+//! escape/escape_html                       145 /  185 /  346  MiB/s   538 /  587 /  597  MiB/s
+//! ```
+//!
+//! Notes on reading the table:
+//!
+//! * **trim's throughput is misleading by construction.** `trim`
+//!   scans only the leading and trailing whitespace and returns a
+//!   sub-slice; its cost is O(prefix + suffix), not O(input). The
+//!   input-bytes-per-second column blows up at the 65 KiB size
+//!   because the denominator grows while the numerator (a fixed
+//!   handful of edge bytes) does not. The row is retained as a
+//!   regression trip-wire — a real perf regression would push the
+//!   wall clock into visibly slower territory — not as a claim about
+//!   sustainable throughput.
+//! * **UTF-8 casing is ~100× slower than ASCII casing.** The ASCII
+//!   fast path in `case::to_lowercase` / `case::to_uppercase` uses
+//!   a byte-loop and hits multi-GiB/s; the general path walks
+//!   scalars and delegates to the Unicode casing tables in
+//!   `stringcheese-unicode`. This is expected: the ASCII lane exists
+//!   precisely so ASCII-known callers can opt out of the general
+//!   path.
+//! * **`replace_many` is Aho-Corasick.** The multi-needle path
+//!   delegates to `stringcheese-compare::search`; the per-call setup
+//!   cost dominates at 64 chars, amortises by 1024, and reaches
+//!   ~220-270 MiB/s at 65 KiB.
+//! * **`normalize::nfc` slows down on decomposable UTF-8.** The utf8
+//!   builder injects combining acutes (U+0301) after every space so
+//!   the recomposition path does real work; that is why the utf8
+//!   column falls off from 120 MiB/s at 64 chars (mostly warm-up) to
+//!   42 MiB/s at 65 KiB (steady-state recomposition throughput).
+//!
+//! Update this table whenever a perf-affecting change lands so a
+//! future reader does not have to re-run the bench to see whether a
+//! delta improved or regressed the recorded baseline. The CI job
+//! `manip-bench (optional)` compiles the bench under `--no-run` on
+//! every push — a link-time regression surfaces there — but does not
+//! measure numbers; a full re-run happens on-demand.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

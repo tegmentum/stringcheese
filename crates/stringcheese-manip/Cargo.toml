@@ -69,6 +69,13 @@ stringcheese-compare = { workspace = true }
 unicode-width = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
+# `criterion` — bench harness for the `manip` bench (see
+# `benches/manip.rs`). Pulled from the workspace-level dep so every
+# bench-adopting crate tracks the same 0.5 line. `html_reports` is the
+# only non-default feature we ask for — matches the shape used by
+# `stringcheese-tokenizer-hf-bench` so the two bench crates' criterion
+# outputs live in the same directory layout.
+criterion = { workspace = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
@@ -79,6 +86,16 @@ unicode-width = { version = "0.2", default-features = false, optional = true }
 # skip the property-test modules (they're gated on the same predicate).
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
+
+# `manip` bench — breadth-first criterion coverage of 12 hot public
+# operations across three input sizes and two Unicode flavors. See
+# `benches/manip.rs`'s module docs for the baseline numbers and the
+# rationale behind each group. `harness = false` gives criterion its own
+# main; the bench compiles under `--all-features` so the wrap module's
+# UAX-#14 kernels stay reachable if a later revision adds a wrap group.
+[[bench]]
+name = "manip"
+harness = false
 
 [lints]
 workspace = true

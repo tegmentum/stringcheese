@@ -2974,6 +2974,7 @@ dependencies = [
 name = "stringcheese-manip"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-compare",
  "stringcheese-core",
