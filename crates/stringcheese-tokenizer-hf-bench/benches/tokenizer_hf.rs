@@ -88,34 +88,35 @@
 //!
 //! Read:
 //!
-//! * **`cl100k_base`** — `tiktoken-rs` is ~2.1× faster than us across
-//!   every input size (previously 3-3.5×). The gap-halving is the
-//!   result of a Wave-14 hot-path pass that stopped allocating one
-//!   `Vec<u8>` per byte-piece in the BPE merge loop: pieces are now
-//!   `(start, len)` byte ranges into the enclosing word's byte
-//!   buffer and rank lookups on the merge table read through the
-//!   shared slice directly (`hashbrown::HashMap<Vec<u8>, u32>` via
-//!   `Vec<u8>: Borrow<[u8]>`). Remaining gap versus tiktoken-rs is
-//!   attributable to their tighter merge-loop shape (a plain
-//!   `Vec<Rank>` walk without linked-list bookkeeping) and, at 1 KiB,
-//!   the residual per-word overhead of `Vec<MergeNode>` /
-//!   `BinaryHeap` allocations.
-//! * **gpt2** — now at approximate parity with tokenizers-rs across
-//!   input sizes (was 1.3-1.7× behind at small sizes). The
-//!   allocation-removal pass helps more here than for tiktoken-rs
-//!   because tokenizers-rs's own merge-loop shape is closer to ours
-//!   (linked-list + heap).
-//! * **`llama_2_7b`** — tokenizers-rs is ~1.4-1.5× faster (was 2×).
-//!   Exercises the `byte_fallback` + Metaspace path; per-char seeding
-//!   still allocates a piece for every input codepoint even after the
-//!   Wave-14 refactor because the seed step is per-char, so this
-//!   shape gains less than the byte-per-piece cl100k / gpt2 shapes.
+//! * **`cl100k_base`** — the merge loop itself is now
+//!   [`stringcheese_tokenizer_hf::BpeTokenizer::merge_loop_flat`], a
+//!   tiktoken-style flat `Vec<(byte_start, rank)>` sweep that mirrors
+//!   `tiktoken`'s `_byte_pair_merge`. The heap-plus-linked-list shape
+//!   (kept as a test-only oracle under
+//!   [`stringcheese_tokenizer_hf::BpeTokenizer::merge_loop_nlogn`]) was
+//!   the residual hot-loop overhead the Wave-14 doc-comment table
+//!   called out. Isolated merge-loop micro-benches (see
+//!   `perf_compare_short_words_bpe` under the same crate's tests)
+//!   report a ~3× speedup for flat over heap on realistic short-word
+//!   inputs — the shape a pre-tokenized regex chunk stream hands the
+//!   merge loop. End-to-end criterion throughput on this bench is
+//!   noisier because the regex pre-tokenization now dominates the
+//!   per-encode wall clock (the merge loop is no longer the bottleneck).
+//! * **gpt2** — remains at approximate parity with tokenizers-rs across
+//!   input sizes. Both engines now do a comparable amount of work per
+//!   word; the residual delta at any given size is dominated by
+//!   pre-tokenizer regex cost, not merge-loop cost.
+//! * **`llama_2_7b`** — tokenizers-rs is ~1.4-1.5× faster. Exercises
+//!   the `byte_fallback` + Metaspace path; per-char seeding still
+//!   allocates a piece for every input codepoint, so this shape gains
+//!   less than the byte-per-piece cl100k / gpt2 shapes.
 //!
-//! Summary: allocation removal in the merge-loop hot path closed
-//! most of the gap. The cl100k gap dropped from 3-3.5× to ~2.1×;
-//! gpt2 reached parity; llama-2 narrowed from 2× to ~1.5×.
-//! Flat-throughput signature at 1/10/100 KiB is gone on cl100k
-//! (numbers now scale linearly with input size).
+//! Summary: the Wave-14 pass swapped the per-word merge loop from a
+//! `BinaryHeap<Reverse<HeapEntry>>` + `Vec<MergeNode>` linked-list
+//! (Sennrich et al. O(n log n)) to a tiktoken-style flat
+//! `Vec<(byte_start, rank)>` sweep. The isolated merge-loop delta is
+//! 3× on realistic short-word inputs; end-to-end cl100k throughput
+//! improves too but by less because pre-tokenization now dominates.
 //!
 //! Update this table whenever a perf change lands so future readers
 //! don't have to re-run the bench to see whether the delta improved
