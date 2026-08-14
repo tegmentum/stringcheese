@@ -2501,6 +2501,7 @@ dependencies = [
 name = "stringcheese-cdc"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-core",
  "stringcheese-corpus",
@@ -2892,6 +2893,7 @@ dependencies = [
 name = "stringcheese-index"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-compare",
  "stringcheese-core",

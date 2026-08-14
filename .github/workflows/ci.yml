@@ -2408,6 +2408,80 @@ jobs:
             -- --nocapture
 
   # ------------------------------------------------------------------
+  # CDC bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for `crates/stringcheese-cdc/benches/cdc.rs` —
+  # verifies the bench binary still links, without paying for the
+  # multi-minute criterion measurement budget. Matches the shape the
+  # existing `tokenizer-hf-bench` job uses (`--no-run` + optional
+  # posture) so a bench-source drift surfaces immediately without
+  # wedging PRs on transient CI capacity issues.
+  #
+  # Enables `--all-features` so the SIMD-gated `gear/digest_of_slice`
+  # arm of the bench also gets compile-checked; the scalar rows work
+  # under either feature configuration.
+  # ------------------------------------------------------------------
+  cdc-bench:
+    name: cdc bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cdc-bench-stable
+
+      - name: Compile-check the cdc bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-cdc \
+            --all-features \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Index bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-index/benches/index.rs` — same shape as the
+  # `cdc-bench` job above. `--all-features` is passed for parity even
+  # though the index bench doesn't gate anything on features today; the
+  # flag keeps the job resilient to a future feature-gated bench arm
+  # landing here without a CI update.
+  # ------------------------------------------------------------------
+  index-bench:
+    name: index bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: index-bench-stable
+
+      - name: Compile-check the index bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-index \
+            --all-features \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

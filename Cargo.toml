@@ -254,8 +254,8 @@ stringcheese-icu-linebreak-component = { version = "0.1.0", path = "crates/strin
 # `criterion` — shared bench harness for the compute-heavy non-tokenizer
 # crates. Kept at workspace scope so every crate that adopts a bench
 # tracks the same version. Initial adopters: `stringcheese-manip`,
-# `stringcheese-compare`, `stringcheese-align` (see follow-ups for
-# cdc + index). The workspace-external `stringcheese-tokenizer-hf-bench`
+# `stringcheese-compare`, `stringcheese-align`, `stringcheese-cdc`,
+# `stringcheese-index`. The workspace-external `stringcheese-tokenizer-hf-bench`
 # and `stringcheese-bench` pin the same 0.5 line independently — see
 # their manifests for the rationale.
 criterion = { version = "0.5", default-features = false, features = ["html_reports"] }

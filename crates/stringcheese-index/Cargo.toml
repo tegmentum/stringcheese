@@ -29,6 +29,10 @@ stringcheese-corpus = { workspace = true, features = ["alloc"] }
 # against, and a documented semimetric (OSA / Damerau) used by the
 # "reject non-metric" tests. Both live in `stringcheese-compare`.
 stringcheese-compare = { workspace = true, features = ["std"] }
+# Baseline candidate-generation throughput benches. Shares the same
+# workspace-pinned criterion version as every other bench-adopting
+# crate.
+criterion = { workspace = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
@@ -39,6 +43,14 @@ stringcheese-compare = { workspace = true, features = ["std"] }
 # skip the property-test modules (they're gated on the same predicate).
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
+
+# `harness = false` tells cargo not to link the built-in `libtest`
+# harness — criterion supplies its own `criterion_main!` entry point.
+# See `benches/index.rs` for the run recipe and the baseline numbers
+# table.
+[[bench]]
+name = "index"
+harness = false
 
 [lints]
 workspace = true
