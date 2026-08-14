@@ -420,6 +420,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "command_r_v01.json",
     "deepseek_coder_1_3b.json",
     "llama_3_8b.json",
+    "phi_4.json",
+    "mistral_small_24b_instruct_2501.json",
 ];
 
 #[test]
@@ -842,4 +844,52 @@ fn conformance_deepseek_coder_1_3b() {
 )]
 fn conformance_llama_3_8b() {
     run_fixture("llama_3_8b.json", "llama-3-8b");
+}
+
+// Real microsoft/phi-4 tokenizer.json — tiktoken-style byte-level BPE
+// (cl100k-family Sequence[Split(Regex, behavior=Removed, invert=true),
+// ByteLevel] pre-tokenizer + null normalizer + null post-processor +
+// ByteLevel decoder) with a 100352-entry vocabulary. 96 added_tokens at
+// ids 100256–100351, all `special: true, lstrip: true, rstrip: true,
+// normalized: false`: <|dummy_0|>–<|dummy_86|> filler slots interleaved
+// with <|endoftext|>, <|fim_prefix|>/<|fim_middle|>/<|fim_suffix|>,
+// <|im_start|>/<|im_sep|>/<|im_end|>, and <|endofprompt|>. Distinct
+// tokenizer shape from phi-2 (50k GPT-2 vocab + 39 whitespace-run added
+// tokens, single ByteLevel pre-tokenizer) and from phi-3-mini
+// (Llama-family SentencePiece BPE + byte_fallback + Metaspace-style
+// normalizer). Reference ids come from
+// `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)`
+// against the shipped tokenizer.json.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_phi_4() {
+    run_fixture("phi_4.json", "phi-4");
+}
+
+// Real mistralai/Mistral-Small-24B-Instruct-2501 tokenizer.json — the
+// v3-Tekken byte-level BPE (tiktoken-family, major shape change from
+// Mistral-7B-v0.3's Metaspace-BPE + SentencePiece byte_fallback). Null
+// normalizer, `Sequence[Split(Regex=cl100k-family, behavior=Isolated,
+// invert=false), ByteLevel]` pre-tokenizer, `TemplateProcessing`
+// post-processor prepending `<s>` (id 1), ByteLevel decoder, over a
+// 131072-entry vocabulary. 1000 added_tokens: classical
+// <unk>/<s>/</s> at ids 0–2, chat/tool specials ([INST], [/INST],
+// [AVAILABLE_TOOLS], [/AVAILABLE_TOOLS], [TOOL_CALLS], [TOOL_RESULTS],
+// [/TOOL_RESULTS], [SYSTEM_PROMPT], [/SYSTEM_PROMPT], [IMG], [IMG_END],
+// [IMG_BREAK], [PREFIX], [MIDDLE], [SUFFIX], [BOS], [EOS], [PAD]), and
+// a solid block of ~980 [control_N] filler slots — the largest
+// added_tokens table any fixture exercises (v0.3 was 771).
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mistral_small_24b_instruct_2501() {
+    run_fixture(
+        "mistral_small_24b_instruct_2501.json",
+        "mistral-small-24b-instruct-2501",
+    );
 }

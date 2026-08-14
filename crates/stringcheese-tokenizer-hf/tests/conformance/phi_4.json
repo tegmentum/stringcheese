@@ -1,0 +1,418 @@
+{
+  "checkpoint": "phi-4",
+  "source": "transformers.PreTrainedTokenizerFast(tokenizer_file='microsoft/phi-4/tokenizer.json').encode(input) - reference tokenizer.json is the one that ships in the upstream microsoft/phi-4 repo. transformers 5.14.1 / tokenizers 0.22.2.",
+  "note": "microsoft/phi-4 ships a tiktoken-style byte-level BPE with a 100352-entry vocabulary, null normalizer, `Sequence[Split(Regex=cl100k-family pattern, behavior=Removed, invert=true), ByteLevel]` pre-tokenizer, null post-processor, and ByteLevel decoder. 96 added_tokens at ids 100256-100351, all `special: true, lstrip: true, rstrip: true, normalized: false`: <|dummy_0|>-<|dummy_86|> filler slots interleaved with <|endoftext|>, <|fim_prefix|>/<|fim_middle|>/<|fim_suffix|>, <|im_start|>/<|im_sep|>/<|im_end|>, and <|endofprompt|>. The 20 cases span ASCII prose / code / CJK / Cyrillic / emoji / whitespace / long inputs and Phi-4's chat-format surface forms (<|endoftext|>, <|im_start|>/<|im_end|>). Distinct shape from phi-2 (50k GPT-2 vocab with 39 whitespace-run added tokens, single ByteLevel pre-tokenizer) and from phi-3-mini (Llama-family SentencePiece BPE with byte_fallback); pass criterion is byte-for-byte parity with the reference.",
+  "cases": [
+    {
+      "input": "",
+      "expected_ids": [],
+      "note": "empty"
+    },
+    {
+      "input": "Hello",
+      "expected_ids": [
+        9906
+      ],
+      "note": "ascii-hello"
+    },
+    {
+      "input": "Hello, world!",
+      "expected_ids": [
+        9906,
+        11,
+        1917,
+        0
+      ],
+      "note": "english-greeting"
+    },
+    {
+      "input": "The quick brown fox jumps over the lazy dog.",
+      "expected_ids": [
+        791,
+        4062,
+        14198,
+        39935,
+        35308,
+        927,
+        279,
+        16053,
+        5679,
+        13
+      ],
+      "note": "ascii-sentence"
+    },
+    {
+      "input": "def add(a, b):\n    return a + b\n",
+      "expected_ids": [
+        755,
+        923,
+        2948,
+        11,
+        293,
+        997,
+        262,
+        471,
+        264,
+        489,
+        293,
+        198
+      ],
+      "note": "python-code"
+    },
+    {
+      "input": "fn main() { println!(\"hi\"); }",
+      "expected_ids": [
+        8998,
+        1925,
+        368,
+        314,
+        14069,
+        17667,
+        6151,
+        5146,
+        335
+      ],
+      "note": "rust-code"
+    },
+    {
+      "input": "你好",
+      "expected_ids": [
+        57668,
+        53901
+      ],
+      "note": "chinese-2char"
+    },
+    {
+      "input": "今天天气很好，我们一起去公园散步吧。",
+      "expected_ids": [
+        37271,
+        36827,
+        36827,
+        30320,
+        242,
+        17599,
+        230,
+        53901,
+        3922,
+        98739,
+        15120,
+        72718,
+        86436,
+        35417,
+        9921,
+        255,
+        8067,
+        96,
+        65782,
+        7305,
+        100,
+        1811
+      ],
+      "note": "chinese-prose"
+    },
+    {
+      "input": "др",
+      "expected_ids": [
+        63873
+      ],
+      "note": "cyrillic-2byte"
+    },
+    {
+      "input": "Привет, как дела?",
+      "expected_ids": [
+        54745,
+        28089,
+        8341,
+        11,
+        52770,
+        95369,
+        1506,
+        30
+      ],
+      "note": "russian-prose"
+    },
+    {
+      "input": "😀",
+      "expected_ids": [
+        76460,
+        222
+      ],
+      "note": "emoji-smile-4byte"
+    },
+    {
+      "input": "😀🎉🙂",
+      "expected_ids": [
+        76460,
+        222,
+        9468,
+        236,
+        231,
+        9468,
+        19044
+      ],
+      "note": "multi-emoji"
+    },
+    {
+      "input": "✈",
+      "expected_ids": [
+        38798,
+        230
+      ],
+      "note": "rare-symbol-airplane"
+    },
+    {
+      "input": "Hello 你好 مرحبا Привет 🌍",
+      "expected_ids": [
+        9906,
+        220,
+        57668,
+        53901,
+        24252,
+        11318,
+        30925,
+        22071,
+        5821,
+        80584,
+        28089,
+        8341,
+        11410,
+        234,
+        235
+      ],
+      "note": "mixed-scripts"
+    },
+    {
+      "input": "   leading   inner   trailing   ",
+      "expected_ids": [
+        256,
+        6522,
+        256,
+        9358,
+        256,
+        28848,
+        262
+      ],
+      "note": "whitespace-heavy"
+    },
+    {
+      "input": "a\n\n\nb",
+      "expected_ids": [
+        64,
+        1432,
+        65
+      ],
+      "note": "many-newlines"
+    },
+    {
+      "input": "1234567890 0.0001 1e10 -3.14 +42",
+      "expected_ids": [
+        4513,
+        10961,
+        16474,
+        15,
+        220,
+        15,
+        13,
+        931,
+        16,
+        220,
+        16,
+        68,
+        605,
+        482,
+        18,
+        13,
+        975,
+        489,
+        2983
+      ],
+      "note": "numbers-cluster"
+    },
+    {
+      "input": "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife. However little known the feelings or views of such a man may be on his first entering a neighbourhood, this truth is so well fixed in the minds of the surrounding families, that he is considered as the rightful property of some one or other of their daughters. My dear Mr. Bennet, said his lady to him one day, have you heard that Netherfield Park is let at last? Mr. Bennet replied that he had not. But it is, returned she; for Mrs. Long has just been here, and she told me all about it. Mr. Bennet made no answer. Do not you want to know who has taken it? cried his wife impatiently.",
+      "expected_ids": [
+        2181,
+        374,
+        264,
+        8206,
+        61528,
+        26579,
+        11,
+        430,
+        264,
+        3254,
+        893,
+        304,
+        19243,
+        315,
+        264,
+        1695,
+        33415,
+        11,
+        2011,
+        387,
+        304,
+        1390,
+        315,
+        264,
+        7555,
+        13,
+        4452,
+        2697,
+        3967,
+        279,
+        16024,
+        477,
+        6325,
+        315,
+        1778,
+        264,
+        893,
+        1253,
+        387,
+        389,
+        813,
+        1176,
+        16661,
+        264,
+        40442,
+        11,
+        420,
+        8206,
+        374,
+        779,
+        1664,
+        8521,
+        304,
+        279,
+        20663,
+        315,
+        279,
+        14932,
+        8689,
+        11,
+        430,
+        568,
+        374,
+        6646,
+        439,
+        279,
+        99044,
+        3424,
+        315,
+        1063,
+        832,
+        477,
+        1023,
+        315,
+        872,
+        30968,
+        13,
+        3092,
+        25237,
+        4491,
+        13,
+        30880,
+        295,
+        11,
+        1071,
+        813,
+        17240,
+        311,
+        1461,
+        832,
+        1938,
+        11,
+        617,
+        499,
+        6755,
+        430,
+        452,
+        2791,
+        2630,
+        5657,
+        374,
+        1095,
+        520,
+        1566,
+        30,
+        4491,
+        13,
+        30880,
+        295,
+        20592,
+        430,
+        568,
+        1047,
+        539,
+        13,
+        2030,
+        433,
+        374,
+        11,
+        6052,
+        1364,
+        26,
+        369,
+        18083,
+        13,
+        5843,
+        706,
+        1120,
+        1027,
+        1618,
+        11,
+        323,
+        1364,
+        3309,
+        757,
+        682,
+        922,
+        433,
+        13,
+        4491,
+        13,
+        30880,
+        295,
+        1903,
+        912,
+        4320,
+        13,
+        3234,
+        539,
+        499,
+        1390,
+        311,
+        1440,
+        889,
+        706,
+        4529,
+        433,
+        30,
+        39169,
+        813,
+        7555,
+        74797,
+        398,
+        13
+      ],
+      "note": "long-prose-paragraph"
+    },
+    {
+      "input": "<|endoftext|>",
+      "expected_ids": [
+        100257
+      ],
+      "note": "endoftext-surface-form-raw"
+    },
+    {
+      "input": "<|im_start|>user<|im_end|>",
+      "expected_ids": [
+        100264,
+        882,
+        100265
+      ],
+      "note": "chat-specials-surface-form-raw"
+    }
+  ]
+}

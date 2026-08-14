@@ -92,8 +92,10 @@ the suite must surface.
 | `command-r-v01`                  | `command_r_v01.json`                | 20    | Byte-level BPE + NFC normalizer + Sequence[Digits(individual_digits=true), ByteLevel] pre-tokenizer + TemplateProcessing post-processor prepending `<BOS_TOKEN>` (id 5), ByteLevel decoder. 255029-entry vocabulary with 37 added_tokens: 8 special classical entries at ids 0–7 (`<PAD>`, `<UNK>`, `<CLS>`, `<SEP>`, `<MASK_TOKEN>`, `<BOS_TOKEN>`, `<EOS_TOKEN>`, `<EOP_TOKEN>`) plus 29 **`special: false`** chat-template markers at ids 255000–255028 (`<\|START_OF_TURN_TOKEN\|>`, `<\|END_OF_TURN_TOKEN\|>`, `<\|USER_TOKEN\|>`, `<\|CHATBOT_TOKEN\|>`, `<\|SYSTEM_TOKEN\|>`, …). Local vocab is fetched via the ungated `Xenova/c4ai-command-r-v01-tokenizer` mirror because the upstream `CohereForAI/c4ai-command-r-v01` repo is gated | `transformers.AutoTokenizer.from_pretrained('Xenova/c4ai-command-r-v01-tokenizer')` against the byte-identical mirror of the upstream tokenizer.json (transformers 5.14.1 / tokenizers 0.22.2) |
 | `deepseek-coder-1.3b`            | `deepseek_coder_1_3b.json`          | 20    | Llama-family character-BPE with **no** SentencePiece byte_fallback, empty `Sequence` normalizer, a **six-child** `Sequence` pre-tokenizer (`Split(Regex="[\r\n]")` + `Split(Regex="\s?\p{L}+")` + `Split(Regex="\s?\p{P}+")` + `Split(Regex="[一-龥ࠀ-一가-퟿]+")` + `Digits(individual_digits=true)` + `ByteLevel`), `ByteLevel` post-processor and decoder. 32000-entry vocabulary with 22 added_tokens in two blocks: 18 byte-level filler characters at ids 32000–32017 (`õ`, `÷`, `Á`, …, `normalized: true`, `special: false`) plus DeepSeek's chat/fim specials at ids 32018–32021 (`<\|fim▁begin\|>`, `<\|fim▁hole\|>`, `<\|fim▁end\|>`, `<pad>`, `<\|User\|>`, `<\|Assistant\|>`, `<\|EOT\|>`; the fim markers use full-width `｜` bar) | `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)` against the shipped `deepseek-ai/deepseek-coder-1.3b-base/tokenizer.json` (transformers 5.14.1 / tokenizers 0.22.2) |
 | `llama-3-8b`                     | `llama_3_8b.json`                   | 20    | **Tiktoken-style byte-level BPE** (major shape change from Llama-2's SentencePiece BPE): 128000-entry vocabulary, **no byte_fallback**, **no normalizer**, no `Prepend`; `Sequence[Split(Regex, cl100k_base-family split pattern), ByteLevel]` pre-tokenizer + `Sequence[ByteLevel, TemplateProcessing(<\|begin_of_text\|>)]` post-processor (**first fixture pairing a `Sequence` post-processor with `TemplateProcessing`**) + `ByteLevel` decoder. 256 added_tokens all `special: true` at ids 128000–128255: `<\|begin_of_text\|>` (128000), `<\|end_of_text\|>` (128001), `<\|start_header_id\|>`, `<\|end_header_id\|>`, `<\|eot_id\|>`, and 251 `<\|reserved_special_token_N\|>` slots. Local vocab is fetched via the ungated `NousResearch/Meta-Llama-3-8B` mirror because the upstream `meta-llama/Meta-Llama-3-8B` repo is gated | `transformers.PreTrainedTokenizerFast(tokenizer_file=...).encode(input)` against the local `NousResearch/Meta-Llama-3-8B/tokenizer.json` (byte-identical to the gated upstream; transformers 5.14.1 / tokenizers 0.22.2) |
+| `phi-4`                          | `phi_4.json`                        | 20    | Tiktoken-style byte-level BPE (100352-entry vocabulary), null normalizer, `Sequence[Split(Regex=cl100k-family, behavior=Removed, invert=true), ByteLevel]` pre-tokenizer, null post-processor, `ByteLevel` decoder. 96 added_tokens at ids 100256–100351, all `special: true, lstrip: true, rstrip: true, normalized: false`: `<\|dummy_0\|>`…`<\|dummy_86\|>` filler slots interleaved with `<\|endoftext\|>`, `<\|fim_prefix\|>`/`<\|fim_middle\|>`/`<\|fim_suffix\|>`, `<\|im_start\|>`/`<\|im_sep\|>`/`<\|im_end\|>`, and `<\|endofprompt\|>` — **first fixture pairing `lstrip:true, rstrip:true` with `special:true` added tokens on the tiktoken-family byte-level BPE runtime**. Distinct shape from `phi-2` (50k GPT-2 vocab + 39 whitespace-run added tokens, single `ByteLevel` pre-tokenizer) and from `phi-3-mini-4k-instruct` (Llama-family SentencePiece BPE + `byte_fallback` + Metaspace normalizer) | `transformers.PreTrainedTokenizerFast(tokenizer_file='microsoft/phi-4/tokenizer.json').encode(input)` (transformers 5.14.1 / tokenizers 0.22.2) |
+| `mistral-small-24b-instruct-2501`| `mistral_small_24b_instruct_2501.json` | 20 | **v3-Tekken byte-level BPE** — major shape change from `mistral-7b-instruct-v0.3` (which was Metaspace-BPE + SentencePiece `byte_fallback`). 131072-entry vocabulary, null normalizer, `Sequence[Split(Regex=cl100k-family, behavior=Isolated, invert=false), ByteLevel]` pre-tokenizer, `TemplateProcessing` post-processor prepending `<s>` (id 1), `ByteLevel` decoder. **1000 added_tokens** (largest table any fixture exercises; v0.3 was 771): classical `<unk>`/`<s>`/`</s>` at ids 0–2, chat/tool specials (`[INST]`, `[/INST]`, `[AVAILABLE_TOOLS]`, `[/AVAILABLE_TOOLS]`, `[TOOL_CALLS]`, `[TOOL_RESULTS]`, `[/TOOL_RESULTS]`, `[SYSTEM_PROMPT]`, `[/SYSTEM_PROMPT]`, `[IMG]`, `[IMG_END]`, `[IMG_BREAK]`, `[PREFIX]`, `[MIDDLE]`, `[SUFFIX]`, `[BOS]`, `[EOS]`, `[PAD]`) plus a solid block of ~980 `[control_N]` filler slots | `transformers.PreTrainedTokenizerFast(tokenizer_file='mistralai/Mistral-Small-24B-Instruct-2501/tokenizer.json').encode(input)` (transformers 5.14.1 / tokenizers 0.22.2) |
 
-Total: **23 checkpoints × (40 or 20) cases = 660 triples**, all
+Total: **25 checkpoints × (40 or 20) cases = 700 triples**, all
 reference-computed against upstream implementations (no
 hand-computation).
 
@@ -101,8 +103,9 @@ Between them the checkpoints exercise every runtime shape
 `stringcheese-tokenizer-hf` accepts:
 
 - Byte-level BPE — `gpt2`, `roberta-base`, `bart-base`, `qwen2-7b`,
-  `phi-2`, `falcon-7b`, `command-r-v01` (seven distinct vocabularies
-  over the same BPE runtime; `qwen2-7b` adds a `Sequence[Split(Regex),
+  `phi-2`, `falcon-7b`, `command-r-v01`, `phi-4`,
+  `mistral-small-24b-instruct-2501` (nine distinct vocabularies over
+  the same BPE runtime; `qwen2-7b` adds a `Sequence[Split(Regex),
   ByteLevel]` pre-tokenizer shape not covered by the older three;
   `phi-2` adds a block of 38 whitespace-run added tokens
   (`normalized: true`, non-special) that upstream matches via
@@ -114,7 +117,14 @@ Between them the checkpoints exercise every runtime shape
   and a `TemplateProcessing` post-processor prepending `<BOS_TOKEN>`
   over a 255k-entry vocabulary — the first byte-level BPE fixture
   pairing NFC normalization with individual-digit splitting and BOS
-  template-processing).
+  template-processing; `phi-4` exercises the cl100k-family Split-Regex
+  pre-tokenizer with `behavior=Removed, invert=true` and 96 added
+  tokens carrying `lstrip:true, rstrip:true` on the byte-level runtime;
+  `mistral-small-24b-instruct-2501` exercises the same cl100k-family
+  pre-tokenizer with `behavior=Isolated, invert=false` alongside a
+  `TemplateProcessing(<s>)` post-processor and the largest added-tokens
+  table any fixture holds — 1000 entries including a solid ~980-slot
+  `[control_N]` filler block).
 - tiktoken BPE — `cl100k_base` (leans on the tiktoken parity harness
   for the actual vocab; the runner soft-skips when no `tokenizer.json`
   is provisioned locally for it, since tiktoken has its own format).
@@ -451,6 +461,78 @@ Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
 --features parity-real-vocab --locked` — 26 tests pass (25
 per-checkpoint fixtures + 1 meta test); the sibling
 `stringcheese-tokenizer-hf-native` runner mirrors this at 25 + 1.
+
+### Wave-21 additions (Phi-4 + Mistral-Small-24B-Instruct-2501)
+
+Two additional real-vocab fixtures land alongside the Wave-20 baseline,
+picked to stress the tiktoken-family byte-level BPE runtime with
+`tokenizer.json` shapes not previously exercised at real-vocab scale
+(both introduce a cl100k-family `Split(Regex)` pre-tokenizer paired
+with `behavior` / `invert` combinations distinct from Llama-3-8B's,
+and Mistral-Small-24B carries the largest added-tokens table any
+fixture holds):
+
+| checkpoint                          | cases | shape peculiarity                                                                                                                                                    |
+| ----------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `phi-4`                             | **20/20** | Tiktoken-style byte-level BPE (100352 vocab), null normalizer, `Sequence[Split(Regex=cl100k-family, behavior=Removed, invert=true), ByteLevel]` pre-tokenizer, null post-processor, `ByteLevel` decoder. 96 added_tokens at ids 100256–100351, all `special:true, lstrip:true, rstrip:true, normalized:false`: `<\|dummy_N\|>` filler slots interleaved with `<\|endoftext\|>`, the `<\|fim_*\|>` triple, `<\|im_*\|>` chat markers, and `<\|endofprompt\|>` — **first fixture pairing `lstrip:true, rstrip:true, special:true` added tokens with the tiktoken-family byte-level BPE runtime**. Distinct from `phi-2` (50k GPT-2 vocab + single `ByteLevel` pre-tokenizer) and from `phi-3-mini-4k-instruct` (Llama-family SentencePiece BPE + `byte_fallback`). |
+| `mistral-small-24b-instruct-2501`   | **20/20** | v3-Tekken byte-level BPE — **major shape change from `mistral-7b-instruct-v0.3`** (which was Metaspace-BPE + SentencePiece `byte_fallback`). 131072 vocab, null normalizer, `Sequence[Split(Regex=cl100k-family, behavior=Isolated, invert=false), ByteLevel]` pre-tokenizer, `TemplateProcessing` post-processor prepending `<s>` (id 1), `ByteLevel` decoder. **1000 added_tokens** — the largest added_tokens table any fixture exercises (v0.3 was 771): classical `<unk>`/`<s>`/`</s>` at ids 0–2, chat/tool specials (`[INST]`, `[/INST]`, `[AVAILABLE_TOOLS]`, `[/AVAILABLE_TOOLS]`, `[TOOL_CALLS]`, `[TOOL_RESULTS]`, `[/TOOL_RESULTS]`, `[SYSTEM_PROMPT]`, `[/SYSTEM_PROMPT]`, `[IMG]`, `[IMG_END]`, `[IMG_BREAK]`, `[PREFIX]`, `[MIDDLE]`, `[SUFFIX]`, `[BOS]`, `[EOS]`, `[PAD]`), plus a solid block of ~980 `[control_N]` filler slots. |
+
+No new runtime gaps surfaced by either fixture — both run 20/20 against
+the `stringcheese-tokenizer-hf` runtime *and* the
+`stringcheese-tokenizer-hf-native` delegating adapter on the same
+`transformers.PreTrainedTokenizerFast` reference (transformers 5.14.1 /
+tokenizers 0.22.2). Both fixtures reuse the `sequence_to_pipeline`
+general path the Wave-17 Falcon-7b landing added (Sequence[Split(Regex),
+ByteLevel] two-child form), and Mistral-Small-24B's TemplateProcessing
+post-processor with a plain `<s>` prefix reuses the branch exercised by
+`mistral-7b-instruct-v0.3`. The 1000-entry added-vocabulary table on
+Mistral-Small-24B is a new stress the older byte-level fixtures did not
+reach (Llama-3 has 256 entries; Command-R has 37; `phi-2` has 39; the
+Llama-family byte-fallback fixtures top out at Mistral-v0.3's 771).
+
+**Also probed this round but held back on a runtime gap:**
+`google/gemma-2-9b` (fetched via the ungated `unsloth/gemma-2-9b`
+mirror) ships a `pre_tokenizer.type == "Split"` with a `String`
+pattern (`" "`) and `behavior=MergedWithPrevious`, distinct from the
+Regex-pattern-only Split variant our loader accepts. The loader
+rejects with `UnsupportedPattern { variant: "String" }` before any
+cases can run — see the Gemma-2 entry in the runtime-gap list below.
+
+Full run: `cargo test -p stringcheese-tokenizer-hf --test conformance
+--features parity-real-vocab --locked` — 28 tests pass (27
+per-checkpoint fixtures + 1 meta test); the sibling
+`stringcheese-tokenizer-hf-native` runner mirrors this at 27 + 1.
+
+### Wave-21 runtime gap: `Split(String)` pre-tokenizer (blocks Gemma-2)
+
+`google/gemma-2-9b` (and by inheritance the rest of the Gemma-2 line —
+`gemma-2-2b`, `gemma-2-27b`) ships a `pre_tokenizer` shape that Gemma-1
+did *not*: a `Split` with a `String` pattern instead of a `Regex`
+pattern:
+
+```json
+{
+  "type": "Split",
+  "pattern": { "String": " " },
+  "behavior": "MergedWithPrevious",
+  "invert": false
+}
+```
+
+Our BPE loader's `pre_tokenizer` matcher currently accepts only
+`{ "Regex": "..." }` patterns and rejects with
+`UnsupportedPattern { variant: "String" }` when the `String` variant
+appears. As a result `unsloth/gemma-2-9b` fails to load and no cases
+can run. The fix is a loader-side branch that lifts a `String` pattern
+into an equivalent literal-match `Split` stage (or, in the fast path
+here, converts the `Split(" ", MergedWithPrevious)` into an equivalent
+Metaspace-style " "→"▁" normalizer prefix so the existing byte_fallback
++ SentencePiece-BPE runtime handles the rest byte-for-byte); the
+runtime paths for both are already in place. When the loader gap is
+closed the Gemma-2 family becomes trivially addable — the vocab / merge
+table / added_tokens shape is otherwise the same Sentence-Piece-BPE +
+`byte_fallback` + Replace(' '→'▁') normalizer that `gemma-2b` already
+exercises 20/20.
 
 ## Hand-computed fallback
 
