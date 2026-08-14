@@ -44,9 +44,19 @@ pub enum VocabularyBuilderError {
 /// [`hashbrown::HashMap`] keyed on the *concatenation* of the two
 /// pieces. Lookup allocates one `Vec<u8>` per call (down from two)
 /// and hits an O(1) hash lookup afterwards.
+///
+/// The hasher is pinned to [`rustc_hash::FxBuildHasher`] rather than
+/// hashbrown's default `ahash`. Merge keys are almost always 2-8
+/// bytes — well below the length where `ahash`'s stronger mixing pays
+/// for its per-call setup cost — and the encode hot loop pays one
+/// [`Self::rank_slice`] call per candidate merge, so a leaner hash
+/// step compounds. `FxHash`'s multiply-xor-shift kernel is what rustc
+/// itself uses for its interning maps, and it is a zero-sized
+/// `BuildHasher`, so `[BpeMergeTable]` carries no per-instance state
+/// beyond the map itself.
 #[derive(Debug, Default, Clone)]
 pub struct BpeMergeTable {
-    ranks: hashbrown::HashMap<Vec<u8>, u32>,
+    ranks: hashbrown::HashMap<Vec<u8>, u32, rustc_hash::FxBuildHasher>,
 }
 
 impl BpeMergeTable {
@@ -55,7 +65,7 @@ impl BpeMergeTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ranks: hashbrown::HashMap::new(),
+            ranks: hashbrown::HashMap::with_hasher(rustc_hash::FxBuildHasher),
         }
     }
 
@@ -1731,21 +1741,41 @@ impl BpeTokenizer {
         // allocated one `Vec<u8>` per byte at seed time and cloned each
         // piece's bytes into the merge-loop arena on top; the audit
         // called both out as the dominant per-encode cost.)
-        let mut pieces: Vec<PieceRef> = Vec::with_capacity(word_bytes.len());
-        if seed_per_char {
-            let mut byte_cursor: usize = 0;
-            for c in word_text.chars() {
-                let len = c.len_utf8();
-                pieces.push(PieceRef {
-                    start: byte_cursor,
-                    len,
-                });
-                byte_cursor += len;
-            }
+        //
+        // ASCII fast-path: when `seed_per_char` is on but the word is
+        // pure ASCII, every codepoint is exactly one byte, so per-byte
+        // seeding produces the same `PieceRef` sequence as UTF-8 char
+        // decoding — without paying for the char iterator's boundary
+        // classification on every byte. This branch is hot for
+        // SentencePiece-family checkpoints (Llama-2 / Mistral / Gemma /
+        // Phi-3 / Falcon), which always take the `seed_per_char` path
+        // and whose input is majority-ASCII.
+        let capacity = if seed_per_char && !word_text.is_ascii() {
+            // Non-ASCII multi-byte text: each char is ≥ 2 bytes, so the
+            // piece count is strictly less than the byte length. Round
+            // up on 2-byte assumption to avoid reallocation on the
+            // common Latin-1 / Cyrillic supplement case; UTF-8-heavy
+            // input (CJK) overshoots slightly but the vector is short-
+            // lived.
+            word_bytes.len().div_ceil(2)
         } else {
-            for i in 0..word_bytes.len() {
-                pieces.push(PieceRef { start: i, len: 1 });
-            }
+            // Pure ASCII (or !seed_per_char): one piece per byte.
+            word_bytes.len()
+        };
+        let mut pieces: Vec<PieceRef> = Vec::with_capacity(capacity);
+        if seed_per_char && !word_text.is_ascii() {
+            // `char_indices` yields (byte_offset, char) in a single
+            // pass — no manual byte cursor, and the offset is already
+            // the `PieceRef::start` we need.
+            pieces.extend(word_text.char_indices().map(|(start, c)| PieceRef {
+                start,
+                len: c.len_utf8(),
+            }));
+        } else {
+            // Byte-per-piece: identical output shape whether we're on
+            // the byte-level BPE path or the seed_per_char + ASCII
+            // fast-path, because ASCII codepoints are one byte each.
+            pieces.extend((0..word_bytes.len()).map(|i| PieceRef { start: i, len: 1 }));
         }
 
         merge_fn(self, word_bytes, &mut pieces);

@@ -63,10 +63,21 @@ stringcheese-tokenizer = { workspace = true }
 # `BTreeMap<(Vec<u8>, Vec<u8>), u32>` — was O(log n) with per-lookup
 # allocations for the tuple key; the audit called it out as the
 # dominant encode-time cost. The concat-key HashMap shape mirrors
-# tiktoken's `HashMap<Vec<u8>, Rank>` layout. `ahash` picks the
-# aarch64 NEON-accelerated variant automatically on the host and
-# stays portable elsewhere; both fall back cleanly on wasm.
+# tiktoken's `HashMap<Vec<u8>, Rank>` layout. The `ahash` feature is
+# kept on so `HashMap::default()` compiles elsewhere in the crate; the
+# hot merge table itself pins `rustc_hash::FxBuildHasher` (below) which
+# beats `ahash` on the sub-8-byte keys BPE merges produce.
 hashbrown = { version = "0.14", default-features = false, features = ["ahash"] }
+
+# `rustc-hash` supplies `FxBuildHasher`, a stateless (zero-sized)
+# non-cryptographic hasher tuned for very short byte keys. The merge
+# table is looked up once per candidate merge in the encode hot loop,
+# with keys that are almost always 2-8 bytes — well under the size
+# where `ahash`'s stronger mixing pays for its setup cost. FxHash's
+# multiply-xor-shift step is what tiktoken/rustc themselves use for
+# similar interning maps. `no_std`-friendly by default (the crate's
+# `std` feature is opt-in and only affects error impls).
+rustc-hash = { version = "2", default-features = false }
 
 # Regex backend for the Phase 2b pre-tokenizer. `fancy-regex` is the
 # only mainstream Rust regex crate that supports both Unicode general
