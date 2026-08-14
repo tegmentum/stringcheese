@@ -251,6 +251,15 @@ stringcheese-icu-segment-component = { version = "0.1.0", path = "crates/stringc
 stringcheese-icu-linebreak = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak", default-features = false }
 stringcheese-icu-linebreak-component = { version = "0.1.0", path = "crates/stringcheese-icu-linebreak-component", default-features = false }
 
+# Shared bench-harness dependency. Pinned at the workspace level so
+# every compute crate that grows a `criterion` bench harness picks up
+# the same major/minor version and there's exactly one place to bump
+# it. `default-features = false` + `html_reports` matches the shape
+# `stringcheese-bench` and `stringcheese-tokenizer-hf-bench` already
+# use — no CLI/gnuplot machinery, just criterion's built-in HTML
+# report writer.
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
