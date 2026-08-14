@@ -24,6 +24,12 @@ stringcheese-core = { workspace = true }
 
 [dev-dependencies]
 stringcheese-corpus = { workspace = true, features = ["alloc"] }
+# Criterion bench harness — workspace-inherited so every bench-adopting
+# crate tracks the same version as the reference bench crate
+# `stringcheese-tokenizer-hf-bench`. See `benches/align.rs` for the
+# groups it drives and the baseline table under the crate-level
+# `//!` docs for last-measured numbers.
+criterion = { workspace = true }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
@@ -34,6 +40,17 @@ stringcheese-corpus = { workspace = true, features = ["alloc"] }
 # skip the property-test modules (they're gated on the same predicate).
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
+
+# ---------------------------------------------------------------------------
+# Bench harness — mirrors the shape used by the reference bench crate
+# `stringcheese-tokenizer-hf-bench` (`harness = false` so criterion owns
+# `main`). The bench file lives at `benches/align.rs`; run with
+# `cargo bench -p stringcheese-align`. Baseline numbers live in the
+# crate-level `//!` docs of `src/lib.rs`.
+# ---------------------------------------------------------------------------
+[[bench]]
+name = "align"
+harness = false
 
 [lints]
 workspace = true
