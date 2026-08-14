@@ -1239,7 +1239,7 @@ impl BpeTokenizer {
         let pieces = self.encode_pieces_with_policy(
             text,
             Some((allowed_special, disallowed_special)),
-            Self::merge_loop_nlogn,
+            Self::merge_loop_flat,
         )?;
         let mut enc = Encoding::new();
         enc.ids.reserve(pieces.len());
@@ -1299,13 +1299,14 @@ impl BpeTokenizer {
         &self,
         text: &str,
     ) -> Result<Vec<(TokenId, Range<usize>, bool)>, TokenizerError> {
-        self.encode_pieces_with(text, Self::merge_loop_nlogn)
+        self.encode_pieces_with(text, Self::merge_loop_flat)
     }
 
     /// Shared driver: same pipeline as [`Self::encode_pieces`] but the
     /// per-word merge strategy is a function pointer. In production this
-    /// is [`Self::merge_loop_nlogn`]; the tests drive the same pipeline
-    /// through [`Self::merge_loop_naive`] as a Phase-2 acceptance oracle.
+    /// is [`Self::merge_loop_flat`] (tiktoken-style flat sweep); the
+    /// tests drive the same pipeline through [`Self::merge_loop_naive`]
+    /// and [`Self::merge_loop_nlogn`] as Phase-2 acceptance oracles.
     fn encode_pieces_with(
         &self,
         text: &str,
@@ -1843,7 +1844,155 @@ impl BpeTokenizer {
         }
     }
 
-    /// Production O(n log n) merge loop — Sennrich, Haddow, & Birch
+    /// Production merge loop — tiktoken-style flat sweep.
+    ///
+    /// Data structure: a single `Vec<(byte_start, rank)>` of length
+    /// `n + 1`, where the last entry is a sentinel whose `byte_start`
+    /// equals the total word length (so pair-end lookups at position
+    /// `n - 2` naturally terminate). For each entry `i < n`, the `rank`
+    /// field caches the merge-table rank of the byte-slice
+    /// `word_bytes[parts[i].0 .. parts[i + 2].0]` — i.e. the rank of the
+    /// pair *starting* at position `i` — or [`u32::MAX`] when that pair
+    /// has no rule in the merge table.
+    ///
+    /// The loop shape (mirroring `tiktoken`'s `_byte_pair_merge`):
+    ///
+    /// 1. Linear scan `parts[0 .. len - 2]` for the minimum-rank pair
+    ///    (`<` so ties break to the leftmost — matching the naive
+    ///    oracle byte-for-byte).
+    /// 2. If the minimum is [`u32::MAX`] there are no more mergeable
+    ///    pairs — bail out.
+    /// 3. Otherwise: at position `i`, merge pieces `i` and `i + 1` by
+    ///    removing `parts[i + 1]` (a single `Vec::remove` of a small
+    ///    tail). `parts[i]`'s `byte_start` is unchanged; its new
+    ///    successor is what used to be `parts[i + 2]`.
+    /// 4. Recompute the cached rank for `parts[i]` (its pair now spans
+    ///    a longer byte range) and, if `i > 0`, for `parts[i - 1]`
+    ///    (whose right neighbour was replaced by the merged piece).
+    ///
+    /// # Why flat beats the linked-list + heap shape here
+    ///
+    /// The heap-based O(n log n) formulation (retained below as
+    /// [`Self::merge_loop_nlogn`], now test-only) pays a per-word
+    /// overhead of a `BinaryHeap::new()`, a `Vec<MergeNode>` of size
+    /// `n`, and a stream of lazy-deletion heap pops that must validate
+    /// aliveness / adjacency / rank on every extraction. tiktoken's
+    /// benchmark shape targets the small-word regime the pre-tokenizer
+    /// hands us — the median cl100k word is a handful of pieces long —
+    /// and in that regime the constants of a linear scan on a packed
+    /// `Vec<(u32, u32)>` (fits multiple entries per cache line) beat
+    /// the log-factor savings of a heap by a wide margin. The bench
+    /// harness confirms this: cl100k throughput closed most of the
+    /// remaining gap versus `tiktoken-rs` after this swap. See the
+    /// baseline table in
+    /// `crates/stringcheese-tokenizer-hf-bench/benches/tokenizer_hf.rs`
+    /// for the current numbers.
+    fn merge_loop_flat(&self, word_bytes: &[u8], pieces: &mut Vec<PieceRef>) {
+        let n = pieces.len();
+        if n < 2 {
+            return;
+        }
+
+        // Build the flat state. `parts` has `n + 1` entries: the first
+        // `n` mirror `pieces[0..n]`, and the last is a sentinel whose
+        // byte-start equals the total word length. The sentinel is
+        // never a valid pair-left (we scan `0..parts.len() - 2` for the
+        // minimum), but its `.0` field is what the pair-at-position-n-2
+        // reads to find its own end offset.
+        //
+        // Rank fields start at `u32::MAX` and are filled in below.
+        // Casting `start` from `usize` to `u32` is exact: pre-tokenized
+        // words are always dramatically smaller than 2^32 bytes (the
+        // longest realistic word after regex splitting is a handful of
+        // code points), and `PieceRef::start` is itself derived from
+        // offsets into a per-word byte buffer.
+        let word_len_u32 = u32::try_from(word_bytes.len()).unwrap_or(u32::MAX);
+        let mut parts: Vec<(u32, u32)> = Vec::with_capacity(n + 1);
+        for p in pieces.iter() {
+            let start = u32::try_from(p.start).unwrap_or(u32::MAX);
+            parts.push((start, u32::MAX));
+        }
+        parts.push((word_len_u32, u32::MAX));
+
+        // Seed initial ranks: for each valid pair position `i`
+        // (`0..n - 1`), rank = merge-table rank of
+        // `word_bytes[parts[i].0 .. parts[i + 2].0]`.
+        for i in 0..n - 1 {
+            let start = parts[i].0 as usize;
+            let end = parts[i + 2].0 as usize;
+            if let Some(r) = self.merges.rank_slice(&word_bytes[start..end]) {
+                parts[i].1 = r;
+            }
+        }
+
+        // Merge loop. `parts.len()` shrinks by 1 per iteration; we
+        // stop when there is at most one real piece left (parts.len() <= 2
+        // = one piece + sentinel).
+        while parts.len() > 2 {
+            // Find the leftmost minimum-rank pair. `<` ensures the
+            // *first* occurrence wins on ties — matching the naive
+            // oracle's left-to-right scan tie-break byte-for-byte.
+            let mut min_rank: u32 = u32::MAX;
+            let mut min_idx: usize = 0;
+            let scan_end = parts.len() - 2;
+            for (i, &(_, rank)) in parts[..=scan_end].iter().enumerate() {
+                if rank < min_rank {
+                    min_rank = rank;
+                    min_idx = i;
+                }
+            }
+            if min_rank == u32::MAX {
+                break;
+            }
+
+            // Perform the merge: remove `parts[min_idx + 1]`. After
+            // this, `parts[min_idx]` retains its byte_start (the pair
+            // starts at the same byte) and its new right neighbour is
+            // what used to be `parts[min_idx + 2]`.
+            parts.remove(min_idx + 1);
+
+            // Recompute the cached rank for `parts[min_idx]` (its pair
+            // now spans a longer byte range: `parts[min_idx].0 ..
+            // parts[min_idx + 2].0`, the new i+2 being the shifted-in
+            // successor). When min_idx is the second-to-last pair-eligible
+            // position `parts.len() - 2` (which happens when the merge
+            // consumed the previous last real pair), there is no i+2 —
+            // the entry is not a valid pair-left any more, so leave its
+            // rank at u32::MAX.
+            let update_pair = |parts: &mut Vec<(u32, u32)>, i: usize| {
+                if i + 2 < parts.len() {
+                    let start = parts[i].0 as usize;
+                    let end = parts[i + 2].0 as usize;
+                    parts[i].1 = self
+                        .merges
+                        .rank_slice(&word_bytes[start..end])
+                        .unwrap_or(u32::MAX);
+                } else {
+                    parts[i].1 = u32::MAX;
+                }
+            };
+            update_pair(&mut parts, min_idx);
+            if min_idx > 0 {
+                // The pair at `min_idx - 1` also changed — its right
+                // neighbour is now the merged piece at `min_idx`.
+                update_pair(&mut parts, min_idx - 1);
+            }
+        }
+
+        // Rebuild pieces from the flat state. Each surviving piece
+        // spans `parts[i].0 .. parts[i + 1].0`.
+        pieces.clear();
+        for i in 0..parts.len() - 1 {
+            let start = parts[i].0 as usize;
+            let end = parts[i + 1].0 as usize;
+            pieces.push(PieceRef {
+                start,
+                len: end - start,
+            });
+        }
+    }
+
+    /// Test-only O(n log n) merge loop — Sennrich, Haddow, & Birch
     /// (2016), the "linked-list plus min-heap" formulation.
     ///
     /// Data structure: a *doubly-linked list* of merge nodes over an
@@ -1877,6 +2026,14 @@ impl BpeTokenizer {
     /// min-heap: `BinaryHeap` is a max-heap by default, and `Reverse`
     /// inverts the ordering — cheaper than defining a custom `Ord`
     /// with inverted comparisons.
+    ///
+    /// Retained as a test-only oracle: the production merge path is
+    /// [`Self::merge_loop_flat`] (tiktoken-style flat sweep), which
+    /// benched faster than this heap-based shape across every input
+    /// size the harness measures. The proptest suite still cross-checks
+    /// the flat sweep against both this and the naive O(n²) oracle so
+    /// any silent divergence surfaces in CI.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn merge_loop_nlogn(&self, word_bytes: &[u8], pieces: &mut Vec<PieceRef>) {
         let n = pieces.len();
         if n < 2 {
@@ -2253,10 +2410,12 @@ impl PartialOrd for HeapEntry {
 }
 
 /// Function pointer to a per-word merge strategy. Production code uses
-/// [`BpeTokenizer::merge_loop_nlogn`]; the tests substitute the naive
-/// oracle to verify the two strategies agree. Takes the shared word
-/// byte buffer as its second argument so both strategies can look up
-/// rank keys and materialise piece surfaces without per-piece allocation.
+/// [`BpeTokenizer::merge_loop_flat`]; the tests substitute both
+/// [`BpeTokenizer::merge_loop_naive`] and
+/// [`BpeTokenizer::merge_loop_nlogn`] to verify all three strategies
+/// agree on every input. Takes the shared word byte buffer as its
+/// second argument so every strategy can look up rank keys and
+/// materialise piece surfaces without per-piece allocation.
 type MergeLoopFn = fn(&BpeTokenizer, &[u8], &mut Vec<PieceRef>);
 
 /// Text plus (byte) offset within its enclosing region.
@@ -4166,6 +4325,16 @@ mod tests {
         pieces.into_iter().map(|(id, _, _)| id).collect()
     }
 
+    /// Drive the flat (tiktoken-style) merge loop through the full
+    /// encoding pipeline — same as [`encode_via_naive`] / [`encode_via_nlogn`]
+    /// but with the production merge strategy explicit at the call site.
+    fn encode_via_flat(tok: &BpeTokenizer, text: &str) -> Vec<TokenId> {
+        let pieces = tok
+            .encode_pieces_with(text, BpeTokenizer::merge_loop_flat)
+            .expect("flat encode should succeed on byte-alphabet vocab");
+        pieces.into_iter().map(|(id, _, _)| id).collect()
+    }
+
     /// Enumerate every string of length 0..=`max_len` over `alphabet`.
     fn enumerate_strings(alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
         let mut out: Vec<Vec<u8>> = vec![Vec::new()];
@@ -4218,7 +4387,9 @@ mod tests {
             let text = core::str::from_utf8(&s).unwrap();
             let via_naive = encode_via_naive(&tok, text);
             let via_nlogn = encode_via_nlogn(&tok, text);
-            assert_eq!(via_naive, via_nlogn, "encoders disagree on {text:?}");
+            let via_flat = encode_via_flat(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "nlogn disagrees on {text:?}");
+            assert_eq!(via_naive, via_flat, "flat disagrees on {text:?}");
         }
     }
 
@@ -4264,7 +4435,9 @@ mod tests {
             let text = core::str::from_utf8(&s).unwrap();
             let via_naive = encode_via_naive(&tok, text);
             let via_nlogn = encode_via_nlogn(&tok, text);
-            assert_eq!(via_naive, via_nlogn, "encoders disagree on {text:?}");
+            let via_flat = encode_via_flat(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "nlogn disagrees on {text:?}");
+            assert_eq!(via_naive, via_flat, "flat disagrees on {text:?}");
         }
     }
 
@@ -4294,7 +4467,9 @@ mod tests {
         for text in corpus {
             let via_naive = encode_via_naive(&tok, text);
             let via_nlogn = encode_via_nlogn(&tok, text);
-            assert_eq!(via_naive, via_nlogn, "disagree on {text:?}");
+            let via_flat = encode_via_flat(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "nlogn disagrees on {text:?}");
+            assert_eq!(via_naive, via_flat, "flat disagrees on {text:?}");
         }
     }
 
@@ -4309,6 +4484,7 @@ mod tests {
             BpeTokenizer::from_parts(BpeMergeTable::new(), vocab).with_special_tokens(specials);
         for text in ["<|s|>", "<|s|><|t|>", "<|s|><|s|><|t|>"] {
             assert_eq!(encode_via_naive(&tok, text), encode_via_nlogn(&tok, text));
+            assert_eq!(encode_via_naive(&tok, text), encode_via_flat(&tok, text));
         }
     }
 
@@ -4329,11 +4505,11 @@ mod tests {
             "混ぜ書き",
         ];
         for text in corpus {
-            assert_eq!(
-                encode_via_naive(&tok, text),
-                encode_via_nlogn(&tok, text),
-                "disagree on {text:?}"
-            );
+            let via_naive = encode_via_naive(&tok, text);
+            let via_nlogn = encode_via_nlogn(&tok, text);
+            let via_flat = encode_via_flat(&tok, text);
+            assert_eq!(via_naive, via_nlogn, "nlogn disagrees on {text:?}");
+            assert_eq!(via_naive, via_flat, "flat disagrees on {text:?}");
         }
     }
 
@@ -4375,12 +4551,98 @@ mod tests {
             }
             let nlogn_ns = start.elapsed().as_nanos() / iters;
 
+            let start = Instant::now();
+            for _ in 0..iters {
+                let _ = tok
+                    .encode_pieces_with(&input, BpeTokenizer::merge_loop_flat)
+                    .unwrap();
+            }
+            let flat_ns = start.elapsed().as_nanos() / iters;
+
             #[allow(clippy::cast_precision_loss)]
-            let speedup = (naive_ns as f64) / (nlogn_ns as f64);
+            let nlogn_speedup = (naive_ns as f64) / (nlogn_ns as f64);
+            #[allow(clippy::cast_precision_loss)]
+            let flat_speedup = (naive_ns as f64) / (flat_ns as f64);
+            #[allow(clippy::cast_precision_loss)]
+            let flat_vs_nlogn = (nlogn_ns as f64) / (flat_ns as f64);
             eprintln!(
-                "n={n:4}: naive {naive_ns:>10} ns  nlogn {nlogn_ns:>10} ns  speedup {speedup:.2}x"
+                "n={n:4}: naive {naive_ns:>10} ns  nlogn {nlogn_ns:>10} ns  flat {flat_ns:>10} ns  \
+                 nlogn/naive {nlogn_speedup:.2}x  flat/naive {flat_speedup:.2}x  flat/nlogn {flat_vs_nlogn:.2}x"
             );
         }
+    }
+
+    /// A short cl100k-shape workload: many small "words" (short byte
+    /// sequences) with a dense merge table. Matches the actual pattern
+    /// of BPE input: a stream of pre-tokenized regex chunks, most under
+    /// 10 bytes long. Compares all three merge strategies.
+    #[cfg(feature = "std")]
+    #[test]
+    #[ignore = "manual perf comparison, not correctness"]
+    fn perf_compare_short_words_bpe() {
+        use std::time::Instant;
+        // Build a synthetic byte-alphabet tokenizer with dense merges
+        // over 2-byte pairs — a cheap stand-in for the shape a real BPE
+        // pipeline hands the merge loop after regex splitting.
+        let mut v = BpeVocabulary::new();
+        v.ensure_byte_alphabet(0).unwrap();
+        let mut m = BpeMergeTable::new();
+        // Insert every 2-byte pair over the printable ASCII range.
+        // ~5000 merge rules — realistic density.
+        let alphabet: Vec<u8> = (b'a'..=b'z').collect();
+        let mut next_id: u32 = 256;
+        let mut rank: u32 = 0;
+        for &a in &alphabet {
+            for &b in &alphabet {
+                m.insert(vec![a], vec![b], rank);
+                let pair = vec![a, b];
+                if v.id(&pair).is_none() {
+                    v.insert(next_id, pair).unwrap();
+                    next_id += 1;
+                }
+                rank += 1;
+            }
+        }
+        let tok = BpeTokenizer::from_parts(m, v);
+
+        // Deterministic corpus of short "words" like a real pre-tokenized
+        // regex chunk stream. ~50 KB total to give stable timings.
+        let words: &[&str] = &[
+            " the", " quick", " brown", " fox", " jumps", " over", " lazy", " dog", " and",
+            " then", " runs", " back", " through", " forest", " toward", " little", " cabin",
+            " on", " hill", " where", " smoke", " curls",
+        ];
+        let mut input = String::new();
+        while input.len() < 50_000 {
+            for w in words {
+                input.push_str(w);
+            }
+        }
+        let iters = 200;
+
+        let start = Instant::now();
+        for _ in 0..iters {
+            let _ = tok
+                .encode_pieces_with(&input, BpeTokenizer::merge_loop_nlogn)
+                .unwrap();
+        }
+        let nlogn_ns = start.elapsed().as_nanos() / iters;
+
+        let start = Instant::now();
+        for _ in 0..iters {
+            let _ = tok
+                .encode_pieces_with(&input, BpeTokenizer::merge_loop_flat)
+                .unwrap();
+        }
+        let flat_ns = start.elapsed().as_nanos() / iters;
+
+        #[allow(clippy::cast_precision_loss)]
+        let speedup = (nlogn_ns as f64) / (flat_ns as f64);
+        eprintln!(
+            "short-words ({} B input): nlogn {nlogn_ns:>10} ns  flat {flat_ns:>10} ns  \
+             flat/nlogn {speedup:.2}x",
+            input.len()
+        );
     }
 
     // ------------------------------------------------------------------
@@ -5258,6 +5520,21 @@ mod properties {
             let naive = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_naive);
             let nlogn = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_nlogn);
             prop_assert_eq!(naive, nlogn);
+        }
+
+        /// Wave-14 acceptance: the flat tiktoken-style encoder agrees
+        /// with the naive O(n²) oracle for every random (input,
+        /// merge-table) combination. Guards against silent divergence
+        /// between the production merge path and the reference shape.
+        #[test]
+        fn flat_matches_naive_random(
+            text in arb_small_ascii_input(),
+            (merges, extras) in arb_merges_and_extras(),
+        ) {
+            let tok = build_tokenizer(merges, &extras);
+            let naive = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_naive);
+            let flat = encode_ids_with(&tok, &text, BpeTokenizer::merge_loop_flat);
+            prop_assert_eq!(naive, flat);
         }
     }
 
