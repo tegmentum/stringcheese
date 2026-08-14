@@ -794,6 +794,22 @@ jobs:
             --no-run \
             --locked
 
+      - name: Compile the compare bench with oracle-benches feature (no run)
+        # Compile-check the feature-gated oracle-comparison bench groups
+        # (`strsim`, `triple_accel`). Same rationale as the plain
+        # compile-check above — catch API drift in the optional oracle
+        # crates without pinning a perf budget on a shared runner. See
+        # `crates/stringcheese-compare/benches/compare.rs` for the
+        # gated groups and `docs/perf/compare-oracle-gaps.md` for the
+        # last-measured gap table.
+        run: |
+          cargo bench \
+            -p stringcheese-compare \
+            --bench compare \
+            --features oracle-benches \
+            --no-run \
+            --locked
+
   # ------------------------------------------------------------------
   # stringcheese-align bench compile-check (optional, non-blocking).
   #
@@ -831,6 +847,22 @@ jobs:
           cargo bench \
             -p stringcheese-align \
             --bench align \
+            --no-run \
+            --locked
+
+      - name: Compile the align bench with oracle-benches feature (no run)
+        # Compile-check the feature-gated oracle-comparison bench groups
+        # (`bio`). Same rationale as the plain compile-check above —
+        # catch API drift in the optional oracle crate without pinning a
+        # perf budget on a shared runner. See
+        # `crates/stringcheese-align/benches/align.rs` for the gated
+        # groups and `docs/perf/align-oracle-gaps.md` for the
+        # last-measured gap table.
+        run: |
+          cargo bench \
+            -p stringcheese-align \
+            --bench align \
+            --features oracle-benches \
             --no-run \
             --locked
 

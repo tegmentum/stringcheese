@@ -351,6 +351,325 @@ fn bench_sw_align_linear(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Oracle-comparison groups (feature-gated on `oracle-benches`).
+//
+// Goal: side-by-side throughput of stringcheese vs `bio` (rust-bio v2)
+// on the exact same NW / SW workload. Not a correctness oracle — bio
+// uses Gotoh's three-matrix affine-gap DP for its `Aligner`, which
+// degenerates to linear-gap behavior when `gap_open == gap_extend`, so
+// bio's "linear" lane still pays the three-matrix constant that
+// stringcheese's specialised single-matrix linear DP avoids. That
+// asymmetry is real-world: users pick bio and get the Gotoh cost
+// regardless of which gap model they parameterise it with. The gap
+// numbers reported here are therefore an *upper bound* on how much of
+// the throughput delta comes from stringcheese's linear specialization
+// vs the underlying DP loop constants.
+//
+// Bio's `Aligner::new(gap_open, gap_extend, score)` uses a slightly
+// different affine convention than stringcheese: bio's total cost for a
+// k-symbol gap is `gap_open + k * gap_extend` (i.e. gap_open is applied
+// once *on top of* the k extension symbols), whereas stringcheese uses
+// `gap_open + (k - 1) * gap_extend` (i.e. gap_open is the first
+// symbol's cost). To match stringcheese's `default_affine` (gap_open =
+// -2, gap_extend = -1) the bio side calls
+// `Aligner::new(-1, -1, score)` — that produces the same total cost
+// per k for every k ≥ 1.
+//
+// Both aligners fill an O(m·n) DP; the oracle lane also allocates the
+// `Alignment` result struct on every call (bio's `Aligner` has no
+// score-only fast path — `.global()` / `.local()` always retain the
+// traceback). Stringcheese's `score_with_workspace` amortises the
+// scratch across iters, so the score-only comparison also captures
+// bio's per-call trace allocation cost. That is the real-world cost of
+// picking bio for a score-only pipeline.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_nw_score_linear(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/nw_score_linear");
+    let nw_sc = NeedlemanWunsch::new(LinearGap::simple());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        nw_sc.score_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            // Match stringcheese's LinearGap::simple() (match=1, mismatch=-1,
+            // gap=-1). Bio's Aligner is always Gotoh three-matrix; passing
+            // gap_open == gap_extend == -1 gives linear behavior.
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        aligner
+                            .global(black_box(a.as_slice()), black_box(b.as_slice()))
+                            .score
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_nw_score_affine(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/nw_score_affine");
+    let nw_sc = NeedlemanWunsch::new(AffineGap::default_affine());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        nw_sc.score_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            // Match stringcheese's default_affine (match=1, mismatch=-1,
+            // gap_open=-2, gap_extend=-1). Bio's total k-gap cost is
+            // gap_open + k*gap_extend; passing (-1, -1) yields the same
+            // total as stringcheese's -2 + (k-1)*(-1) for every k ≥ 1.
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        aligner
+                            .global(black_box(a.as_slice()), black_box(b.as_slice()))
+                            .score
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_sw_score_linear(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/sw_score_linear");
+    let sw_sc = SmithWaterman::new(LinearGap::simple());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        sw_sc.score_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        aligner
+                            .local(black_box(a.as_slice()), black_box(b.as_slice()))
+                            .score
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_sw_score_affine(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/sw_score_affine");
+    let sw_sc = SmithWaterman::new(AffineGap::default_affine());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        sw_sc.score_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        aligner
+                            .local(black_box(a.as_slice()), black_box(b.as_slice()))
+                            .score
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_nw_align_linear(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/nw_align_linear");
+    let nw = NeedlemanWunsch::new(LinearGap::simple());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        nw.align_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        // `.global()` already retains the traceback, so the
+                        // "align" flavor is the same call as "score" here.
+                        // Both stringcheese and bio pay the O(m·n) matrix
+                        // retention; this measures the fair trace-included
+                        // throughput.
+                        let out = aligner.global(black_box(a.as_slice()), black_box(b.as_slice()));
+                        (out.score, out.operations.len())
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_sw_align_linear(c: &mut Criterion) {
+    use bio::alignment::pairwise::Aligner as BioAligner;
+
+    let mut group = c.benchmark_group("align/oracle/sw_align_linear");
+    let sw = SmithWaterman::new(LinearGap::simple());
+    for &size in SIZES {
+        group.throughput(Throughput::Bytes(size as u64));
+        for (flavor, (a, b)) in build_pairs(size) {
+            let a_sc = a.clone();
+            let b_sc = b.clone();
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+                &(a_sc, b_sc),
+                |bencher, (a, b)| {
+                    let mut ws = AlignmentWorkspace::new();
+                    bencher.iter(|| {
+                        sw.align_with_workspace(
+                            black_box(a.as_slice()),
+                            black_box(b.as_slice()),
+                            &mut ws,
+                        )
+                    });
+                },
+            );
+
+            let score = |x: u8, y: u8| if x == y { 1i32 } else { -1i32 };
+            group.bench_with_input(
+                BenchmarkId::new(format!("bio/{flavor}"), size),
+                &(a, b),
+                |bencher, (a, b)| {
+                    bencher.iter(|| {
+                        let mut aligner = BioAligner::new(-1, -1, score);
+                        let out = aligner.local(black_box(a.as_slice()), black_box(b.as_slice()));
+                        (out.score, out.operations.len())
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+criterion_group!(
+    oracle_benches,
+    bench_oracle_nw_score_linear,
+    bench_oracle_nw_score_affine,
+    bench_oracle_nw_align_linear,
+    bench_oracle_sw_score_linear,
+    bench_oracle_sw_score_affine,
+    bench_oracle_sw_align_linear,
+);
+
 criterion_group!(
     benches,
     bench_nw_score_linear,
@@ -360,4 +679,8 @@ criterion_group!(
     bench_sw_score_affine,
     bench_sw_align_linear,
 );
+
+#[cfg(feature = "oracle-benches")]
+criterion_main!(benches, oracle_benches);
+#[cfg(not(feature = "oracle-benches"))]
 criterion_main!(benches);
