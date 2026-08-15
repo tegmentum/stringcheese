@@ -70,34 +70,35 @@
 //! ```text
 //! op       / width  / n_items    throughput
 //! -------------------------------------------
-//! sketch   / w64    / 100        ~5.0 M grams/s
-//! sketch   / w64    / 1000       ~5.5 M grams/s
-//! sketch   / w64    / 10000      ~5.6 M grams/s
-//! sketch   / w256   / 100        ~1.3 M grams/s
-//! sketch   / w256   / 1000       ~1.4 M grams/s
-//! sketch   / w256   / 10000      ~1.4 M grams/s
-//! sketch   / w1024  / 100        ~340 K grams/s
-//! sketch   / w1024  / 1000       ~350 K grams/s
-//! sketch   / w1024  / 10000      ~350 K grams/s
-//! jaccard  / w64                 ~5 G positions/s
-//! jaccard  / w256                ~10 G positions/s
-//! jaccard  / w1024               ~15 G positions/s
+//! sketch   / w64    / 100        ~6.8 M grams/s
+//! sketch   / w64    / 1000       ~7.7 M grams/s
+//! sketch   / w64    / 10000      ~8.1 M grams/s
+//! sketch   / w256   / 100        ~1.9 M grams/s
+//! sketch   / w256   / 1000       ~2.3 M grams/s
+//! sketch   / w256   / 10000      ~2.3 M grams/s
+//! sketch   / w1024  / 100        ~470 K grams/s
+//! sketch   / w1024  / 1000       ~554 K grams/s
+//! sketch   / w1024  / 10000      ~548 K grams/s
+//! jaccard  / w64                 ~5.8 G positions/s
+//! jaccard  / w256                ~7.3 G positions/s
+//! jaccard  / w1024               ~3.2 G positions/s
 //! ```
 //!
 //! Read:
 //!
 //! * **Sketch throughput scales inversely with width** — the O(width)
-//!   inner loop dominates. Width 64 → ~5 M grams/s; width 1024 →
-//!   ~350 K grams/s. This is expected; the "K independent hash
+//!   inner loop dominates. Width 64 → ~7-8 M grams/s; width 1024 →
+//!   ~500 K grams/s. This is expected; the "K independent hash
 //!   functions" formulation trades sketch precision for build cost
 //!   linearly.
 //! * **Jaccard is memory-bound** — one `.zip().filter().count()` over
-//!   the two `Vec<u64>`s. Width 1024 fits comfortably in L1 and
-//!   throughput scales *up* with width because the loop amortises
-//!   its per-call overhead over more positions.
-//! * **Sketch throughput is flat in `n_items`** — the per-gram cost
-//!   is dominated by hashing, not iteration; small startup jitter
-//!   at n=100 disappears by n=1000.
+//!   the two `Vec<u64>`s. Width 64 and 256 both fit in L1 with
+//!   per-call overhead amortising nicely; the drop from w256 to
+//!   w1024 is where the sketches start spilling out of the small
+//!   caches and prefetch stops covering the walk.
+//! * **Sketch throughput is flat in `n_items` past n=1000** — the
+//!   per-gram cost is dominated by hashing, not iteration; small
+//!   startup jitter at n=100 disappears by n=1000.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression
