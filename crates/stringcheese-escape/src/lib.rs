@@ -22,10 +22,68 @@
 //! and errors that carry enough context for the caller to decide
 //! what to do.
 //!
-//! ## Baseline (2026-08-09)
+//! ## Benchmarks
 //!
-//! Encode throughput per target on 1 KB inputs, from
-//! `stringcheese-bench/benches/escape.rs`:
+//! An in-crate criterion bench harness lives at `benches/escape.rs`;
+//! run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-escape
+//! ```
+//!
+//! Four groups drive the four [`Escape`] targets ([`Escape::UriComponent`],
+//! [`Escape::Html`], [`Escape::JsonString`], [`Escape::ShellWord`]).
+//! Each group runs three input byte lengths (256 B / 1 KiB / 4 KiB)
+//! crossed with two flavors (`plain` — ASCII prose with no
+//! metacharacters — and `meta` — dense with characters every target
+//! has to escape). 24 measurement points total.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`);
+//! wall-clock samples vary ±10-20 %. Throughput reported over
+//! *input bytes* — higher is better.
+//!
+//! ```text
+//! target  / flavor  / 256 B         / 1 KiB        / 4 KiB
+//! ----------------------------------------------------------
+//! json    / plain   / ~1.6 GiB/s    / ~1.8 GiB/s   / ~1.9 GiB/s
+//! json    / meta    / ~950 MiB/s    / ~1.05 GiB/s  / ~1.10 GiB/s
+//! uri     / plain   / ~1.3 GiB/s    / ~1.4 GiB/s   / ~1.4 GiB/s
+//! uri     / meta    / ~600 MiB/s    / ~660 MiB/s   / ~680 MiB/s
+//! html    / plain   / ~900 MiB/s    / ~990 MiB/s   / ~1.0 GiB/s
+//! html    / meta    / ~880 MiB/s    / ~940 MiB/s   / ~960 MiB/s
+//! shell   / plain   / ~680 MiB/s    / ~710 MiB/s   / ~730 MiB/s
+//! shell   / meta    / ~440 MiB/s    / ~470 MiB/s   / ~490 MiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **`json` leads on plain input** — the in-house 128-entry ASCII
+//!   table plus bulk-copy passthrough is the fastest arm. This is
+//!   the bench that drove the 2026-08-09 in-house rewrite over the
+//!   original per-scalar match.
+//! * **`html` is flat across plain/meta** — the entity substitution
+//!   set is small (`& < > " ' /`) so the meta flavor doesn't slow
+//!   the arm much.
+//! * **`uri` on meta drops ~2×** — every reserved character becomes
+//!   `%XX`, so output allocation and per-scalar substitution both
+//!   double the per-byte cost.
+//! * **`shell` is the slowest arm** — `shlex` is doing per-scalar
+//!   quoting logic and the wrap is `Vec<char>`-based rather than
+//!   byte-oriented; a follow-up round could measure an in-house
+//!   shell-quote path against the wrap.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression
+//!   or a measurement environment change; rerun with
+//!   `--sample-size 30` before filing a fix.
+//!
+//! ## Prior baseline (2026-08-09, `stringcheese-bench/benches/escape.rs`)
+//!
+//! Retained for context — earlier 1 KB-only rows against which the
+//! current suite's numbers should be compared:
 //!
 //! | Target             | plain (safe input) | metachar-heavy |
 //! |--------------------|--------------------|----------------|
