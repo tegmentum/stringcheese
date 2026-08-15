@@ -402,4 +402,495 @@ mod tests {
         let parts: Vec<&str> = split("aü日", SegmentUnit::Graphemes).collect();
         assert_eq!(parts, vec!["a", "ü", "日"]);
     }
+
+    // -----------------------------------------------------------------
+    // SegmentUnit enum: derive shape
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn segment_unit_is_copy_and_eq() {
+        // Copy/Eq/Hash are required because SegmentUnit is a small
+        // config-shaped enum consumers pass by value and stash in
+        // config records. Regression-guard the derives.
+        let a = SegmentUnit::Bytes;
+        let b = a; // implicit Copy
+        assert_eq!(a, b);
+        assert_ne!(SegmentUnit::Bytes, SegmentUnit::CodePoints);
+        assert_ne!(SegmentUnit::Lines, SegmentUnit::LinesUax14);
+    }
+
+    #[test]
+    fn segment_unit_debug_is_non_empty() {
+        // Debug format is used in error messages and traces.
+        let s = alloc::format!("{:?}", SegmentUnit::Graphemes);
+        assert!(!s.is_empty());
+        assert!(s.contains("Graphemes"));
+    }
+
+    #[test]
+    fn segment_unit_is_hashable() {
+        // Hash bound is enforced by the derive; verify by using it as
+        // a HashMap key. Trips a compile error if the derive slips.
+        use std::collections::HashMap;
+        let mut m: HashMap<SegmentUnit, u32> = HashMap::new();
+        m.insert(SegmentUnit::Words, 1);
+        m.insert(SegmentUnit::Sentences, 2);
+        assert_eq!(m.get(&SegmentUnit::Words), Some(&1));
+    }
+
+    // -----------------------------------------------------------------
+    // Bytes variant
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn bytes_empty_input_yields_no_slices() {
+        let parts: Vec<&str> = split("", SegmentUnit::Bytes).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn bytes_single_ascii_char_yields_one_slice() {
+        let parts: Vec<&str> = split("x", SegmentUnit::Bytes).collect();
+        assert_eq!(parts, vec!["x"]);
+    }
+
+    #[test]
+    fn bytes_multibyte_char_stays_one_slice() {
+        // "ü" is 2 bytes; despite the name "Bytes", the iterator
+        // advances to the next char boundary so returned &str is
+        // valid. This is the documented behavior.
+        let parts: Vec<&str> = split("aüb", SegmentUnit::Bytes).collect();
+        assert_eq!(parts, vec!["a", "ü", "b"]);
+    }
+
+    #[test]
+    fn bytes_four_byte_char_stays_one_slice() {
+        // Emoji "🦀" is a 4-byte scalar (U+1F980); still one slice.
+        let parts: Vec<&str> = split("🦀", SegmentUnit::Bytes).collect();
+        assert_eq!(parts, vec!["🦀"]);
+    }
+
+    #[test]
+    fn bytes_roundtrips_via_concat() {
+        // The concatenation of every yielded slice equals the input —
+        // the fundamental round-trip invariant.
+        let input = "hello, 世界! 🦀";
+        let parts: Vec<&str> = split(input, SegmentUnit::Bytes).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    // -----------------------------------------------------------------
+    // CodePoints variant
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn codepoints_empty_input_yields_no_slices() {
+        let parts: Vec<&str> = split("", SegmentUnit::CodePoints).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn codepoints_single_char_yields_one_slice() {
+        let parts: Vec<&str> = split("ü", SegmentUnit::CodePoints).collect();
+        assert_eq!(parts, vec!["ü"]);
+    }
+
+    #[test]
+    fn codepoints_yields_one_slice_per_scalar() {
+        // "🦀" is one scalar. So is "é" as NFC-precomposed U+00E9,
+        // vs two scalars for the NFD form "e\u{301}".
+        let precomposed: Vec<&str> = split("é", SegmentUnit::CodePoints).collect();
+        assert_eq!(precomposed.len(), 1);
+        let decomposed: Vec<&str> = split("e\u{301}", SegmentUnit::CodePoints).collect();
+        assert_eq!(decomposed.len(), 2);
+    }
+
+    #[test]
+    fn codepoints_roundtrips_via_concat() {
+        let input = "café — 日本語 🇯🇵";
+        let parts: Vec<&str> = split(input, SegmentUnit::CodePoints).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    #[test]
+    fn codepoints_count_matches_char_count() {
+        // The number of yielded slices matches str::chars().count().
+        let input = "aé日🦀";
+        let parts: Vec<&str> = split(input, SegmentUnit::CodePoints).collect();
+        assert_eq!(parts.len(), input.chars().count());
+    }
+
+    // -----------------------------------------------------------------
+    // Lines variant (\n split)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn lines_empty_input_yields_one_empty_slice() {
+        // str::split('\n') on "" yields one empty slice; preserving
+        // that saves a special-case for callers.
+        let parts: Vec<&str> = split("", SegmentUnit::Lines).collect();
+        assert_eq!(parts, vec![""]);
+    }
+
+    #[test]
+    fn lines_single_line_yields_that_line() {
+        let parts: Vec<&str> = split("just one", SegmentUnit::Lines).collect();
+        assert_eq!(parts, vec!["just one"]);
+    }
+
+    #[test]
+    fn lines_consecutive_newlines_yield_empty_middles() {
+        let parts: Vec<&str> = split("a\n\nb", SegmentUnit::Lines).collect();
+        assert_eq!(parts, vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn lines_crlf_preserves_cr_on_line() {
+        // \n split keeps \r on the preceding line. This is what
+        // str::split('\n') does; test guards the pass-through.
+        let parts: Vec<&str> = split("one\r\ntwo\r\nthree", SegmentUnit::Lines).collect();
+        assert_eq!(parts, vec!["one\r", "two\r", "three"]);
+    }
+
+    #[test]
+    fn lines_only_newlines_yields_all_empty() {
+        let parts: Vec<&str> = split("\n\n\n", SegmentUnit::Lines).collect();
+        assert_eq!(parts, vec!["", "", "", ""]);
+    }
+
+    // -----------------------------------------------------------------
+    // Words variant (fallback path — no icu)
+    // -----------------------------------------------------------------
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn words_fallback_empty_input_yields_nothing() {
+        let parts: Vec<&str> = split("", SegmentUnit::Words).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn words_fallback_skips_all_whitespace() {
+        let parts: Vec<&str> = split("  a  b   c  ", SegmentUnit::Words).collect();
+        assert_eq!(parts, vec!["a", "b", "c"]);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn words_fallback_treats_tab_and_newline_as_separator() {
+        let parts: Vec<&str> = split("a\tb\nc", SegmentUnit::Words).collect();
+        assert_eq!(parts, vec!["a", "b", "c"]);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn words_fallback_only_whitespace_yields_nothing() {
+        let parts: Vec<&str> = split("   \t\n   ", SegmentUnit::Words).collect();
+        assert!(parts.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Sentences variant (fallback path — no icu)
+    // -----------------------------------------------------------------
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn sentences_fallback_empty_input_yields_nothing() {
+        let parts: Vec<&str> = split("", SegmentUnit::Sentences).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn sentences_fallback_no_terminator_yields_one_slice() {
+        // No `. ` / `? ` / `! ` / `\n\n` → the whole input is one
+        // sentence.
+        let parts: Vec<&str> = split("no terminator here", SegmentUnit::Sentences).collect();
+        assert_eq!(parts, vec!["no terminator here"]);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn sentences_fallback_splits_on_period_space() {
+        let parts: Vec<&str> = split("Hi there. How are you.", SegmentUnit::Sentences).collect();
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn sentences_fallback_splits_on_double_newline() {
+        let parts: Vec<&str> = split("one\n\ntwo", SegmentUnit::Sentences).collect();
+        assert_eq!(parts.len(), 2);
+    }
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    fn sentences_fallback_period_without_space_stays_together() {
+        // `.` without a following space is not a terminator in the
+        // naive splitter (protects filenames, decimals).
+        let parts: Vec<&str> =
+            split("foo.bar and 3.14 stays whole", SegmentUnit::Sentences).collect();
+        assert_eq!(parts.len(), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // Graphemes / Words / Sentences (icu-backed paths)
+    // -----------------------------------------------------------------
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn graphemes_empty_input_yields_no_slices() {
+        // ICU4X returns [0, 0]; the filter drops empty slices, so
+        // the iterator ends up empty.
+        let parts: Vec<&str> = split("", SegmentUnit::Graphemes).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn graphemes_combining_mark_stays_with_base() {
+        // "e" + U+0301 combining acute is one grapheme cluster even
+        // though it's two code points.
+        let parts: Vec<&str> = split("e\u{301}", SegmentUnit::Graphemes).collect();
+        assert_eq!(parts, vec!["e\u{301}"]);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn graphemes_zwj_sequence_stays_one_cluster() {
+        // Family emoji: man + ZWJ + woman + ZWJ + girl.
+        // Should collapse to a single grapheme cluster.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let parts: Vec<&str> = split(family, SegmentUnit::Graphemes).collect();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], family);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn graphemes_flag_emoji_stays_one_cluster() {
+        // Regional-indicator flag emoji: U+1F1EF U+1F1F5 → 🇯🇵.
+        let flag = "\u{1F1EF}\u{1F1F5}";
+        let parts: Vec<&str> = split(flag, SegmentUnit::Graphemes).collect();
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], flag);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn graphemes_roundtrip_via_concat() {
+        let input = "café 🇯🇵 e\u{301}f 🦀";
+        let parts: Vec<&str> = split(input, SegmentUnit::Graphemes).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn words_icu_empty_input_yields_no_slices() {
+        let parts: Vec<&str> = split("", SegmentUnit::Words).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn words_icu_roundtrip_via_concat() {
+        // ICU4X word segmenter includes whitespace/punctuation as
+        // their own segments; concatenation reproduces the input.
+        let input = "The quick brown fox.";
+        let parts: Vec<&str> = split(input, SegmentUnit::Words).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn words_icu_finds_word_boundaries_in_english() {
+        // At minimum, "hello" and "world" appear as segments.
+        let parts: Vec<&str> = split("hello world", SegmentUnit::Words).collect();
+        assert!(parts.contains(&"hello"));
+        assert!(parts.contains(&"world"));
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn sentences_icu_empty_input_yields_no_slices() {
+        let parts: Vec<&str> = split("", SegmentUnit::Sentences).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn sentences_icu_roundtrip_via_concat() {
+        let input = "Hi. Bye! What? Ok.";
+        let parts: Vec<&str> = split(input, SegmentUnit::Sentences).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    #[cfg(feature = "icu")]
+    #[test]
+    fn sentences_icu_finds_multiple_sentences() {
+        let parts: Vec<&str> = split("Hi. Bye! What? Ok.", SegmentUnit::Sentences).collect();
+        // ICU4X's SentenceSegmenter finds boundaries after each
+        // terminating punctuation-plus-space. Four sentences.
+        assert!(parts.len() >= 2);
+    }
+
+    // -----------------------------------------------------------------
+    // LinesUax14 (feature-gated)
+    // -----------------------------------------------------------------
+
+    #[cfg(feature = "uax14-lines")]
+    #[test]
+    fn uax14_lines_empty_input_yields_no_slices() {
+        // The empty input has one line-break at 0 (which we insert)
+        // and one at text.len() = 0 (the end marker). The windows(2)
+        // pair is empty → no slices.
+        let parts: Vec<&str> = split("", SegmentUnit::LinesUax14).collect();
+        assert!(parts.is_empty());
+    }
+
+    #[cfg(feature = "uax14-lines")]
+    #[test]
+    fn uax14_lines_roundtrips_via_concat() {
+        // The union of the emitted slices reconstructs the input —
+        // UAX #14 breaks at opportunities, not just \n.
+        let input = "Hello world.\nA second sentence, with a comma.";
+        let parts: Vec<&str> = split(input, SegmentUnit::LinesUax14).collect();
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, input);
+    }
+
+    #[cfg(feature = "uax14-lines")]
+    #[test]
+    fn uax14_lines_breaks_at_hard_newline() {
+        // A hard newline is a mandatory break opportunity — the
+        // preceding line ends with the newline character on it.
+        let parts: Vec<&str> = split("a\nb", SegmentUnit::LinesUax14).collect();
+        // The reassembly is exact; every slice is non-empty.
+        let round: alloc::string::String = parts.concat();
+        assert_eq!(round, "a\nb");
+        for p in &parts {
+            assert!(!p.is_empty());
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Feature-gate panic paths
+    // -----------------------------------------------------------------
+
+    #[cfg(not(feature = "icu"))]
+    #[test]
+    #[should_panic(expected = "SegmentUnit::Graphemes requires the `icu` cargo feature")]
+    fn graphemes_without_icu_panics() {
+        let _ = split("hi", SegmentUnit::Graphemes).next();
+    }
+
+    #[cfg(not(feature = "uax14-lines"))]
+    #[test]
+    #[should_panic(expected = "SegmentUnit::LinesUax14 requires the `uax14-lines` cargo feature")]
+    fn lines_uax14_without_feature_panics() {
+        let _ = split("hi", SegmentUnit::LinesUax14).next();
+    }
+
+    // -----------------------------------------------------------------
+    // Property tests — cross-variant invariants
+    // -----------------------------------------------------------------
+
+    #[cfg(not(target_family = "wasm"))]
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Concatenating Bytes-split slices reproduces the input.
+            #[test]
+            fn bytes_roundtrip(s in ".{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::Bytes).collect();
+                let round: alloc::string::String = parts.concat();
+                prop_assert_eq!(round, s);
+            }
+
+            /// Concatenating CodePoints-split slices reproduces the input.
+            #[test]
+            fn codepoints_roundtrip(s in ".{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::CodePoints).collect();
+                let round: alloc::string::String = parts.concat();
+                prop_assert_eq!(round, s);
+            }
+
+            /// The number of CodePoints slices equals the number of
+            /// scalars in the input (`str::chars().count()`).
+            #[test]
+            fn codepoints_count_equals_chars_count(s in ".{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::CodePoints).collect();
+                prop_assert_eq!(parts.len(), s.chars().count());
+            }
+
+            /// Every CodePoints slice contains exactly one `char`.
+            #[test]
+            fn codepoints_each_slice_is_one_scalar(s in ".{0,64}") {
+                for part in split(&s, SegmentUnit::CodePoints) {
+                    prop_assert_eq!(part.chars().count(), 1);
+                }
+            }
+
+            /// Lines split reassembles the input by joining with `\n`.
+            #[test]
+            fn lines_reassemble_with_newline(s in "[^\r]{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::Lines).collect();
+                let joined = parts.join("\n");
+                prop_assert_eq!(joined, s);
+            }
+
+            /// `split` never panics on arbitrary text for the
+            /// dependency-free variants.
+            #[test]
+            fn dependency_free_variants_never_panic(s in ".{0,64}") {
+                for _ in split(&s, SegmentUnit::Bytes) {}
+                for _ in split(&s, SegmentUnit::CodePoints) {}
+                for _ in split(&s, SegmentUnit::Lines) {}
+            }
+
+            /// Every Bytes slice is a valid UTF-8 substring (guaranteed
+            /// by Rust `&str` slicing, but round-trip-check here to
+            /// catch a hypothetical `unsafe`-block regression).
+            #[test]
+            fn bytes_slices_are_valid_utf8(s in ".{0,64}") {
+                for part in split(&s, SegmentUnit::Bytes) {
+                    // Coerce through the standard library to prove it.
+                    prop_assert!(core::str::from_utf8(part.as_bytes()).is_ok());
+                }
+            }
+        }
+
+        // ICU-only property tests: grapheme and word round-trip via concat.
+        #[cfg(feature = "icu")]
+        proptest! {
+            #[test]
+            fn graphemes_roundtrip(s in ".{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::Graphemes).collect();
+                let round: alloc::string::String = parts.concat();
+                prop_assert_eq!(round, s);
+            }
+
+            #[test]
+            fn words_roundtrip(s in "[a-zA-Z0-9 .,!?]{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::Words).collect();
+                let round: alloc::string::String = parts.concat();
+                prop_assert_eq!(round, s);
+            }
+
+            #[test]
+            fn sentences_roundtrip(s in "[a-zA-Z0-9 .,!?\n]{0,64}") {
+                let parts: Vec<&str> = split(&s, SegmentUnit::Sentences).collect();
+                let round: alloc::string::String = parts.concat();
+                prop_assert_eq!(round, s);
+            }
+        }
+    }
 }
