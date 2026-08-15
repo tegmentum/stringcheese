@@ -66,6 +66,7 @@ jobs:
           - scud_load
           - hf_tokenizer_json
           - regex_compile_and_match
+          - tiktoken_merges_parse
     steps:
       - uses: actions/checkout@v4
 
