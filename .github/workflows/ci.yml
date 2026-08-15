@@ -3074,7 +3074,7 @@ jobs:
         run: cargo doc --workspace --all-features --no-deps --locked
 
   # ------------------------------------------------------------------
-  # cargo-audit (RustSec advisory scan, optional).
+  # cargo-audit (RustSec advisory scan, hard-fail).
   #
   # Scans `Cargo.lock` against the RustSec advisory database on every
   # push / PR. The accepted set of advisories is captured in
@@ -3083,15 +3083,13 @@ jobs:
   # See `docs/security.md` for the local reproducer and the ignore-
   # policy.
   #
-  # `continue-on-error: true` — the initial pass runs advisory-only.
-  # Promote to hard-fail once the ignore list has been driven down
-  # (the wasmtime 26 -> 46 major bump is the dominant blocker as of
-  # first landing).
+  # Promoted from `continue-on-error: true` once the wasmtime 26 -> 46
+  # bump closed the 19-advisory backlog that dominated the initial
+  # ignore list.
   # ------------------------------------------------------------------
   security-audit:
-    name: security-audit (optional)
+    name: security-audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned tool version — bump deliberately so a new cargo-audit
       # release that reshapes the report format is a visible PR.
@@ -3122,7 +3120,7 @@ jobs:
         run: cargo audit
 
   # ------------------------------------------------------------------
-  # cargo-deny (bans / licenses / sources / advisories, optional).
+  # cargo-deny (bans / licenses / sources / advisories, hard-fail).
   #
   # Broader supply-chain check than cargo-audit alone: license SPDX
   # policy (allow-list of permissive licenses only), duplicate-version
@@ -3131,14 +3129,13 @@ jobs:
   # Configuration lives in `deny.toml` at the workspace root; the
   # ignore list mirrors `.cargo/audit.toml`.
   #
-  # `continue-on-error: true` for the same reason as security-audit —
-  # a first-pass hygiene job promoted to blocking after a stable
-  # window. See `docs/security.md`.
+  # Promoted from `continue-on-error: true` alongside `security-audit`
+  # once the wasmtime 26 -> 46 bump closed the advisory backlog. See
+  # `docs/security.md`.
   # ------------------------------------------------------------------
   dep-policy:
-    name: dep-policy (optional)
+    name: dep-policy
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned tool version — same rationale as CARGO_AUDIT_VERSION.
       CARGO_DENY_VERSION: "0.19.9"
