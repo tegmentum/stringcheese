@@ -24,7 +24,7 @@ icu = ["dep:icu_segmenter", "std"]
 uax14-lines = ["dep:unicode-linebreak", "std"]
 
 [dependencies]
-icu_segmenter    = { version = "1.5", optional = true, features = ["compiled_data"] }
+icu_segmenter    = { version = "2.2", optional = true, features = ["compiled_data"] }
 unicode-linebreak = { version = "0.1", optional = true }
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
