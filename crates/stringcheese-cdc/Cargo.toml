@@ -33,9 +33,40 @@ alloc = ["stringcheese-core/alloc"]
 # is unified for API-surface consistency. This matches the shape
 # `stringcheese-compare`'s `simd` feature declares.
 simd = ["std"]
+# When enabled, the criterion bench harness pulls in best-in-class Rust
+# CDC / rolling-hash oracle crates (`fastcdc` for the FastCDC end-to-end
+# chunker; `gearhash` for the dedicated GEAR rolling hash) and adds
+# side-by-side oracle-comparison bench groups. The feature is off by
+# default because it is bench-only: no library code looks at either
+# oracle crate, and the ordinary `cargo bench -p stringcheese-cdc`
+# invocation must keep working without pulling either extra crate. See
+# `benches/cdc.rs` for the gated groups and `docs/perf/cdc-oracle-gaps.md`
+# for the last-measured gap table. Mirrors the shape
+# `stringcheese-compare` / `stringcheese-align` use.
+oracle-benches = ["dep:fastcdc", "dep:gearhash"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
+# --- optional oracle-comparison bench deps -------------------------------
+#
+# `fastcdc` (4) — Nathan Fiedler's canonical Rust FastCDC implementation.
+# Reference for the FastCDC end-to-end chunker throughput. Zero transitive
+# deps beyond the crate itself. `gearhash` (0.1) — dedicated GEAR
+# rolling-hash crate, reference for scalar per-byte GEAR throughput and
+# (on x86_64 AVX2 / SSE4.2) the SIMD `next_match` throughput. On aarch64
+# `gearhash` falls back to its scalar loop — no NEON backend upstream —
+# so the "simd" lane there is a scalar-vs-scalar comparison; documented
+# in `benches/cdc.rs`. Pulls only `cfg-if` transitively.
+#
+# Both are marked `optional = true` and gated by the `oracle-benches`
+# feature; a plain `cargo build` / `cargo test` / `cargo bench` never
+# pulls them in. They live in `[dependencies]` (not `[dev-dependencies]`)
+# because Cargo does not allow optional dev-deps, and both crates are
+# small enough that the additional Cargo.lock entries are cheap (~3
+# packages including transitive `cfg-if`, well under the 20-entry budget
+# documented in `docs/perf/oracle-gap-summary.md`).
+fastcdc = { version = "4", optional = true }
+gearhash = { version = "0.1", optional = true }
 
 [dev-dependencies]
 stringcheese-corpus = { workspace = true, features = ["alloc"] }

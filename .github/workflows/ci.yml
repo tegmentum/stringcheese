@@ -2495,6 +2495,27 @@ jobs:
             --no-run \
             --locked
 
+      - name: Compile the cdc bench with oracle-benches feature (no run)
+        # Compile-check the feature-gated oracle-comparison bench groups
+        # (`fastcdc`, `gearhash`). Same rationale as the compare-bench /
+        # align-bench jobs above — catch API drift in the optional oracle
+        # crates without pinning a perf budget on a shared runner. See
+        # `crates/stringcheese-cdc/benches/cdc.rs` for the gated groups
+        # and `docs/perf/cdc-oracle-gaps.md` for the last-measured gap
+        # table. Note the earlier `--all-features` step already implies
+        # `oracle-benches` (all features includes it once declared), but
+        # the explicit invocation is preserved for parity with the
+        # compare / align jobs and to keep the CI failure message
+        # specific if a future feature-graph rework breaks either
+        # oracle dep in isolation.
+        run: |
+          cargo bench \
+            -p stringcheese-cdc \
+            --bench cdc \
+            --features oracle-benches \
+            --no-run \
+            --locked
+
   # ------------------------------------------------------------------
   # Index bench compile-check (optional, non-blocking).
   #

@@ -305,6 +305,266 @@ fn bench_gear_digest_of_slice(c: &mut Criterion) {
 #[cfg(not(feature = "simd"))]
 fn bench_gear_digest_of_slice(_c: &mut Criterion) {}
 
+// -------------------------------------------------------------------
+// Oracle-comparison groups (feature-gated on `oracle-benches`).
+//
+// Goal: side-by-side throughput of stringcheese vs best-in-class Rust
+// CDC / rolling-hash crates on identical inputs. Not a correctness
+// oracle — chunk boundaries differ because the two implementations use
+// independent gear-hash tables, so the cut points do not have to match
+// byte-for-byte — but a *perf* oracle: it answers "is stringcheese
+// competitive, or is there real headroom vs the ecosystem?"
+//
+// Oracles chosen (both `optional = true` in `Cargo.toml`, ~1 transitive
+// dep — `cfg-if`):
+//
+// * `fastcdc` (4) — Nathan Fiedler's canonical Rust FastCDC v2020
+//   implementation. Reference for the end-to-end FastCDC chunker
+//   throughput. The `Normalization::Level2` preset here matches the
+//   mask popcount stringcheese's `default_8k` / `default_16k` presets
+//   commit to (paper NLC=2).
+// * `gearhash` (0.1) — dedicated GEAR rolling-hash crate. Reference
+//   for the scalar `roll(byte)` throughput (via `Hasher::update`) and,
+//   on x86_64, the SIMD `next_match` throughput (AVX2 / SSE4.2). On
+//   aarch64 upstream `gearhash` has no NEON backend and falls back to
+//   its scalar loop, so the SIMD lane there is scalar-vs-SIMD-in-name:
+//   the measurement still reports something useful — the "best pure-
+//   scalar next-match sweep" — but the label is honest about the
+//   dispatch target.
+//
+// Every oracle group cycles the same input flavors and sizes as the
+// primary baseline groups so the gap-ratio numbers are directly
+// comparable to the baseline table above.
+// -------------------------------------------------------------------
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_fastcdc_8k(c: &mut Criterion) {
+    // stringcheese: `FastCdc::chunk_boundaries` with `default_8k`.
+    // fastcdc: `fastcdc::v2020::FastCDC::with_level` at (2 KiB, 8 KiB,
+    // 64 KiB) sizes and `Normalization::Level2` — mirrors the mask
+    // popcount stringcheese's preset commits to.
+    let mut group = c.benchmark_group("cdc/oracle/fastcdc/default_8k");
+    let sc = FastCdc::new(FastCdcConfig::default_8k());
+    for (flavor, size, input) in build_inputs() {
+        group.throughput(Throughput::Bytes(size as u64));
+
+        // stringcheese lane — mirrors `bench_fastcdc_8k`
+        group.bench_with_input(
+            BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let boundaries: Vec<ChunkBoundary> = sc.chunk_boundaries(input).collect();
+                    black_box(boundaries);
+                });
+            },
+        );
+
+        // fastcdc-rs lane
+        group.bench_with_input(
+            BenchmarkId::new(format!("fastcdc/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let chunker = fastcdc::v2020::FastCDC::with_level(
+                        input,
+                        2 * 1024,
+                        8 * 1024,
+                        64 * 1024,
+                        fastcdc::v2020::Normalization::Level2,
+                    );
+                    let chunks: Vec<fastcdc::v2020::Chunk> = chunker.collect();
+                    black_box(chunks);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_fastcdc_16k(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cdc/oracle/fastcdc/default_16k");
+    let sc = FastCdc::new(FastCdcConfig::default_16k());
+    for (flavor, size, input) in build_inputs() {
+        group.throughput(Throughput::Bytes(size as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let boundaries: Vec<ChunkBoundary> = sc.chunk_boundaries(input).collect();
+                    black_box(boundaries);
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new(format!("fastcdc/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let chunker = fastcdc::v2020::FastCDC::with_level(
+                        input,
+                        4 * 1024,
+                        16 * 1024,
+                        128 * 1024,
+                        fastcdc::v2020::Normalization::Level2,
+                    );
+                    let chunks: Vec<fastcdc::v2020::Chunk> = chunker.collect();
+                    black_box(chunks);
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_gear_roll_per_byte(c: &mut Criterion) {
+    // stringcheese: `GearHash::roll(byte)` in a tight loop (mirrors
+    // `bench_gear_roll`). gearhash: `Hasher::update(&[byte])`.
+    // `gearhash` internally implements `update` as a byte-at-a-time
+    // scalar shift-add over the whole slice, so passing a full slice
+    // is functionally the same as the per-byte lane in
+    // `bench_gear_roll` and lets `gearhash` show its optimum scalar
+    // throughput.
+    let mut group = c.benchmark_group("cdc/oracle/gear/roll_per_byte");
+    for (flavor, size, input) in build_inputs() {
+        group.throughput(Throughput::Bytes(size as u64));
+
+        // stringcheese lane — matches `bench_gear_roll`'s inner loop
+        group.bench_with_input(
+            BenchmarkId::new(format!("stringcheese/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let mut h = GearHash::new(ROLL_WINDOW);
+                    for &byte in input {
+                        h.roll(byte);
+                    }
+                    black_box(h.digest());
+                });
+            },
+        );
+
+        // gearhash lane — `update` is the byte-at-a-time scalar shift-
+        // add; this is the direct oracle for stringcheese's per-byte
+        // `roll` loop.
+        group.bench_with_input(
+            BenchmarkId::new(format!("gearhash/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let mut h = gearhash::Hasher::default();
+                    h.update(input);
+                    black_box(h.get_hash());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_gear_next_match(c: &mut Criterion) {
+    // stringcheese's SIMD `digest_of_slice` computes the digest over
+    // the whole slice — no boundary-matching. gearhash's `next_match`
+    // is the closest apples-to-apples SIMD entry point: it dispatches
+    // to AVX2 / SSE4.2 on x86_64 (falls back to scalar on aarch64) and
+    // reports the boundary offset of the first hash-mask match. To
+    // sweep the full slice we drain it in a loop, mirroring the
+    // "full-slice hash" shape of the stringcheese SIMD lane.
+    //
+    // The scalar/SIMD label is arch-conditional: on aarch64 both sides
+    // are effectively scalar sweeps (stringcheese uses its NEON
+    // backend when compiled `--features simd`; gearhash has no NEON
+    // backend upstream). The measurement is still meaningful — it
+    // answers "does gearhash's tuned scalar sweep beat stringcheese's
+    // NEON `digest_of_slice`, or vice versa?" — but interpret the mult
+    // with that dispatch difference in mind. Documented in
+    // `docs/perf/cdc-oracle-gaps.md`.
+    //
+    // A zero mask would make `next_match` return immediately on every
+    // byte (0 & anything == 0), so pick a realistic mask with the same
+    // popcount as stringcheese's default_8k `mask_small` (15 bits).
+    // Any bit pattern with that popcount works for a throughput
+    // measurement.
+    const MASK_15_BITS: u64 = 0x0003_5907_0353_0000;
+    let mut group = c.benchmark_group("cdc/oracle/gear/next_match");
+    for (flavor, size, input) in build_inputs() {
+        group.throughput(Throughput::Bytes(size as u64));
+
+        // stringcheese lane — mirrors `bench_gear_digest_of_slice`
+        // (SIMD when compiled `--features simd`, scalar otherwise).
+        // Kept unconditional here rather than `#[cfg(feature =
+        // "simd")]`-gated because the oracle side always runs; a
+        // scalar-vs-scalar lane at least shows the per-byte overhead
+        // of `roll` vs `gearhash::update`.
+        #[cfg(feature = "simd")]
+        {
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese-simd/{flavor}"), size),
+                &input,
+                |b, input| {
+                    b.iter(|| black_box(gear_simd::digest_of_slice(black_box(input))));
+                },
+            );
+        }
+        // Scalar stringcheese fallback (compiled either way; equivalent
+        // to the `roll_per_byte` lane, kept here so the group still has
+        // a stringcheese row when `simd` is off).
+        #[cfg(not(feature = "simd"))]
+        {
+            group.bench_with_input(
+                BenchmarkId::new(format!("stringcheese-scalar/{flavor}"), size),
+                &input,
+                |b, input| {
+                    b.iter(|| {
+                        let mut h = GearHash::new(ROLL_WINDOW);
+                        for &byte in input {
+                            h.roll(byte);
+                        }
+                        black_box(h.digest());
+                    });
+                },
+            );
+        }
+
+        // gearhash lane — dispatches to AVX2 / SSE4.2 on x86_64,
+        // scalar on aarch64. Drain the whole input via repeated
+        // `next_match` calls.
+        group.bench_with_input(
+            BenchmarkId::new(format!("gearhash/{flavor}"), size),
+            &input,
+            |b, input| {
+                b.iter(|| {
+                    let mut h = gearhash::Hasher::default();
+                    let mut offset = 0usize;
+                    while offset < input.len() {
+                        match h.next_match(&input[offset..], MASK_15_BITS) {
+                            Some(step) => offset += step,
+                            None => break,
+                        }
+                    }
+                    black_box(h.get_hash());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+criterion_group!(
+    oracle_benches,
+    bench_oracle_fastcdc_8k,
+    bench_oracle_fastcdc_16k,
+    bench_oracle_gear_roll_per_byte,
+    bench_oracle_gear_next_match,
+);
+
 criterion_group!(
     benches,
     bench_fastcdc_8k,
@@ -315,4 +575,8 @@ criterion_group!(
     bench_rabin_roll,
     bench_gear_digest_of_slice,
 );
+
+#[cfg(feature = "oracle-benches")]
+criterion_main!(benches, oracle_benches);
+#[cfg(not(feature = "oracle-benches"))]
 criterion_main!(benches);

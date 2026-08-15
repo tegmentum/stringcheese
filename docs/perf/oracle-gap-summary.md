@@ -1,8 +1,8 @@
 # Oracle gap summary
 
 Cross-crate roll-up of the `--features oracle-benches` measurements
-taken on `stringcheese-compare` and `stringcheese-align`. Answers the
-question the perf audit posed:
+taken on `stringcheese-compare`, `stringcheese-align`, and
+`stringcheese-cdc`. Answers the question the perf audit posed:
 
 > Are stringcheese's baselines already competitive, or is there real
 > headroom vs best-in-class Rust libraries?
@@ -13,6 +13,8 @@ For per-kernel raw numbers see:
   Hamming, Jaro, Jaro-Winkler)
 * `docs/perf/align-oracle-gaps.md` (NW / SW × linear / affine ×
   score / align)
+* `docs/perf/cdc-oracle-gaps.md` (FastCDC 8k/16k, GEAR roll,
+  GEAR SIMD digest)
 
 ## Oracles used
 
@@ -21,6 +23,8 @@ For per-kernel raw numbers see:
 | `stringcheese-compare`   | `strsim`        | 0.11    | scalar pure-Rust reference for every distance metric | 0 transitive deps        |
 | `stringcheese-compare`   | `triple_accel`  | 0.4     | SIMD-accelerated Levenshtein + Hamming (AVX2/NEON)   | 0 transitive deps        |
 | `stringcheese-align`     | `bio`           | 2.3     | canonical Rust exact NW/SW (Gotoh three-matrix DP)   | **~117 packages**        |
+| `stringcheese-cdc`       | `fastcdc`       | 4.0     | canonical Rust FastCDC v2020 (Fiedler)               | 1 transitive dep (cfg-if) |
+| `stringcheese-cdc`       | `gearhash`      | 0.1     | dedicated GEAR rolling hash (scalar + AVX2/SSE4.2)   | 1 transitive dep (cfg-if) |
 
 The `bio` footprint is the one dep-footprint red flag in this round.
 The `oracle-benches` feature is off by default and only compile-
@@ -37,6 +41,20 @@ Alternative oracles considered and rejected for align:
   not compute the same score as exact NW/SW unless the band spans the
   whole DP. Asymmetric correctness surface makes the throughput
   comparison suspect.
+
+Alternative oracles considered and rejected for cdc:
+
+* `fastcdc-alt` — API-alternative fork of `fastcdc`; no algorithmic
+  coverage over the upstream crate. Duplicate.
+* `chunkrs` / `mothcdc` / `cavs-chunker` — newer / less-established
+  CDC crates. Rejected in favour of the widely-adopted `fastcdc-rs`
+  reference to keep the "canonical Rust ecosystem" bar.
+* `rabin-fingerprint-rs` / other pure-Rust Rabin fingerprint crates —
+  none maintained at reasonable-maturity on crates.io. `Buzhash`
+  similarly has no maintained pure-Rust standalone crate. Those three
+  fingerprint families therefore have no oracle row; their baselines
+  continue to live under the standalone baseline table in
+  `crates/stringcheese-cdc/benches/cdc.rs`'s module doc.
 
 ## Verdict per crate × kernel
 
@@ -75,6 +93,36 @@ Verdict thresholds (task-defined):
 | jaro_winkler  |   32 | strsim       |  0.53× | stringcheese 1.9× ahead       |
 | jaro_winkler  |  256 | strsim       |  0.52× | stringcheese 1.9× ahead       |
 | jaro_winkler  | 2048 | strsim       |  0.39× | stringcheese 2.6× ahead       |
+
+### `stringcheese-cdc`
+
+| kernel                       | size  | flavor | oracle       | mult   | verdict                             |
+| :--------------------------- | ----: | :----- | :----------- | -----: | :---------------------------------- |
+| fastcdc/default_8k           |  1MiB | random | fastcdc      |  1.63× | competitive (fastcdc ahead)         |
+| fastcdc/default_8k           |  1MiB | prose  | fastcdc      |  1.69× | competitive (fastcdc ahead)         |
+| fastcdc/default_8k           | 10MiB | random | fastcdc      |  1.79× | competitive (fastcdc ahead)         |
+| fastcdc/default_8k           | 10MiB | prose  | fastcdc      |  1.38× | competitive (fastcdc ahead)         |
+| fastcdc/default_16k          |  1MiB | random | fastcdc      |  2.15× | **medium gap** (fastcdc-rs ahead)   |
+| fastcdc/default_16k          |  1MiB | prose  | fastcdc      |  1.56× | competitive (fastcdc ahead)         |
+| fastcdc/default_16k          | 10MiB | random | fastcdc      |  1.61× | competitive (fastcdc ahead)         |
+| fastcdc/default_16k          | 10MiB | prose  | fastcdc      |  1.38× | competitive (fastcdc ahead)         |
+| gear/roll_per_byte           |  1MiB | random | gearhash     |  1.04× | competitive (tied)                  |
+| gear/roll_per_byte           | 10MiB | random | gearhash     |  0.85× | competitive (stringcheese 1.2× ahead) |
+| gear/roll_per_byte           | 10MiB | prose  | gearhash     |  1.01× | competitive (tied)                  |
+| gear/next_match (SIMD lane)  |  1MiB | random | gearhash     |  0.58× | stringcheese 1.7× ahead             |
+| gear/next_match (SIMD lane)  |  1MiB | prose  | gearhash     |  0.49× | stringcheese 2.1× ahead             |
+| gear/next_match (SIMD lane)  | 10MiB | random | gearhash     |  0.46× | stringcheese 2.2× ahead             |
+| gear/next_match (SIMD lane)  | 10MiB | prose  | gearhash     |  0.91× | competitive (stringcheese slightly ahead) |
+
+Notes:
+
+* The GEAR SIMD lane on the M-series host compares stringcheese's
+  NEON `digest_of_slice` against gearhash's aarch64 scalar
+  `next_match` — upstream `gearhash` has no NEON backend, so this is
+  vectorised bytes vs a scalar shift-add loop. Re-run on x86_64 for a
+  true SIMD-vs-SIMD head-to-head.
+* `Buzhash`, `PolynomialHash`, `RabinFingerprint` have no oracle rows
+  (no maintained pure-Rust crate at the maturity bar).
 
 ### `stringcheese-align`
 
@@ -135,7 +183,28 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
   already high enough that this is unlikely to be a real workload
   hotspot.
 
-### 3. `compare/{osa, damerau}` — vs `strsim` (~1.8-2× gap)
+### 3. `cdc/fastcdc/{default_8k, default_16k}` — vs `fastcdc-rs` (~1.4-2.2× gap)
+
+* **Gap**: 1.4-1.8× on most rows; one row (1 MiB / random /
+  default_16k) crosses the 2× "medium gap" threshold at 2.15×.
+* **What's likely wrong**: `fastcdc-rs` implements the paper's
+  "rolling two bytes each time" optimisation (per the v2020 module
+  docs, "about a 20% improvement" on Apple M1 over v2016) and holds
+  pre-shifted variants of the gear table (`gear` + `gear_ls`) so a
+  two-byte step costs one memory read from each. stringcheese's
+  `FastCdc` state machine is a plain one-byte-per-step loop.
+* **Estimated cost**: medium. Adding a two-byte-stride inner loop
+  plus a pre-shifted table doubles the code path (min-size skip, one-
+  byte tail, two-byte body) but is well-scoped and would land under
+  the existing `FastCdc` public surface — no API break.
+* **Priority**: sits between the Hamming SIMD row (item 2) and the
+  OSA / Damerau incidental-cleanup rows (item 4). At ~1.6× typical
+  gap and ~2 GiB/s absolute, this is a real workload lever for CDC-
+  heavy pipelines (dedupe / snapshot / rsync-style deltas) — those
+  jobs are IO-adjacent and the CPU side of the chunker is often the
+  bottleneck.
+
+### 4. `compare/{osa, damerau}` — vs `strsim` (~1.8-2× gap)
 
 * **Gap**: below the 2× "medium gap" threshold — competitive.
 * **Priority**: not worth a targeted round. Both would benefit
@@ -149,6 +218,13 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
   territory — not scalar-DP work.
 * **`compare/jaro`, `compare/jaro_winkler`**: stringcheese is 2-3×
   *ahead* of `strsim`. No action needed.
+* **`cdc/fingerprint/gear` (per-byte roll + SIMD digest)**: tied with
+  `gearhash` on the scalar row, 1.7-2.2× *ahead* on the SIMD row
+  (aarch64 dispatch quirk favours stringcheese — see the caveat in
+  `docs/perf/cdc-oracle-gaps.md`). No action needed.
+* **`cdc/fingerprint/{buzhash, polynomial, rabin}`**: no maintained
+  pure-Rust oracle at the maturity bar. Baseline table under the
+  bench file's module doc remains the regression tripwire.
 * **`compare/{search, minhash, ngram, lcs, learned}`**: no comparable
   scalar Rust oracle in the ecosystem worth wiring up right now.
 
@@ -158,8 +234,16 @@ The one clear scalar perf lever surfaced by the initial measurement
 round — `compare/levenshtein` at n ≥ 256 — has been **closed** by the
 rolling-rows autovectorisation pass; stringcheese is now within ~1.2×
 of `strsim` at every size (competitive by the < 2× threshold), and
-1.3× *ahead* of `strsim` at n = 32. Everything else is either
-already best-in-class (align, jaro, jaro_winkler, hamming vs strsim)
-or sub-2× (osa, damerau) or SIMD-territory (hamming vs triple_accel).
-The remaining Levenshtein headroom is bit-parallel Myers territory,
-not scalar DP.
+1.3× *ahead* of `strsim` at n = 32.
+
+The CDC oracle round adds one new scalar perf lever:
+**`cdc/fastcdc` at both presets** trails `fastcdc-rs` by ~1.4-2.2×
+(one row crosses the 2× medium-gap threshold). The identified lever
+is the "rolling two bytes each time" + pre-shifted-gear-table
+optimisation the upstream crate ships; medium-cost, well-scoped,
+non-breaking.
+
+Everything else is either already best-in-class (align, jaro,
+jaro_winkler, hamming vs strsim, gear roll vs gearhash, gear SIMD
+digest vs gearhash on aarch64), sub-2× (osa, damerau), or SIMD-
+territory (hamming vs triple_accel; Levenshtein bit-parallel Myers).
