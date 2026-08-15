@@ -59,7 +59,7 @@
 //! Read:
 //!
 //! * **`detect` ASCII sits at ~650 MiB/s** — a full byte-level scan
-//!   that walks the entire input to verify the snake_case
+//!   that walks the entire input to verify the `snake_case`
 //!   convention. The `accented` flavor short-circuits early
 //!   (mixed-case-plus-diacritics doesn't match any convention;
 //!   `detect` returns `None` after checking a handful of scalars),
