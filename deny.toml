@@ -1,0 +1,152 @@
+# cargo-deny configuration for the stringcheese workspace.
+#
+# `cargo deny check` audits every crate that lands in `Cargo.lock`
+# against four policy pillars — advisories, licenses, bans, sources.
+# The initial pass runs this file green with `continue-on-error: true`
+# in CI; promote to hard-fail once it has stayed clean for a week or
+# two of merge traffic.
+#
+# Docs: https://embarkstudios.github.io/cargo-deny/checks/index.html
+#
+# Every ignore/exception below MUST carry an inline rationale — the
+# goal is a shrinking exception list, not a permanent quiet.
+
+# --------------------------------------------------------------------
+# Target platform expansion.
+#
+# The workspace ships to Linux and macOS hosts plus two WebAssembly
+# targets (wasm32-wasip1, wasm32-unknown-unknown). Every advisory /
+# license / ban check is evaluated against this union; a crate that
+# is only pulled in on a non-listed target does not appear in the
+# report. Extend this list if the CI matrix grows.
+# --------------------------------------------------------------------
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "wasm32-wasip1",
+    "wasm32-unknown-unknown",
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# --------------------------------------------------------------------
+# Advisories (RustSec).
+#
+# The `ignore` list mirrors `.cargo/audit.toml` one-for-one. Keep the
+# two in lockstep — a divergence there means one of the two tools
+# will flag a known-and-accepted advisory on a green tree.
+# --------------------------------------------------------------------
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # wasmtime 26.x — component-model runtime pinned; fixes require
+    # a major bump (26 -> 46). See `.cargo/audit.toml` for the full
+    # per-advisory table.
+    "RUSTSEC-2025-0046",
+    "RUSTSEC-2025-0118",
+    "RUSTSEC-2026-0020",
+    "RUSTSEC-2026-0021",
+    "RUSTSEC-2026-0085",
+    "RUSTSEC-2026-0086",
+    "RUSTSEC-2026-0087",
+    "RUSTSEC-2026-0088",
+    "RUSTSEC-2026-0089",
+    "RUSTSEC-2026-0091",
+    "RUSTSEC-2026-0092",
+    "RUSTSEC-2026-0093",
+    "RUSTSEC-2026-0094",
+    "RUSTSEC-2026-0095",
+    "RUSTSEC-2026-0096",
+    "RUSTSEC-2026-0222",
+    "RUSTSEC-2026-0149",
+    "RUSTSEC-2026-0182",
+    "RUSTSEC-2026-0188",
+
+    # Unmaintained transitives — informational, no CVE. Only the
+    # advisories cargo-deny actually observes on our target matrix
+    # are listed here; the full four-crate table lives in
+    # `.cargo/audit.toml` since cargo-audit is target-agnostic.
+    "RUSTSEC-2025-0058",  # custom_derive  (via bio, oracle-benches only)
+    "RUSTSEC-2025-0057",  # fxhash         (via bio, oracle-benches only)
+    "RUSTSEC-2024-0436",  # paste          (ubiquitous macro helper)
+]
+
+# --------------------------------------------------------------------
+# Licenses.
+#
+# The allow-list below covers every SPDX identifier observed in the
+# workspace's current `Cargo.lock` (see `cargo deny list --layout
+# license` for the full crate-per-license breakdown). Anything not on
+# the list fails the check. Copyleft licenses (GPL-*, AGPL-*,
+# LGPL-*, SSPL-*) are absent by design.
+#
+# `confidence-threshold` is the minimum SPDX-license-detection score
+# accepted; the default 0.8 is fine for our tree.
+# --------------------------------------------------------------------
+[licenses]
+version = 2
+confidence-threshold = 0.8
+# `unused-allowed-license = "allow"` keeps the list forward-looking
+# without warning about entries that no current dep needs (e.g. ISC,
+# MPL-2.0). Trim later if the extra headroom stops earning its keep.
+unused-allowed-license = "allow"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+]
+
+# --------------------------------------------------------------------
+# Bans (crate policy).
+#
+# Multiple-versions is `warn` — the icu4x + wasmtime + serde stacks
+# each carry their own version-pin cycles and eliminating duplicates
+# would require walking every transitive dep. The top offenders as of
+# the initial sweep are:
+#
+#   * icu_provider (1.5 + 2.2)   — icu4x 1.x / 2.x transition
+#   * hashbrown (0.14 + 0.17)    — indexmap / phf drift
+#   * itertools (0.11 + 0.12 + 0.14) — rustc-hash / serde ecosystems
+#
+# Revisit when any of the three lands a majority-adopted upgrade.
+#
+# Wildcards (`*`) in dependency versions are denied outright — those
+# risk pulling in a surprise semver-major on the next lockfile refresh.
+# --------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+# --------------------------------------------------------------------
+# Sources.
+#
+# Only crates.io is trusted. Git deps (unknown-git = "deny") and
+# custom registries (unknown-registry = "deny") both fail the check.
+# A `git = "..."` dep is fine to introduce, but it must be pinned to
+# a specific revision AND added to the `allow-git` list below.
+# --------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
