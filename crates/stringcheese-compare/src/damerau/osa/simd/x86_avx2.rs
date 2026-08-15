@@ -224,6 +224,12 @@ unsafe fn add256(
     scratch_a: &mut [u64; 4],
     scratch_b: &mut [u64; 4],
 ) -> __m256i {
+    // SAFETY: AVX2 target-feature context established by this function's
+    // `#[target_feature(enable = "avx2")]` upholds the AVX2 precondition
+    // of every intrinsic below; `_mm256_storeu_si256` and
+    // `_mm256_loadu_si256` are unaligned and accept any `*const __m256i`
+    // — the `[u64; 4]` scratch buffers are exactly 32 bytes, matching
+    // one AVX2 register.
     unsafe {
         _mm256_storeu_si256(scratch_a.as_mut_ptr().cast::<__m256i>(), a);
         _mm256_storeu_si256(scratch_b.as_mut_ptr().cast::<__m256i>(), b);
@@ -268,6 +274,10 @@ unsafe fn shl1_256(v: __m256i, hi_lanes_mask: __m256i) -> __m256i {
 #[target_feature(enable = "avx2")]
 unsafe fn bit_at(v: __m256i, lane: usize, lane_bit: usize, scratch: &mut [u64; 4]) -> bool {
     debug_assert!(lane < 4 && lane_bit < W_SCALAR);
+    // SAFETY: AVX2 target-feature context established by this function's
+    // `#[target_feature(enable = "avx2")]` upholds the AVX2 precondition
+    // of `_mm256_storeu_si256`; the unaligned store accepts any
+    // `*const __m256i` and `scratch` is exactly 32 bytes.
     unsafe {
         _mm256_storeu_si256(scratch.as_mut_ptr().cast::<__m256i>(), v);
     }
