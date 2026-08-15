@@ -3214,6 +3214,7 @@ dependencies = [
 name = "stringcheese-icu-case"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "proptest",
  "stringcheese-scud",
  "wit-parser 0.230.0",

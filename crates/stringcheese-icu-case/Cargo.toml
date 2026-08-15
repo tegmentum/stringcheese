@@ -31,8 +31,28 @@ stringcheese-scud = { workspace = true }
 # the `stringcheese-tokenizer-component` crate's approach.
 wit-parser = "0.230"
 
+# Criterion bench harness — workspace-inherited so every bench-adopting
+# crate tracks the same version. See `benches/icu_case.rs` for the
+# groups it drives (ascii / latin1 / mixed) × (to_upper / to_lower /
+# to_title / fold) × (256 / 1024 / 16384). Used to demonstrate the
+# ASCII fast-path speedup for non-Turkic locales.
+criterion = { workspace = true }
+
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
+
+# ---------------------------------------------------------------------------
+# Bench harness — mirrors the shape used by the sibling compute-heavy
+# crates (`stringcheese-normalize`, `stringcheese-manip`, ...). `harness =
+# false` so criterion owns `main`. Run with `cargo bench -p
+# stringcheese-icu-case`. The bench covers all four CaseEngine
+# operations across three flavors (ASCII / Latin-1 / mixed) and three
+# input sizes (256 / 1024 / 16384 bytes) — the ASCII rows demonstrate
+# the fast-path win; Latin-1 and mixed rows are the slow-path baseline.
+# ---------------------------------------------------------------------------
+[[bench]]
+name = "icu_case"
+harness = false
 
 [lints]
 workspace = true

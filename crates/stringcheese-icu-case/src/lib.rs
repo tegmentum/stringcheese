@@ -255,8 +255,21 @@ impl<'a> CaseEngine<'a> {
     /// Walks the CLDR fallback chain: the pack with the most specific
     /// tag matching `locale` wins, then progressively less-specific
     /// ancestors, then root Unicode lowercasing.
+    ///
+    /// # ASCII fast path
+    ///
+    /// When `input.is_ascii()` and `locale` does not carry an ASCII
+    /// case tailoring (i.e. is not Turkish or Latin-script
+    /// Azerbaijani; see [`locale_has_ascii_tailoring`]), the pipeline
+    /// reduces to [`str::to_ascii_lowercase`]. Root Unicode
+    /// lowercasing on ASCII scalars is byte-identical to
+    /// ASCII-lowercasing for every non-Turkic locale, and the
+    /// bulk-`is_ascii` scan is SIMD-accelerated on aarch64 / `x86_64`.
     #[must_use]
     pub fn to_lower(&self, input: &str, locale: &str) -> String {
+        if input.is_ascii() && !locale_has_ascii_tailoring(locale) {
+            return input.to_ascii_lowercase();
+        }
         let mut out = String::with_capacity(input.len());
         for c in input.chars() {
             self.map_lower_char(c, locale, &mut out);
@@ -265,8 +278,18 @@ impl<'a> CaseEngine<'a> {
     }
 
     /// Uppercase `input` under the given locale.
+    ///
+    /// # ASCII fast path
+    ///
+    /// Same shape as [`to_lower`](Self::to_lower): on ASCII input
+    /// with a locale that has no ASCII tailoring
+    /// ([`locale_has_ascii_tailoring`] returns `false`), the pipeline
+    /// reduces to [`str::to_ascii_uppercase`].
     #[must_use]
     pub fn to_upper(&self, input: &str, locale: &str) -> String {
+        if input.is_ascii() && !locale_has_ascii_tailoring(locale) {
+            return input.to_ascii_uppercase();
+        }
         let mut out = String::with_capacity(input.len());
         for c in input.chars() {
             self.map_upper_char(c, locale, &mut out);
@@ -296,6 +319,31 @@ impl<'a> CaseEngine<'a> {
     ) -> Result<String, CaseError> {
         if matches!(options.boundary, TitleBoundary::Sentences) {
             return Err(CaseError::UnsupportedTitleMode("sentences"));
+        }
+        // ASCII fast path — same rationale as `to_lower` / `to_upper`.
+        // Word-boundary detection is `is_title_boundary`, which on
+        // ASCII chars matches whitespace or ASCII punctuation; both
+        // predicates are cheap byte-level checks. Uppercasing /
+        // lowercasing each non-boundary byte reduces to the ASCII
+        // primitives.
+        if input.is_ascii() && !locale_has_ascii_tailoring(locale) {
+            let mut out = String::with_capacity(input.len());
+            let mut at_boundary = true;
+            for &b in input.as_bytes() {
+                let c = b as char;
+                if is_title_boundary(c) {
+                    at_boundary = true;
+                    out.push(c);
+                } else if at_boundary {
+                    out.push(c.to_ascii_uppercase());
+                    at_boundary = false;
+                } else if options.lowercase_tail {
+                    out.push(c.to_ascii_lowercase());
+                } else {
+                    out.push(c);
+                }
+            }
+            return Ok(out);
         }
         let mut out = String::with_capacity(input.len());
         let mut at_boundary = true;
@@ -327,6 +375,15 @@ impl<'a> CaseEngine<'a> {
     /// pack that ships a fold entry ships the same target scalar.
     #[must_use]
     pub fn fold(&self, input: &str, mode: FoldMode) -> String {
+        // ASCII fast path — case folding on ASCII scalars per
+        // CaseFolding.txt is byte-identical to ASCII lowercasing for
+        // every non-Turkic mode. `FoldMode::FullTurkic` explicitly
+        // remaps ASCII `I` → `ı` (U+0131, non-ASCII) so it cannot
+        // fast-path. Simple and Full modes never remap ASCII to
+        // non-ASCII, so `to_ascii_lowercase` is the whole answer.
+        if input.is_ascii() && !matches!(mode, FoldMode::FullTurkic) {
+            return input.to_ascii_lowercase();
+        }
         let mut out = String::with_capacity(input.len());
         for c in input.chars() {
             self.fold_char(c, mode, &mut out);
@@ -542,6 +599,66 @@ pub fn case_locale_alias_for_origin(tag: &str, origin: &str) -> Option<&'static 
         return None;
     }
     case_locale_alias(tag)
+}
+
+/// True iff a locale tag tailors ASCII scalars under this engine's
+/// pack lookup.
+///
+/// This is the gate that ships the [`CaseEngine`]'s ASCII fast paths
+/// (`to_lower` / `to_upper` / `to_title` / `fold`). Every locale that
+/// might remap an ASCII scalar to something other than the default
+/// `char::to_uppercase` / `char::to_lowercase` result must be
+/// deny-listed here so those inputs fall through to the pack-walking
+/// slow path.
+///
+/// The Phase 6 deny-list is minimal — exactly the Turkic-I family:
+///
+/// * **Turkish** (`tr`, `tr-*`) — every `tr-*` tag walks the fallback
+///   chain to bare `tr`, which pack-matches the Turkish pack; that
+///   pack ships `LocaleOverrideLower` / `LocaleOverrideUpper` context
+///   rules that remap ASCII `I` → `ı` and ASCII `i` → `İ`.
+/// * **Azerbaijani Latin** (`az`, `az-Latn`, `az-Latn-*`, `az-<region>`)
+///   — resolves to the Turkish pack via [`case_locale_alias`]. CLDR's
+///   default script for Azerbaijani is Latin, so a region-tagged `az-AZ`
+///   (no script subtag) inherits the same rules.
+///
+/// **Cyrillic-script Azerbaijani** (`az-Cyrl`, `az-Cyrl-*`) is
+/// deliberately NOT deny-listed: [`case_locale_alias_for_origin`]
+/// suppresses the `az → tr` alias whenever the origin carries a
+/// `Cyrl` script tag, so ASCII scalars under `az-Cyrl-*` fall through
+/// to the default Rust case rules — byte-identical to
+/// `to_ascii_upper` / `to_ascii_lower`.
+///
+/// The predicate is a byte-level scan of the first one or two
+/// subtags; it never allocates.
+#[must_use]
+pub fn locale_has_ascii_tailoring(locale: &str) -> bool {
+    let mut parts = locale.split('-');
+    let Some(lang) = parts.next() else {
+        return false;
+    };
+    if lang.eq_ignore_ascii_case("tr") {
+        return true;
+    }
+    if lang.eq_ignore_ascii_case("az") {
+        // `az` or `az-<subtag>` — check whether the second subtag is
+        // an explicit script tag. A four-letter subtag is a BCP 47
+        // script; `Cyrl` is the only script Azerbaijani uses that
+        // does NOT share Turkic-I rules. Anything else (no script
+        // tag, `Latn` script tag, region tag, etc.) inherits the
+        // Turkish tailorings via the `az → tr` alias.
+        let Some(next) = parts.next() else {
+            return true; // bare `az` — CLDR default script is Latin.
+        };
+        if next.len() == 4 {
+            // Explicit script subtag — deny-list unless it's `Cyrl`.
+            return !next.eq_ignore_ascii_case("Cyrl");
+        }
+        // Non-script second subtag (region etc.) — CLDR default
+        // script is Latin, so the alias still fires.
+        return true;
+    }
+    false
 }
 
 /// True iff `locale` carries the given four-letter script subtag.
@@ -935,6 +1052,245 @@ mod tests {
         let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
         let engine = CaseEngine::new(vec![tr_pack]);
         assert_eq!(engine.to_lower("\u{0130}", "tr"), "i");
+    }
+
+    // -----------------------------------------------------------------------
+    // ASCII fast-path differential tests.
+    //
+    // The four `CaseEngine` operations short-circuit ASCII input under
+    // any non-Turkic locale to `str::to_ascii_*` — bypassing the
+    // pack-walking loop entirely. The invariant to enforce is byte-
+    // for-byte equality with the full pipeline across an ASCII corpus
+    // for every locale the deny-list decides for. The deny-list must
+    // fire for `tr`, `tr-*`, `az`, `az-Latn`, `az-Latn-*`, `az-<region>`
+    // and NOT fire for `az-Cyrl-*` — the test corpus exercises both
+    // sides.
+    // -----------------------------------------------------------------------
+
+    /// Locales the fast-path should NOT deny-list — must be
+    /// byte-identical to the slow path on ASCII.
+    const FAST_LOCALES: &[&str] = &[
+        "en",
+        "en-US",
+        "de",
+        "de-DE",
+        "fr",
+        "ru",
+        "zh",
+        "zh-Hant",
+        "az-Cyrl",
+        "az-Cyrl-AZ",
+    ];
+
+    /// Locales the fast-path MUST deny-list — the slow-path must fire
+    /// so the Turkic-I rules apply.
+    const TURKIC_LOCALES: &[&str] = &["tr", "tr-TR", "az", "az-Latn", "az-Latn-AZ", "az-AZ"];
+
+    /// The full ASCII corpus every differential test walks.
+    fn ascii_corpus() -> alloc::vec::Vec<alloc::string::String> {
+        use alloc::string::ToString;
+        alloc::vec![
+            alloc::string::String::new(),
+            "a".to_string(),
+            "I".to_string(),
+            "i".to_string(),
+            "ISTANBUL".to_string(),
+            "istanbul".to_string(),
+            "Hello, World!".to_string(),
+            "MixedCASE_identifier_42".to_string(),
+            "  leading and trailing   ".to_string(),
+            "\thas\ttabs\nand\nnewlines\r".to_string(),
+            "control\x07chars\x1Fembedded".to_string(),
+            "punctuation!?.,;:'\"()[]{}<>-_=+*/\\|@#$%^&`~".to_string(),
+            "digits 0123456789 and letters".to_string(),
+            (0x20u8..=0x7E)
+                .map(|b| b as char)
+                .collect::<alloc::string::String>(),
+            (0x00u8..=0x7F)
+                .map(|b| b as char)
+                .collect::<alloc::string::String>(),
+        ]
+    }
+
+    /// Rebuild the pre-fast-path body of `to_lower` — used as the
+    /// oracle for the differential tests.
+    fn to_lower_slow(engine: &CaseEngine<'_>, input: &str, locale: &str) -> alloc::string::String {
+        let mut out = alloc::string::String::with_capacity(input.len());
+        for c in input.chars() {
+            engine.map_lower_char(c, locale, &mut out);
+        }
+        out
+    }
+
+    fn to_upper_slow(engine: &CaseEngine<'_>, input: &str, locale: &str) -> alloc::string::String {
+        let mut out = alloc::string::String::with_capacity(input.len());
+        for c in input.chars() {
+            engine.map_upper_char(c, locale, &mut out);
+        }
+        out
+    }
+
+    fn to_title_slow(
+        engine: &CaseEngine<'_>,
+        input: &str,
+        locale: &str,
+        options: TitleOptions,
+    ) -> alloc::string::String {
+        let mut out = alloc::string::String::with_capacity(input.len());
+        let mut at_boundary = true;
+        for c in input.chars() {
+            if is_title_boundary(c) {
+                at_boundary = true;
+                out.push(c);
+                continue;
+            }
+            if at_boundary {
+                engine.map_upper_char(c, locale, &mut out);
+                at_boundary = false;
+            } else if options.lowercase_tail {
+                engine.map_lower_char(c, locale, &mut out);
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn fold_slow(engine: &CaseEngine<'_>, input: &str, mode: FoldMode) -> alloc::string::String {
+        let mut out = alloc::string::String::with_capacity(input.len());
+        for c in input.chars() {
+            engine.fold_char(c, mode, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn ascii_fast_path_lower_matches_slow_path_across_locales() {
+        let (en, tr) = engine_with_en_and_tr();
+        let en_pack = CasePack::from_scud_bytes(&en).unwrap();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![en_pack, tr_pack]);
+        for input in ascii_corpus() {
+            assert!(input.is_ascii(), "corpus stayed ASCII: {input:?}");
+            for &locale in FAST_LOCALES.iter().chain(TURKIC_LOCALES.iter()) {
+                let fast = engine.to_lower(&input, locale);
+                let slow = to_lower_slow(&engine, &input, locale);
+                assert_eq!(
+                    fast, slow,
+                    "to_lower diverged: locale={locale:?} input={input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_fast_path_upper_matches_slow_path_across_locales() {
+        let (en, tr) = engine_with_en_and_tr();
+        let en_pack = CasePack::from_scud_bytes(&en).unwrap();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![en_pack, tr_pack]);
+        for input in ascii_corpus() {
+            assert!(input.is_ascii(), "corpus stayed ASCII: {input:?}");
+            for &locale in FAST_LOCALES.iter().chain(TURKIC_LOCALES.iter()) {
+                let fast = engine.to_upper(&input, locale);
+                let slow = to_upper_slow(&engine, &input, locale);
+                assert_eq!(
+                    fast, slow,
+                    "to_upper diverged: locale={locale:?} input={input:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_fast_path_title_matches_slow_path_across_locales() {
+        let (en, tr) = engine_with_en_and_tr();
+        let en_pack = CasePack::from_scud_bytes(&en).unwrap();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![en_pack, tr_pack]);
+        for input in ascii_corpus() {
+            assert!(input.is_ascii(), "corpus stayed ASCII: {input:?}");
+            for &locale in FAST_LOCALES.iter().chain(TURKIC_LOCALES.iter()) {
+                for &lowercase_tail in &[true, false] {
+                    let options = TitleOptions {
+                        boundary: TitleBoundary::Words,
+                        lowercase_tail,
+                    };
+                    let fast = engine.to_title(&input, locale, options).unwrap();
+                    let slow = to_title_slow(&engine, &input, locale, options);
+                    assert_eq!(
+                        fast, slow,
+                        "to_title diverged: locale={locale:?} lowercase_tail={lowercase_tail} input={input:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_fast_path_fold_matches_slow_path_across_modes() {
+        // fold takes no locale; walk every FoldMode instead. Simple
+        // and Full fast-path, FullTurkic goes through the slow path
+        // (I → ı is a non-ASCII expansion).
+        let (en, tr) = engine_with_en_and_tr();
+        let en_pack = CasePack::from_scud_bytes(&en).unwrap();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![en_pack, tr_pack]);
+        for input in ascii_corpus() {
+            assert!(input.is_ascii(), "corpus stayed ASCII: {input:?}");
+            for &mode in &[FoldMode::Simple, FoldMode::Full, FoldMode::FullTurkic] {
+                let fast = engine.fold(&input, mode);
+                let slow = fold_slow(&engine, &input, mode);
+                assert_eq!(fast, slow, "fold diverged: mode={mode:?} input={input:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn ascii_fast_path_preserves_turkish_i_semantics() {
+        // The Turkish-i rules are the whole reason for the deny-list.
+        // These lock in that the deny-list fires for the two ASCII
+        // inputs the tr / az packs remap.
+        let (_en, tr) = engine_with_en_and_tr();
+        let tr_pack = CasePack::from_scud_bytes(&tr).unwrap();
+        let engine = CaseEngine::new(vec![tr_pack]);
+        // to_upper("i", "tr") must be dotted-I ("İ" = U+0130), NOT
+        // ASCII "I" (which is what the fast path would return).
+        assert_eq!(engine.to_upper("i", "tr"), "\u{0130}");
+        // to_lower("I", "tr") must be dotless-i ("ı" = U+0131), NOT
+        // ASCII "i".
+        assert_eq!(engine.to_lower("I", "tr"), "\u{0131}");
+        // Same for Azerbaijani (aliased to tr).
+        assert_eq!(engine.to_upper("i", "az"), "\u{0130}");
+        assert_eq!(engine.to_lower("I", "az-Latn"), "\u{0131}");
+        assert_eq!(engine.to_upper("i", "az-AZ"), "\u{0130}");
+        // FoldMode::FullTurkic must map I → ı even on ASCII input.
+        assert_eq!(engine.fold("I", FoldMode::FullTurkic), "\u{0131}");
+    }
+
+    #[test]
+    fn locale_has_ascii_tailoring_matches_alias_table() {
+        // Turkish + Latin-script Azerbaijani are deny-listed.
+        assert!(locale_has_ascii_tailoring("tr"));
+        assert!(locale_has_ascii_tailoring("TR"));
+        assert!(locale_has_ascii_tailoring("tr-TR"));
+        assert!(locale_has_ascii_tailoring("tr-Cyrl")); // still Turkish rules
+        assert!(locale_has_ascii_tailoring("az"));
+        assert!(locale_has_ascii_tailoring("AZ"));
+        assert!(locale_has_ascii_tailoring("az-Latn"));
+        assert!(locale_has_ascii_tailoring("az-Latn-AZ"));
+        assert!(locale_has_ascii_tailoring("az-AZ")); // no script → default Latin
+
+        // Cyrillic-script Azerbaijani + everything else: NOT deny-listed.
+        assert!(!locale_has_ascii_tailoring("az-Cyrl"));
+        assert!(!locale_has_ascii_tailoring("az-Cyrl-AZ"));
+        assert!(!locale_has_ascii_tailoring("en"));
+        assert!(!locale_has_ascii_tailoring("en-US"));
+        assert!(!locale_has_ascii_tailoring("de"));
+        assert!(!locale_has_ascii_tailoring("fr"));
+        assert!(!locale_has_ascii_tailoring("ru"));
+        assert!(!locale_has_ascii_tailoring("zh"));
+        assert!(!locale_has_ascii_tailoring(""));
     }
 
     #[test]

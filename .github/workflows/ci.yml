@@ -867,6 +867,49 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # stringcheese-icu-case bench compile-check (optional, non-blocking).
+  #
+  # `stringcheese-icu-case` is the WIT-i18n Phase 1 case-mapping
+  # engine. Its criterion bench harness lives at
+  # `crates/stringcheese-icu-case/benches/icu_case.rs` and covers the
+  # four operations (`to_upper` / `to_lower` / `to_title` / `fold`)
+  # across three flavors (ASCII / Latin-1 / mixed) × three sizes
+  # (256 / 1024 / 16384 bytes) × six locales. The primary purpose is
+  # to lock in the ASCII fast-path win on the non-Turkic locales and
+  # to keep the Turkish / Azerbaijani-Latin rows on the slow path.
+  #
+  # Same rationale as the sibling `-bench` jobs above — `--no-run`
+  # for a compile-only smoke check, `continue-on-error: true` so a
+  # noisy or transient bench-only failure never wedges an unrelated
+  # PR. Contributors who need real numbers run the bench locally on
+  # a quiet host.
+  # ------------------------------------------------------------------
+  icu-case-bench:
+    name: icu-case bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: icu-case-bench-stable
+
+      - name: Compile the icu-case bench (no run)
+        run: |
+          cargo bench \
+            -p stringcheese-icu-case \
+            --bench icu_case \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # Tokenizer WIT component smoke test.
   #
   # Phase 7 of the tokenizer subsystem design
