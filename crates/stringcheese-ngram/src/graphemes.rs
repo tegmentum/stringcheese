@@ -15,13 +15,14 @@ use alloc::vec::Vec;
 
 use stringcheese_segment::{SegmentUnit, split};
 
-/// Iterator yielding every `n`-grapheme sliding window as an owned
-/// `String`.
+/// Iterator yielding every `n`-grapheme sliding window as a `&str`
+/// slice of the input.
 ///
-/// Grapheme-cluster boundaries can span multiple scalars, so the
-/// concatenated gram doesn't share bytes with the original input in
-/// a stable way when the input's grapheme structure isn't purely
-/// scalar-aligned. Owned strings sidestep the lifetime headache.
+/// Grams are byte slices of the caller's `text` and share its
+/// lifetime — no per-gram heap allocation on either the ASCII fast
+/// path or the ICU4X slow path. A single up-front `Vec<usize>` of
+/// grapheme-cluster boundary offsets is built on the slow path (the
+/// fast path avoids even that).
 ///
 /// ## ASCII fast-path
 ///
@@ -37,7 +38,8 @@ use stringcheese_segment::{SegmentUnit, split};
 /// # Panics
 ///
 /// Panics on `n == 0`.
-pub fn grapheme_ngrams(text: &str, n: usize) -> impl Iterator<Item = String> + '_ {
+#[inline]
+pub fn grapheme_ngrams(text: &str, n: usize) -> impl Iterator<Item = &str> + '_ {
     assert!(n > 0, "n must be > 0");
     // Fast path: pure ASCII with no CR (which would combine with a
     // following LF into a single grapheme per UAX #29 GB3). Each
@@ -51,10 +53,24 @@ pub fn grapheme_ngrams(text: &str, n: usize) -> impl Iterator<Item = String> + '
             end: count,
         })
     } else {
-        let clusters: Vec<&str> = split(text, SegmentUnit::Graphemes).collect();
-        let count = clusters.len().checked_sub(n).map_or(0, |k| k + 1);
+        // Slow path: collect grapheme-cluster start offsets, plus
+        // one final entry equal to `text.len()`. Grapheme clusters
+        // are contiguous, so we can accumulate offsets by summing
+        // per-cluster byte lengths without any pointer arithmetic.
+        let mut boundaries: Vec<usize> = Vec::new();
+        let mut offset: usize = 0;
+        for c in split(text, SegmentUnit::Graphemes) {
+            boundaries.push(offset);
+            offset += c.len();
+        }
+        boundaries.push(offset);
+        // `boundaries` now has `(num_clusters + 1)` entries; a valid
+        // n-gram at index `i` uses `boundaries[i]..boundaries[i + n]`,
+        // so gram count is `boundaries.len().saturating_sub(n)`.
+        let count = boundaries.len().saturating_sub(n);
         GraphemeNGrams::Icu(IcuSlow {
-            clusters,
+            text,
+            boundaries,
             n,
             i: 0,
             end: count,
@@ -78,16 +94,18 @@ struct AsciiFast<'a> {
 }
 
 struct IcuSlow<'a> {
-    clusters: Vec<&'a str>,
+    text: &'a str,
+    boundaries: Vec<usize>,
     n: usize,
     i: usize,
     end: usize,
 }
 
-impl Iterator for GraphemeNGrams<'_> {
-    type Item = String;
+impl<'a> Iterator for GraphemeNGrams<'a> {
+    type Item = &'a str;
 
-    fn next(&mut self) -> Option<String> {
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
         match self {
             GraphemeNGrams::Ascii(s) => {
                 if s.i >= s.end {
@@ -95,7 +113,7 @@ impl Iterator for GraphemeNGrams<'_> {
                 }
                 // Byte indexing on pure ASCII always lands on a
                 // UTF-8 code-point boundary, so this slice is valid.
-                let gram = s.text[s.i..s.i + s.n].to_string();
+                let gram = &s.text[s.i..s.i + s.n];
                 s.i += 1;
                 Some(gram)
             }
@@ -103,13 +121,15 @@ impl Iterator for GraphemeNGrams<'_> {
                 if s.i >= s.end {
                     return None;
                 }
-                let gram = s.clusters[s.i..s.i + s.n].concat();
+                let start = s.boundaries[s.i];
+                let end = s.boundaries[s.i + s.n];
                 s.i += 1;
-                Some(gram)
+                Some(&s.text[start..end])
             }
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining = match self {
             GraphemeNGrams::Ascii(s) => s.end - s.i,
@@ -123,6 +143,10 @@ impl ExactSizeIterator for GraphemeNGrams<'_> {}
 
 /// Padded variant — prepends `n - 1` [`SENTINEL_STR`] sentinels at
 /// the start and appends `n - 1` at the end.
+///
+/// Returns an owned `String` per gram: padding sentinels are not
+/// contiguous with the input's grapheme clusters, so a borrowed
+/// `&str` view of the padded window isn't representable.
 ///
 /// # Panics
 ///
@@ -155,7 +179,7 @@ mod tests {
     #[test]
     fn ascii_grapheme_grams_match_char_grams() {
         // No combining marks — one grapheme per code point.
-        let g: Vec<String> = grapheme_ngrams("hello", 3).collect();
+        let g: Vec<&str> = grapheme_ngrams("hello", 3).collect();
         assert_eq!(g, vec!["hel", "ell", "llo"]);
     }
 
@@ -164,7 +188,7 @@ mod tests {
         // Family-emoji ZWJ sequence — one grapheme, several scalars.
         // Bigrams over "👨‍👩‍👧‍👦xy" should produce two grams:
         //   [family, x] and [x, y].
-        let g: Vec<String> = grapheme_ngrams("👨\u{200D}👩\u{200D}👧\u{200D}👦xy", 2).collect();
+        let g: Vec<&str> = grapheme_ngrams("👨\u{200D}👩\u{200D}👧\u{200D}👦xy", 2).collect();
         assert_eq!(g.len(), 2);
         // First gram carries the whole emoji plus 'x'.
         assert!(g[0].ends_with('x'));
@@ -173,7 +197,7 @@ mod tests {
 
     #[test]
     fn empty_when_short() {
-        let g: Vec<String> = grapheme_ngrams("hi", 5).collect();
+        let g: Vec<&str> = grapheme_ngrams("hi", 5).collect();
         assert!(g.is_empty());
     }
 
@@ -197,7 +221,7 @@ mod tests {
     fn ascii_fast_path_matches_byte_ngrams_n3() {
         let text = "the quick brown fox jumps over the lazy dog. ";
         for n in 1..=6 {
-            let g: Vec<String> = grapheme_ngrams(text, n).collect();
+            let g: Vec<&str> = grapheme_ngrams(text, n).collect();
             let b: Vec<&[u8]> = byte_ngrams(text.as_bytes(), n).collect();
             assert_eq!(g.len(), b.len(), "n={n} count mismatch");
             for (i, (gi, bi)) in g.iter().zip(b.iter()).enumerate() {
@@ -209,7 +233,7 @@ mod tests {
     #[test]
     fn ascii_fast_path_short_input() {
         // n > len — no grams either way.
-        let g: Vec<String> = grapheme_ngrams("hi", 5).collect();
+        let g: Vec<&str> = grapheme_ngrams("hi", 5).collect();
         let b: Vec<&[u8]> = byte_ngrams(b"hi", 5).collect();
         assert!(g.is_empty());
         assert_eq!(g.len(), b.len());
@@ -225,7 +249,7 @@ mod tests {
             .map(char::from)
             .collect();
         for n in [1, 2, 3, 5] {
-            let g: Vec<String> = grapheme_ngrams(&ascii, n).collect();
+            let g: Vec<&str> = grapheme_ngrams(&ascii, n).collect();
             let b: Vec<&[u8]> = byte_ngrams(ascii.as_bytes(), n).collect();
             assert_eq!(g.len(), b.len(), "n={n}");
             for (i, (gi, bi)) in g.iter().zip(b.iter()).enumerate() {
@@ -239,7 +263,7 @@ mod tests {
         // The fast-path is gated off CR so CRLF still splits as a
         // single grapheme cluster. Confirms the qualifier is enforced.
         let text = "a\r\nb";
-        let g: Vec<String> = grapheme_ngrams(text, 2).collect();
+        let g: Vec<&str> = grapheme_ngrams(text, 2).collect();
         // Grapheme clusters: "a", "\r\n", "b" -> 2 bigrams:
         //   ["a" + "\r\n", "\r\n" + "b"].
         assert_eq!(g, vec!["a\r\n", "\r\nb"]);
@@ -252,11 +276,31 @@ mod tests {
         // conservatively routes any `\r`-bearing input through the
         // slow path, and the result must still be correct.
         let text = "a\rb";
-        let g: Vec<String> = grapheme_ngrams(text, 2).collect();
+        let g: Vec<&str> = grapheme_ngrams(text, 2).collect();
         let b: Vec<&[u8]> = byte_ngrams(text.as_bytes(), 2).collect();
         assert_eq!(g.len(), b.len());
         for (gi, bi) in g.iter().zip(b.iter()) {
             assert_eq!(gi.as_bytes(), *bi);
+        }
+    }
+
+    #[test]
+    fn slow_path_utf8_slice_boundaries_are_valid() {
+        // Pure UTF-8 multi-byte input with no ASCII — forces the ICU
+        // slow path. Each Cyrillic scalar is 2 bytes and no combining
+        // marks, so one grapheme per scalar. Verifies that the
+        // boundary-accumulation slice math lands on valid UTF-8
+        // boundaries for every gram.
+        let text = "быстрая";
+        let g: Vec<&str> = grapheme_ngrams(text, 3).collect();
+        // 7 clusters, 3-grams -> 5 grams.
+        assert_eq!(g.len(), 5);
+        // Each gram is 3 scalars * 2 bytes = 6 bytes.
+        for gram in &g {
+            assert_eq!(gram.len(), 6);
+            // If bytes were invalid the slice op above would have
+            // panicked; belt-and-braces: chars() round-trips.
+            assert_eq!(gram.chars().count(), 3);
         }
     }
 }
