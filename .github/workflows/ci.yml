@@ -44,7 +44,32 @@ jobs:
           key: test-${{ matrix.os }}-${{ matrix.rust }}
 
       - name: Run tests
-        run: cargo test --workspace --all-features --locked
+        # The six `stringcheese-*-component` crates pull in wasmtime
+        # 46 as a dev-dep for their component-model smoke tests (bumped
+        # from 26 to close 19 advisories including RUSTSEC-2026-0095 /
+        # RUSTSEC-2026-0096 critical sandbox-escapes — see
+        # docs/security.md). wasmtime 46 requires rustc 1.94; the
+        # workspace runtime MSRV stays at 1.88 (the component crates'
+        # own public API compiles on 1.88, only their dev-deps need the
+        # newer toolchain), so the MSRV row here excludes them from the
+        # test sweep. The stable row still exercises the full workspace
+        # + component smoke tests via the un-excluded invocation. If a
+        # new `stringcheese-*-component` crate lands that inherits the
+        # wasmtime dev-dep, add it to the exclude list here too.
+        run: |
+          if [ "${{ matrix.rust }}" = "1.88" ]; then
+            cargo test \
+              --workspace \
+              --exclude stringcheese-tokenizer-component \
+              --exclude stringcheese-icu-case-component \
+              --exclude stringcheese-icu-collation-component \
+              --exclude stringcheese-icu-datetime-component \
+              --exclude stringcheese-icu-linebreak-component \
+              --exclude stringcheese-icu-segment-component \
+              --all-features --locked
+          else
+            cargo test --workspace --all-features --locked
+          fi
 
   # ------------------------------------------------------------------
   # Clippy. `-D warnings` promotes every clippy warning to a hard failure.
@@ -3049,7 +3074,7 @@ jobs:
         run: cargo doc --workspace --all-features --no-deps --locked
 
   # ------------------------------------------------------------------
-  # cargo-audit (RustSec advisory scan, optional).
+  # cargo-audit (RustSec advisory scan, hard-fail).
   #
   # Scans `Cargo.lock` against the RustSec advisory database on every
   # push / PR. The accepted set of advisories is captured in
@@ -3058,15 +3083,13 @@ jobs:
   # See `docs/security.md` for the local reproducer and the ignore-
   # policy.
   #
-  # `continue-on-error: true` — the initial pass runs advisory-only.
-  # Promote to hard-fail once the ignore list has been driven down
-  # (the wasmtime 26 -> 46 major bump is the dominant blocker as of
-  # first landing).
+  # Promoted from `continue-on-error: true` once the wasmtime 26 -> 46
+  # bump closed the 19-advisory backlog that dominated the initial
+  # ignore list.
   # ------------------------------------------------------------------
   security-audit:
-    name: security-audit (optional)
+    name: security-audit
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned tool version — bump deliberately so a new cargo-audit
       # release that reshapes the report format is a visible PR.
@@ -3097,7 +3120,7 @@ jobs:
         run: cargo audit
 
   # ------------------------------------------------------------------
-  # cargo-deny (bans / licenses / sources / advisories, optional).
+  # cargo-deny (bans / licenses / sources / advisories, hard-fail).
   #
   # Broader supply-chain check than cargo-audit alone: license SPDX
   # policy (allow-list of permissive licenses only), duplicate-version
@@ -3106,14 +3129,13 @@ jobs:
   # Configuration lives in `deny.toml` at the workspace root; the
   # ignore list mirrors `.cargo/audit.toml`.
   #
-  # `continue-on-error: true` for the same reason as security-audit —
-  # a first-pass hygiene job promoted to blocking after a stable
-  # window. See `docs/security.md`.
+  # Promoted from `continue-on-error: true` alongside `security-audit`
+  # once the wasmtime 26 -> 46 bump closed the advisory backlog. See
+  # `docs/security.md`.
   # ------------------------------------------------------------------
   dep-policy:
-    name: dep-policy (optional)
+    name: dep-policy
     runs-on: ubuntu-latest
-    continue-on-error: true
     env:
       # Pinned tool version — same rationale as CARGO_AUDIT_VERSION.
       CARGO_DENY_VERSION: "0.19.9"

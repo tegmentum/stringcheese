@@ -55,7 +55,7 @@ use std::sync::OnceLock;
 
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 // Typed bindings generated from the shipped WIT contract. The
 // macro mirrors the `collation-world` world the guest crate
@@ -91,11 +91,11 @@ struct HostState {
 }
 
 impl WasiView for HostState {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -140,7 +140,7 @@ impl SmokeHarness {
             }
         };
         let mut linker: Linker<HostState> = Linker::new(&engine);
-        if let Err(e) = wasmtime_wasi::add_to_linker_sync(&mut linker) {
+        if let Err(e) = wasmtime_wasi::p2::add_to_linker_sync(&mut linker) {
             eprintln!("SKIP: could not add WASI to linker: {e}");
             return None;
         }

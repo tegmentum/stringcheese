@@ -72,16 +72,19 @@ wit-parser = "0.230"
 # `demangle` defaults are dropped — none of them are load-bearing for
 # a synchronous "load .wasm, call four functions, assert on the
 # returned typed values" test.
-wasmtime = { version = "26", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime = { version = "46", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
 
 # Companion crate that ships the WASI preview2 host implementations
 # behind `add_to_linker_sync`. The reference tokenizer component does
 # no I/O of its own, but the wasip1 -> wasip2 adapter applied at
 # componentize time introduces a `wasi:*@0.2.x` import surface that
 # the linker must satisfy before `instantiate` will succeed. Version
-# pinned in lockstep with `wasmtime` (both share the 26.x wasi:@0.2.1
-# baseline the CI's downloaded reactor adapter emits).
-wasmtime-wasi = { version = "26", default-features = false }
+# pinned in lockstep with `wasmtime` (both share the 46.x wasi:@0.2.12
+# baseline the CI's downloaded reactor adapter emits — bumped from
+# the earlier 26.x/wasi:@0.2.1 pair to close the 19-advisory wasmtime
+# advisory backlog, including RUSTSEC-2026-0095 and RUSTSEC-2026-0096
+# critical-severity sandbox-escape entries).
+wasmtime-wasi = { version = "46", default-features = false }
 
 [lints]
 workspace = true
