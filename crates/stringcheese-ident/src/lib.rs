@@ -45,15 +45,16 @@
 //! *input bytes* — higher is better.
 //!
 //! ```text
-//! surface   / flavor    / 256 B         / 4 KiB
-//! --------------------------------------------------
-//! detect    / ascii     / ~630 MiB/s    / ~670 MiB/s
-//! detect    / accented  / ~2.2 GiB/s    / ~12 GiB/s
-//! slugify   / ascii     / ~530 MiB/s    / ~640 MiB/s
-//! slugify   / accented  / ~256 MiB/s    / ~270 MiB/s
-//! sanitize  / ascii     / ~445 MiB/s    / ~470 MiB/s
-//! sanitize  / accented  / ~500 MiB/s    / ~540 MiB/s
-//! to_case   / any / any / ~75 MiB/s     / ~80 MiB/s
+//! surface           / flavor    / 256 B         / 4 KiB
+//! -----------------------------------------------------------
+//! detect            / ascii     / ~630 MiB/s    / ~670 MiB/s
+//! detect            / accented  / ~2.2 GiB/s    / ~12 GiB/s
+//! slugify           / ascii     / ~530 MiB/s    / ~640 MiB/s
+//! slugify           / accented  / ~256 MiB/s    / ~270 MiB/s
+//! sanitize          / ascii     / ~445 MiB/s    / ~470 MiB/s
+//! sanitize          / accented  / ~500 MiB/s    / ~540 MiB/s
+//! to_case  ASCII    / any target/ ~180-390 MiB/s/ ~395-440 MiB/s
+//! to_case  non-ASCII/ any target/ ~50-70 MiB/s  / ~50-70 MiB/s
 //! ```
 //!
 //! Read:
@@ -74,11 +75,16 @@
 //!   because the accented shape has more short words → more
 //!   filtered characters → shorter output allocation per input
 //!   byte.
-//! * **`to_case` is the slowest surface** — the heck wrap costs
-//!   ~8-10× more per byte than the in-house scanners, reflecting
-//!   heck's per-word word-boundary detection and re-encoding. All
-//!   four case targets land in the same 70-85 MiB/s band because
-//!   the boundary detection dominates over the emit-formatting.
+//! * **`to_case` splits ASCII from non-ASCII.** On ASCII input a
+//!   hand-rolled byte-level word-boundary scanner (see
+//!   [`case`]'s `ASCII fast path` section) replaces heck's
+//!   Unicode-category dispatch and lifts throughput from the
+//!   ~65-80 MiB/s heck band to ~400-440 MiB/s at 4 KiB — a
+//!   roughly 5-8× win, byte-for-byte identical to the heck path
+//!   (differential-tested against every quirk in heck's own
+//!   digit-boundary / all-caps corpus). Non-ASCII input still
+//!   takes heck and sits in the same 50-70 MiB/s band because the
+//!   Unicode boundary detection dominates over the emit-formatting.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression
