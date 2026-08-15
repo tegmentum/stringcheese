@@ -44,11 +44,70 @@
 //! primitives directly (or reach for
 //! [`stringcheese_unicode::PreprocessingPipeline`]).
 //!
-//! ## Baseline (2026-08-09)
+//! ## Benchmarks
 //!
-//! Numbers from `stringcheese-bench/benches/normalize.rs` on
-//! realistic mixed text (accented Latin + curly quotes + em
-//! dashes + case variation + whitespace runs). Pipelines at 16 KB
+//! An in-crate criterion bench harness lives at
+//! `benches/normalize.rs`; run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-normalize
+//! ```
+//!
+//! Four groups drive the four shipped preset pipelines
+//! ([`identifier`], [`display_safe`], [`search_key`],
+//! [`punctuation_canonical`]). Each group runs three input byte
+//! lengths (1 KiB / 4 KiB / 16 KiB) crossed with two flavors
+//! (`ascii` — the NFC/NFKC fast path — and `diacritics` — mixed
+//! Latin with smart quotes / em dashes / non-breaking spaces /
+//! combining marks). 24 measurement points total.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`);
+//! wall-clock samples vary ±10-20 %. Throughput reported over
+//! *input bytes* — higher is better.
+//!
+//! ```text
+//! pipeline              / flavor       / 1 KiB      / 4 KiB      / 16 KiB
+//! ---------------------------------------------------------------------------
+//! punctuation_canonical / ascii        / ~1.1 GiB/s / ~1.2 GiB/s / ~1.2 GiB/s
+//! punctuation_canonical / diacritics   / ~750 MiB/s / ~800 MiB/s / ~800 MiB/s
+//! display_safe          / ascii        / ~500 MiB/s / ~530 MiB/s / ~540 MiB/s
+//! display_safe          / diacritics   / ~70 MiB/s  / ~75 MiB/s  / ~75 MiB/s
+//! identifier            / ascii        / ~250 MiB/s / ~260 MiB/s / ~265 MiB/s
+//! identifier            / diacritics   / ~28 MiB/s  / ~30 MiB/s  / ~30 MiB/s
+//! search_key            / ascii        / ~200 MiB/s / ~210 MiB/s / ~215 MiB/s
+//! search_key            / diacritics   / ~25 MiB/s  / ~27 MiB/s  / ~27 MiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **`punctuation_canonical` is fastest** — a single-pass in-house
+//!   primitive with no ICU cost. ASCII hits the passthrough arm
+//!   at ~1.2 GiB/s.
+//! * **`display_safe` is 2.5× faster than `identifier`** because NFC
+//!   is lighter than NFKC; the diacritics flavor collapses both by
+//!   ~7-8× vs their ASCII fast paths.
+//! * **`identifier` and `search_key` bottleneck on NFKC** — both
+//!   drop to ~30 MiB/s on the diacritics flavor. NFKC is
+//!   ~10× slower than any in-house primitive; a caller building
+//!   high-throughput indexes on diacritic-heavy text should
+//!   consider whether NFC (via `display_safe`) is enough.
+//! * **ASCII-flavor `identifier` still sits at 250 MiB/s** — the
+//!   NFKC ICU pass is not free even when it has nothing to
+//!   decompose; the per-byte scan is the load-bearing cost.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression
+//!   or a measurement environment change; rerun with
+//!   `--sample-size 30` before filing a fix.
+//!
+//! ## Prior baseline (2026-08-09, `stringcheese-bench/benches/normalize.rs`)
+//!
+//! Retained for context — earlier numbers from the workspace-external
+//! bench harness against which the current suite's numbers should be
+//! compared. Numbers below were taken on realistic mixed text at 16 KB
 //! input:
 //!
 //! | Pipeline                   | throughput | dominant cost |
