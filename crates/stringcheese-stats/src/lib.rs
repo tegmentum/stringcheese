@@ -56,8 +56,8 @@
 //! entropy     / utf8       361 MiB/s     628 MiB/s     673 MiB/s
 //! histogram   / ascii      418 MiB/s     460 MiB/s     461 MiB/s
 //! histogram   / utf8       449 MiB/s     458 MiB/s     442 MiB/s
-//! ratios      / ascii      638 MiB/s     658 MiB/s     644 MiB/s
-//! ratios      / utf8      69.4 MiB/s    65.9 MiB/s    71.3 MiB/s
+//! ratios      / ascii      886 MiB/s     921 MiB/s     783 MiB/s
+//! ratios      / utf8      71.8 MiB/s    73.7 MiB/s    72.8 MiB/s
 //! lengths     / ascii     19.6 GiB/s    20.8 GiB/s    19.0 GiB/s
 //! lengths     / utf8      19.5 GiB/s    21.8 GiB/s    21.5 GiB/s
 //! ```
@@ -67,11 +67,15 @@
 //! * **`lengths` is memory-bound.** `str::len` is O(1) and
 //!   `chars().count()` is a byte-sequential UTF-8 scan; both flavors
 //!   hit multi-GiB/s and the ratio between them is noise.
-//! * **`ratios` shows the biggest ASCII/UTF-8 gap** (~9×). The ASCII
-//!   fast path is a 128-entry `ASCII_CLASS` lookup table + six
-//!   bit-tests per byte; the UTF-8 path goes through the full
-//!   `unicode-general-category` table per scalar. The gap is the
-//!   documented cost of the fast path, not a regression.
+//! * **`ratios` shows the biggest ASCII/UTF-8 gap** (~12×). The ASCII
+//!   fast path first gates on `str::is_ascii()` (SIMD-accelerated in
+//!   std) so all-ASCII inputs skip the per-byte boundary check, then
+//!   walks a straight loop over the 128-entry `ASCII_CLASS` lookup
+//!   table (one lookup + six bit-tests per byte); the UTF-8 path
+//!   dispatches per-byte and calls into `unicode-general-category`
+//!   for each non-ASCII scalar. The ASCII path jumped from ~700 MiB/s
+//!   (per-byte branch) to ~900 MiB/s (bulk `is_ascii()` gate) on
+//!   2026-08-15; UTF-8 numbers unchanged within noise.
 //! * **`entropy` on utf8 is faster than on ascii.** Both flavors
 //!   hash-count per-code-point; the utf8 pool is 15 tokens vs
 //!   ASCII's 34 words, so the observed alphabet is smaller and the

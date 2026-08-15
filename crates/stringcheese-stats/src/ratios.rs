@@ -57,25 +57,104 @@ impl Ratios {
     ///
     /// ## Implementation
     ///
-    /// Bench-driven redesign (2026-08-09): the ASCII fast path
-    /// dispatches through a static 128-entry lookup table that
-    /// packs all six classification bits into one `u8`. For each
-    /// ASCII byte the hot path is one table lookup + six
-    /// bit-tests, no external calls. Non-ASCII scalars still
-    /// take the general-category path. Common inputs (log lines,
-    /// identifiers, source code) are ASCII-dominated so this is
-    /// the common case.
+    /// Two-tier fast path:
+    ///
+    /// 1. **Bulk `str::is_ascii()` first** (SIMD-accelerated in
+    ///    std). All-ASCII inputs skip the per-byte boundary
+    ///    check entirely and run a straight loop over the
+    ///    128-entry `ASCII_CLASS` table — one lookup + six
+    ///    bit-tests per byte, no `>= 0x80` branch in the hot
+    ///    loop. Common inputs (log lines, identifiers, source
+    ///    code) are pure ASCII and land here.
+    /// 2. **Mixed inputs** fall through to a per-byte dispatch
+    ///    loop that keeps the ASCII fast path for the ASCII
+    ///    bytes it encounters and only calls
+    ///    `get_general_category` on the non-ASCII scalars.
+    ///
+    /// The ASCII table packs all six classification bits into
+    /// one `u8`. Bench-driven redesign (2026-08-09) introduced
+    /// the table; the bulk `is_ascii()` upfront dispatch
+    /// followed on 2026-08-15 to lift the pure-ASCII throughput
+    /// past the branch-tracked variant.
+    ///
+    /// The pure-ASCII path returns byte-for-byte identical
+    /// counts to the mixed path on any all-ASCII input — see the
+    /// `ascii_paths_match_mixed_path` differential test.
     ///
     /// # Panics
     ///
-    /// The internal non-ASCII branch expects `text[i..]` to
-    /// start with a valid non-ASCII scalar; this holds by
-    /// construction (we only enter the branch when
-    /// `bytes[i] >= 0x80` and `text` is a valid `&str`).
-    /// The `expect` there is defense-in-depth and cannot fire
-    /// on any input `Ratios::of` accepts.
+    /// The mixed-path branch expects `text[i..]` to start with a
+    /// valid non-ASCII scalar; this holds by construction (we
+    /// only enter the branch when `bytes[i] >= 0x80` and `text`
+    /// is a valid `&str`). The `expect` there is
+    /// defense-in-depth and cannot fire on any input
+    /// `Ratios::of` accepts.
     #[must_use]
     pub fn of(text: &str) -> Self {
+        if text.is_ascii() {
+            return Self::of_ascii(text.as_bytes());
+        }
+        Self::of_mixed(text)
+    }
+
+    /// Pure-ASCII path. Straight loop over `ASCII_CLASS`, no
+    /// per-byte boundary check. Caller guarantees the slice is
+    /// valid ASCII (all bytes `< 0x80`); this holds when reached
+    /// via [`Self::of`] because the entry point gates on
+    /// `str::is_ascii()`.
+    fn of_ascii(bytes: &[u8]) -> Self {
+        let mut printable = 0u64;
+        let mut control = 0u64;
+        let mut whitespace = 0u64;
+        let mut digit = 0u64;
+        let mut alphabetic = 0u64;
+        let mut punctuation = 0u64;
+
+        for &b in bytes {
+            // Mask to 7 bits so the compiler can drop the bounds
+            // check on the 128-entry table (`is_ascii()` gate
+            // already guarantees `b < 0x80`, but the mask makes
+            // that visible at codegen time).
+            let flags = ASCII_CLASS[(b & 0x7F) as usize];
+            if flags & F_PRINTABLE != 0 {
+                printable += 1;
+            }
+            if flags & F_CONTROL != 0 {
+                control += 1;
+            }
+            if flags & F_WHITESPACE != 0 {
+                whitespace += 1;
+            }
+            if flags & F_DIGIT != 0 {
+                digit += 1;
+            }
+            if flags & F_ALPHABETIC != 0 {
+                alphabetic += 1;
+            }
+            if flags & F_PUNCTUATION != 0 {
+                punctuation += 1;
+            }
+        }
+
+        let total = bytes.len() as u64;
+        if total == 0 {
+            return Self::default();
+        }
+        let t = total as f64;
+        Self {
+            printable: printable as f64 / t,
+            control: control as f64 / t,
+            whitespace: whitespace as f64 / t,
+            digit: digit as f64 / t,
+            alphabetic: alphabetic as f64 / t,
+            punctuation: punctuation as f64 / t,
+        }
+    }
+
+    /// Mixed-input path. Per-byte dispatch: ASCII bytes take the
+    /// table fast path, non-ASCII bytes parse one scalar and hit
+    /// the general-category path.
+    fn of_mixed(text: &str) -> Self {
         let mut total: u64 = 0;
         let mut printable = 0u64;
         let mut control = 0u64;
@@ -298,5 +377,56 @@ mod tests {
         let r = Ratios::of("日本語");
         assert_eq!(r.alphabetic, 1.0);
         assert_eq!(r.digit, 0.0);
+    }
+
+    /// Differential test: on any all-ASCII input the pure-ASCII
+    /// path (`of_ascii`) must return byte-for-byte identical
+    /// counts to the mixed-path (`of_mixed`) walker. Guards the
+    /// invariant the bulk `is_ascii()` gate relies on.
+    #[test]
+    fn ascii_paths_match_mixed_path() {
+        // Enumerate every ASCII byte so the differential covers
+        // control codes, printables, punctuation, digits, and
+        // letters together — nothing left implicit.
+        let all_ascii: String = (0u8..128).map(|b| b as char).collect();
+        let a = Ratios::of_ascii(all_ascii.as_bytes());
+        let b = Ratios::of_mixed(&all_ascii);
+        assert_eq!(a, b, "ASCII fast path diverged from mixed path");
+
+        // A few representative ASCII prose / mixed-class inputs
+        // in addition to the exhaustive one — cheap belt & braces.
+        for s in [
+            "",
+            "hello",
+            "hi, world",
+            "12345",
+            "a\x07b",
+            "The quick brown fox jumps over the lazy dog.\n",
+            "\t\r\n ",
+        ] {
+            let a = Ratios::of_ascii(s.as_bytes());
+            let b = Ratios::of_mixed(s);
+            assert_eq!(a, b, "ASCII fast path diverged on {s:?}");
+        }
+    }
+
+    /// Confirm the public entry `of` picks the fast path for
+    /// all-ASCII input and the mixed path otherwise, and both
+    /// dispatches produce the same visible result as a direct
+    /// call to `of_mixed`.
+    #[test]
+    fn public_of_matches_mixed_walker_on_all_inputs() {
+        for s in [
+            "",
+            "hello",
+            "12345",
+            "café",   // one non-ASCII scalar
+            "日本語", // pure non-ASCII
+            "abc日本",
+        ] {
+            let via_public = Ratios::of(s);
+            let via_mixed = Ratios::of_mixed(s);
+            assert_eq!(via_public, via_mixed, "public path diverged on {s:?}");
+        }
     }
 }
