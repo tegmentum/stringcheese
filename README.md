@@ -261,6 +261,12 @@ Runnable examples live in
 | `near_duplicate_docs`     | MinHash sketches + LSH banding + rescore — the canonical dedup pipeline.               |
 | `normalize_and_sort`      | `normalize::search_key` + `NaturalCollator` for case/diacritic-insensitive natural sort. |
 | `text_chunk_for_llm`      | `RecursiveSplitter` chunks with byte/code-point lengths and content ratios for RAG.    |
+| `i18n_case`               | WIT-i18n `CaseEngine` with en / de / tr SCUD packs — Turkish dotted / dotless-I vs default. |
+| `i18n_collation`          | `CollationEngine` sorting German words under the DIN 5007-2 (phonebook) SCUD pack.     |
+| `i18n_plural`             | `PluralEngine` classifying 0-10 into CLDR plural buckets across en / ru / ar.          |
+| `i18n_number`             | `NumberEngine` formatting one value in en / de / fr / ar — group / decimal / currency differences. |
+| `i18n_datetime`           | `DateTimeEngine` rendering an ISO date at short/medium/long/full lengths in en / de / ja. |
+| `i18n_segment`            | `BreakEngine` with the ja word-dict SCUD pack — forward-maximum-match segmentation of Japanese. |
 
 Run any example with:
 
