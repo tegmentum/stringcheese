@@ -2992,6 +2992,39 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Umbrella-crate examples build check.
+  #
+  # `crates/stringcheese/examples/` carries the runnable examples the
+  # top-level README points readers at. A broken example is a broken
+  # README, so this job is non-optional: `cargo build --examples`
+  # under `-D warnings` and `cargo clippy --examples` both have to
+  # pass on every PR. Kept intentionally light — no execution — so
+  # a real perf regression never surfaces here.
+  # ------------------------------------------------------------------
+  examples:
+    name: umbrella examples build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: examples-stable
+
+      - name: cargo build --examples -p stringcheese
+        run: cargo build -p stringcheese --examples --all-features --locked
+
+      - name: cargo clippy --examples -p stringcheese
+        run: cargo clippy -p stringcheese --examples --all-features --locked -- -D warnings
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:
