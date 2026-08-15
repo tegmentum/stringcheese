@@ -58,14 +58,27 @@
 //! ```text
 //! group                                       10 MiB (random)
 //! -----------------------------------------------------------
-//! cdc/fastcdc/default_8k                        1.19 GiB/s
-//! cdc/fastcdc/default_16k                       1.37 GiB/s
+//! cdc/fastcdc/default_8k                        2.51 GiB/s
+//! cdc/fastcdc/default_16k                       2.50 GiB/s
 //! cdc/fingerprint/gear/roll_per_byte            1.50 GiB/s
 //! cdc/fingerprint/gear/digest_of_slice (simd)   3.17 GiB/s
 //! cdc/fingerprint/buzhash/roll_per_byte         1.01 GiB/s
 //! cdc/fingerprint/polynomial/roll_per_byte       167 MiB/s
 //! cdc/fingerprint/rabin/roll_per_byte            277 MiB/s
 //! ```
+//!
+//! The `FastCDC` end-to-end chunker jumped ~1.8-2.1× between
+//! v0.1 and the wave-15 perf round: the batch
+//! [`FastCdc::chunk_boundaries`] iterator drives a two-byte-per-
+//! iteration inner loop backed by a pre-shifted gear table
+//! ([`crate::fingerprint::gear::GEAR_TABLE_LS1`]) that halves the
+//! loop-carried shift-and-add chain vs the byte-at-a-time state
+//! machine. The streaming [`FastCdcStream::feed`] path stays byte-
+//! at-a-time (its contract is byte-at-a-time input) and is
+//! semantically equivalent — asserted by both the property tests
+//! and the differential tests under `cdc::fastcdc::tests` — but
+//! callers who have the input as one contiguous slice should
+//! reach for [`FastCdc::chunk_boundaries`] to pick up the win.
 //!
 //! See the bench file's module doc for the full table (random vs
 //! prose × 1 MiB / 10 MiB) and read-me for the deltas.

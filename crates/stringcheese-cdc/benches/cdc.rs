@@ -46,8 +46,8 @@
 //! ```text
 //! group                                    1 MiB (random)   10 MiB (random)   1 MiB (prose)   10 MiB (prose)
 //! -------------------------------------------------------------------------------------------------------------
-//! cdc/fastcdc/default_8k                    1.28 GiB/s        1.19 GiB/s        1.29 GiB/s      1.23 GiB/s
-//! cdc/fastcdc/default_16k                   1.39 GiB/s        1.37 GiB/s        1.29 GiB/s      1.21 GiB/s
+//! cdc/fastcdc/default_8k                    2.50 GiB/s        2.51 GiB/s        2.03 GiB/s      2.01 GiB/s
+//! cdc/fastcdc/default_16k                   2.54 GiB/s        2.50 GiB/s        2.03 GiB/s      2.00 GiB/s
 //! cdc/fingerprint/gear/roll_per_byte        1.51 GiB/s        1.50 GiB/s        1.50 GiB/s      1.50 GiB/s
 //! cdc/fingerprint/gear/digest_of_slice      3.17 GiB/s        3.17 GiB/s        3.15 GiB/s      3.16 GiB/s
 //! cdc/fingerprint/buzhash/roll_per_byte     1.00 GiB/s        1.01 GiB/s        1.01 GiB/s      1.02 GiB/s
@@ -61,10 +61,15 @@
 //!   entry point runs ~2× the streaming loop because it batches
 //!   independent 8-byte chunks (Gear's state has a 64-bit shift
 //!   register with natural decay, so batch-of-8 is safe).
-//! * **FastCDC vs gear roll** — FastCDC's boundary loop runs at
-//!   ~0.85× the raw gear roll throughput; the delta is the mask
-//!   check plus the per-cut reset amortised across ~one cut per
-//!   8 KiB.
+//! * **FastCDC vs gear roll** — FastCDC's boundary loop now runs
+//!   ~1.7× *faster* than the raw byte-at-a-time gear-roll bench
+//!   because the batch entry point (`FastCdc::chunk_boundaries`)
+//!   drives a two-byte-per-iteration inner loop backed by a
+//!   pre-shifted gear table (`GEAR_TABLE_LS1`), while the gear-roll
+//!   bench is trait-dispatched byte-at-a-time. The streaming
+//!   `FastCdcStream::feed` path — used by callers that only have the
+//!   input in pieces — still runs the byte-at-a-time loop and stays
+//!   in line with the raw gear-roll throughput.
 //! * **buzhash** — ~0.68× gear because the update mixes a ROL of
 //!   the outgoing byte's table entry as well as the incoming byte's,
 //!   doubling the per-step ALU work.

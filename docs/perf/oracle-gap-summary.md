@@ -96,16 +96,19 @@ Verdict thresholds (task-defined):
 
 ### `stringcheese-cdc`
 
+Post wave-15 batch rewrite; the pre-rewrite table is preserved under
+`docs/perf/cdc-oracle-gaps.md` for regression comparison.
+
 | kernel                       | size  | flavor | oracle       | mult   | verdict                             |
 | :--------------------------- | ----: | :----- | :----------- | -----: | :---------------------------------- |
-| fastcdc/default_8k           |  1MiB | random | fastcdc      |  1.63× | competitive (fastcdc ahead)         |
-| fastcdc/default_8k           |  1MiB | prose  | fastcdc      |  1.69× | competitive (fastcdc ahead)         |
-| fastcdc/default_8k           | 10MiB | random | fastcdc      |  1.79× | competitive (fastcdc ahead)         |
-| fastcdc/default_8k           | 10MiB | prose  | fastcdc      |  1.38× | competitive (fastcdc ahead)         |
-| fastcdc/default_16k          |  1MiB | random | fastcdc      |  2.15× | **medium gap** (fastcdc-rs ahead)   |
-| fastcdc/default_16k          |  1MiB | prose  | fastcdc      |  1.56× | competitive (fastcdc ahead)         |
-| fastcdc/default_16k          | 10MiB | random | fastcdc      |  1.61× | competitive (fastcdc ahead)         |
-| fastcdc/default_16k          | 10MiB | prose  | fastcdc      |  1.38× | competitive (fastcdc ahead)         |
+| fastcdc/default_8k           |  1MiB | random | fastcdc      |  0.89× | stringcheese 1.13× ahead            |
+| fastcdc/default_8k           |  1MiB | prose  | fastcdc      |  0.89× | stringcheese 1.13× ahead            |
+| fastcdc/default_8k           | 10MiB | random | fastcdc      |  0.87× | stringcheese 1.14× ahead            |
+| fastcdc/default_8k           | 10MiB | prose  | fastcdc      |  0.89× | stringcheese 1.13× ahead            |
+| fastcdc/default_16k          |  1MiB | random | fastcdc      |  0.88× | stringcheese 1.13× ahead            |
+| fastcdc/default_16k          |  1MiB | prose  | fastcdc      |  0.89× | stringcheese 1.13× ahead            |
+| fastcdc/default_16k          | 10MiB | random | fastcdc      |  0.88× | stringcheese 1.14× ahead            |
+| fastcdc/default_16k          | 10MiB | prose  | fastcdc      |  0.88× | stringcheese 1.14× ahead            |
 | gear/roll_per_byte           |  1MiB | random | gearhash     |  1.04× | competitive (tied)                  |
 | gear/roll_per_byte           | 10MiB | random | gearhash     |  0.85× | competitive (stringcheese 1.2× ahead) |
 | gear/roll_per_byte           | 10MiB | prose  | gearhash     |  1.01× | competitive (tied)                  |
@@ -183,26 +186,35 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
   already high enough that this is unlikely to be a real workload
   hotspot.
 
-### 3. `cdc/fastcdc/{default_8k, default_16k}` — vs `fastcdc-rs` (~1.4-2.2× gap)
+### 3. `cdc/fastcdc/{default_8k, default_16k}` — vs `fastcdc-rs` (closed)
 
-* **Gap**: 1.4-1.8× on most rows; one row (1 MiB / random /
-  default_16k) crosses the 2× "medium gap" threshold at 2.15×.
-* **What's likely wrong**: `fastcdc-rs` implements the paper's
-  "rolling two bytes each time" optimisation (per the v2020 module
-  docs, "about a 20% improvement" on Apple M1 over v2016) and holds
-  pre-shifted variants of the gear table (`gear` + `gear_ls`) so a
-  two-byte step costs one memory read from each. stringcheese's
-  `FastCdc` state machine is a plain one-byte-per-step loop.
-* **Estimated cost**: medium. Adding a two-byte-stride inner loop
-  plus a pre-shifted table doubles the code path (min-size skip, one-
-  byte tail, two-byte body) but is well-scoped and would land under
-  the existing `FastCdc` public surface — no API break.
-* **Priority**: sits between the Hamming SIMD row (item 2) and the
-  OSA / Damerau incidental-cleanup rows (item 4). At ~1.6× typical
-  gap and ~2 GiB/s absolute, this is a real workload lever for CDC-
-  heavy pipelines (dedupe / snapshot / rsync-style deltas) — those
-  jobs are IO-adjacent and the CPU side of the chunker is often the
-  bottleneck.
+* **Status**: **closed** in wave 15. The batch
+  `FastCdc::chunk_boundaries` iterator was rewritten to drive a
+  two-byte-per-iteration `next_cut` inner loop backed by a pre-
+  shifted gear table (`GEAR_TABLE_LS1` on
+  `crate::fingerprint::gear`). The two-byte body folds each pair of
+  gear-hash updates into `(hash << 2) + GEAR_LS1[a] + GEAR_TABLE[b]`
+  — one shift + two adds per byte pair vs the old two shifts + two
+  adds — which shortens the loop-carried dependency chain and lifts
+  the FastCDC end-to-end throughput from ~1.1-1.4 GiB/s to
+  ~2.0-2.5 GiB/s across every measured cell (1.8-2.1× local
+  speed-up). Post-rewrite stringcheese sits at 1.13-1.14× *ahead*
+  of `fastcdc-rs` on every one of the eight measurement cells; the
+  medium-gap row (1 MiB / random / default_16k, previously 2.15×
+  behind) closes to 0.88× (stringcheese ahead).
+* **Correctness**: preserved via three layers of pinning — the
+  existing streaming-vs-contiguous property tests, a new in-crate
+  differential test (`batch_matches_byte_at_a_time_over_pseudorandom_input`)
+  that runs 1 MiB of pseudorandom bytes through both the new batch
+  path and the unchanged `FastCdcStream::feed` state machine and
+  asserts byte-identical boundary lists at both paper configs, and
+  a fallback branch in `next_cut` that dispatches to a scalar
+  reference implementation for the pathological `mask & (1 << 63)
+  != 0` configs the two-byte identity would not cover.
+* **Follow-on**: SIMD would push absolute throughput past ~3 GiB/s
+  but is deliberately deferred — the scalar rewrite already puts
+  stringcheese ahead of the best pure-Rust oracle, so the
+  cost/benefit shifts to Levenshtein-style SIMD work.
 
 ### 4. `compare/{osa, damerau}` — vs `strsim` (~1.8-2× gap)
 
@@ -236,14 +248,16 @@ rolling-rows autovectorisation pass; stringcheese is now within ~1.2×
 of `strsim` at every size (competitive by the < 2× threshold), and
 1.3× *ahead* of `strsim` at n = 32.
 
-The CDC oracle round adds one new scalar perf lever:
-**`cdc/fastcdc` at both presets** trails `fastcdc-rs` by ~1.4-2.2×
-(one row crosses the 2× medium-gap threshold). The identified lever
-is the "rolling two bytes each time" + pre-shifted-gear-table
-optimisation the upstream crate ships; medium-cost, well-scoped,
-non-breaking.
+The CDC oracle round's scalar perf lever —
+**`cdc/fastcdc` at both presets** — has also been **closed** in
+wave 15 by the two-byte-per-iteration + pre-shifted-gear-table
+rewrite of `FastCdc::chunk_boundaries`: post-rewrite stringcheese
+is 1.13-1.14× *ahead* of `fastcdc-rs` at every one of the eight
+measured cells, and the previously 2.15× medium-gap row (1 MiB /
+random / default_16k) closes to 0.88×.
 
 Everything else is either already best-in-class (align, jaro,
 jaro_winkler, hamming vs strsim, gear roll vs gearhash, gear SIMD
-digest vs gearhash on aarch64), sub-2× (osa, damerau), or SIMD-
-territory (hamming vs triple_accel; Levenshtein bit-parallel Myers).
+digest vs gearhash on aarch64, and now FastCDC vs fastcdc-rs),
+sub-2× (osa, damerau), or SIMD-territory (hamming vs triple_accel;
+Levenshtein bit-parallel Myers).
