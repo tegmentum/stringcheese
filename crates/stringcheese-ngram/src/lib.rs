@@ -82,9 +82,17 @@
 //! byte     / ascii  / 5    ~2.2 GiB/s    ~2.3 GiB/s
 //! byte     / utf8   / 3    ~2.4 GiB/s    ~1.8 GiB/s
 //! byte     / utf8   / 5    ~2.0 GiB/s    ~2.6 GiB/s
-//! grapheme / ascii  / 3    ~50 MiB/s     ~60 MiB/s
-//! grapheme / utf8   / 3    ~25 MiB/s     ~30 MiB/s
+//! grapheme / ascii  / 3    ~55 MiB/s     ~55 MiB/s   (ASCII fast-path)
+//! grapheme / utf8   / 3    ~35 MiB/s     ~40 MiB/s
 //! ```
+//!
+//! The `grapheme / ascii` row runs the ASCII fast-path: strict-ASCII
+//! input with no `\r` (which UAX #29 GB3 would combine with a
+//! following `\n` into a single cluster) skips the ICU4X segmenter
+//! entirely — every byte is its own grapheme, so byte windows equal
+//! grapheme windows. Per-gram `String` allocation now bounds the
+//! throughput; the ~1.5-2× lift over the pre-fast-path baseline
+//! (`~25-50 MiB/s`) is what remains once ICU4X is out of the loop.
 //!
 //! Read:
 //!
