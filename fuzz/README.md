@@ -45,6 +45,7 @@ cache on the nightly job).
 | `hf_tokenizer_json`        | `stringcheese_tokenizer_hf::hf::parse_tokenizer_json` | UTF-8 bytes → `Ok(HfTokenizerConfig)` or typed `HfParseError`, never panic. |
 | `regex_compile_and_match`  | `stringcheese_pattern_regex::Regex::{new,bytes,case_insensitive,literal}` + `Pattern::is_match` | Arbitrary bytes → `Ok(Regex)` or typed `RegexError`, never panic; `is_match` never panics on a compiled `Regex`. |
 | `tiktoken_merges_parse`    | `stringcheese_tokenizer_tiktoken::builder::build_scud_from_tiktoken` | Arbitrary bytes → `Ok((vocab, merges))` or typed `String` error, never panic. |
+| `escape_decode_roundtrip`  | `stringcheese_escape::{escape, unescape}` for URI / HTML / JSON / shell targets | For URI / HTML / JSON: `unescape(escape(x), g) == Ok(x)` for all valid UTF-8 `x`. Shell is encode-only (round-trip is not defined over arbitrary bytes). Neither call may panic. |
 
 The parser-robustness targets are the highest-value because their
 inputs (SCUD binary blobs, `tokenizer.json`) come from external
@@ -86,6 +87,14 @@ Seed corpus per parser target:
   * `03_one_empty.bin` — `a = "AAAA"`, `b = ""` (boundary column path).
   * `04_gap_heavy.bin` — `a = "AAAABBBB"`, `b = "AABBBBAA"` (out-of-phase, gap-preferring).
   * `05_short_dna.bin` — `a = "GATTACA"`, `b = "GCATGCU"` (canonical mixed-op pair).
+* `escape_decode_roundtrip`
+  * Input layout: `byte0 = mode (mod 4)` (0=uri, 1=html, 2=json, 3=shell), then a UTF-8 payload.
+  * `01_uri_ascii.bin` — URI + `"hello world"` (space triggers the `%20` path).
+  * `02_html_xss.bin` — HTML + the classic `<script>alert(1)</script>` payload.
+  * `03_json_controls.bin` — JSON + `"quote:"\\newline\nend"` (mix of `"`, `\`, and newline escapes).
+  * `04_shell_meta.bin` — Shell + `"it's a; rm -rf /"` (embedded quote + shell metachars; encode-only).
+  * `05_empty_payload.bin` — JSON with empty payload (encode-only edge case).
+  * `06_utf8_multibyte.bin` — URI + `"cafe\u{e9} \u{2603}"` (2-byte + 3-byte scalars for the multibyte path).
 
 **Note on vocab bytes.** The `hf_tokenizer_json` seeds ship
 hand-crafted synthetic examples only. Real-vocab tokenizer.json fixtures

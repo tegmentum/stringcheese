@@ -69,6 +69,7 @@ jobs:
           - regex_compile_and_match
           - tiktoken_merges_parse
           - align_score_traceback_agree
+          - escape_decode_roundtrip
     steps:
       - uses: actions/checkout@v4
 

@@ -78,6 +78,13 @@ stringcheese-tokenizer-tiktoken = { path = "../crates/stringcheese-tokenizer-tik
 # compile.
 stringcheese-align = { path = "../crates/stringcheese-align", default-features = false, features = ["std"] }
 
+# `stringcheese-escape` — the URI / HTML / JSON / shell escape
+# dispatcher exercised by `escape_decode_roundtrip`. `std` is on so
+# the wrapped `percent-encoding` / `html-escape` / `shlex` deps
+# compile with their usual feature sets; nothing in the fuzz target
+# is `no_std`-only.
+stringcheese-escape = { path = "../crates/stringcheese-escape", default-features = false, features = ["std"] }
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -170,6 +177,13 @@ bench = false
 [[bin]]
 name = "align_score_traceback_agree"
 path = "fuzz_targets/align_score_traceback_agree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "escape_decode_roundtrip"
+path = "fuzz_targets/escape_decode_roundtrip.rs"
 test = false
 doc = false
 bench = false
