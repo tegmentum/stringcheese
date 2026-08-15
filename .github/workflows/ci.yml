@@ -3026,12 +3026,18 @@ jobs:
 
   # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
+  #
+  # `--cfg docsrs` mirrors what docs.rs itself passes when it builds
+  # documentation from each publishable crate's
+  # `[package.metadata.docs.rs]` block. Keeping the flag on here means
+  # CI catches any broken `#[cfg_attr(docsrs, doc(cfg(...)))]` gate or
+  # cfg-only doc item at PR time rather than after a release cuts.
   # ------------------------------------------------------------------
   docs:
     name: docs
     runs-on: ubuntu-latest
     env:
-      RUSTDOCFLAGS: "-D warnings"
+      RUSTDOCFLAGS: "-D warnings --cfg docsrs"
     steps:
       - uses: actions/checkout@v4
 
