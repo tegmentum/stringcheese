@@ -3493,6 +3493,7 @@ dependencies = [
 name = "stringcheese-pattern-regex"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "regex",
  "stringcheese-pattern",
 ]
@@ -3753,6 +3754,9 @@ dependencies = [
 [[package]]
 name = "stringcheese-winnowing"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "stringcheese-zh"
