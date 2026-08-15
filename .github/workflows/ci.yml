@@ -44,7 +44,32 @@ jobs:
           key: test-${{ matrix.os }}-${{ matrix.rust }}
 
       - name: Run tests
-        run: cargo test --workspace --all-features --locked
+        # The six `stringcheese-*-component` crates pull in wasmtime
+        # 46 as a dev-dep for their component-model smoke tests (bumped
+        # from 26 to close 19 advisories including RUSTSEC-2026-0095 /
+        # RUSTSEC-2026-0096 critical sandbox-escapes — see
+        # docs/security.md). wasmtime 46 requires rustc 1.94; the
+        # workspace runtime MSRV stays at 1.88 (the component crates'
+        # own public API compiles on 1.88, only their dev-deps need the
+        # newer toolchain), so the MSRV row here excludes them from the
+        # test sweep. The stable row still exercises the full workspace
+        # + component smoke tests via the un-excluded invocation. If a
+        # new `stringcheese-*-component` crate lands that inherits the
+        # wasmtime dev-dep, add it to the exclude list here too.
+        run: |
+          if [ "${{ matrix.rust }}" = "1.88" ]; then
+            cargo test \
+              --workspace \
+              --exclude stringcheese-tokenizer-component \
+              --exclude stringcheese-icu-case-component \
+              --exclude stringcheese-icu-collation-component \
+              --exclude stringcheese-icu-datetime-component \
+              --exclude stringcheese-icu-linebreak-component \
+              --exclude stringcheese-icu-segment-component \
+              --all-features --locked
+          else
+            cargo test --workspace --all-features --locked
+          fi
 
   # ------------------------------------------------------------------
   # Clippy. `-D warnings` promotes every clippy warning to a hard failure.
