@@ -34,6 +34,70 @@
 //! assert_eq!(hits[0].start, 0);
 //! assert_eq!(hits[1].start, 7);
 //! ```
+//!
+//! ## Benchmarks
+//!
+//! A criterion bench harness lives at `benches/pattern.rs`; run it
+//! with
+//!
+//! ```text
+//! cargo bench -p stringcheese-pattern
+//! ```
+//!
+//! Three groups drive every shipped engine (Literal, Wildcard, Glob).
+//! Each group runs three pattern complexities (`simple` / `medium` /
+//! `complex`) crossed with three input byte lengths
+//! (256 B / 4 KiB / 64 KiB). 27 measurement points total.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`).
+//! Wall-clock samples vary ±10-20 % on a laptop under load; treat the
+//! order-of-magnitude column as the load-bearing part, not the last
+//! digit. Throughput reported over *haystack bytes* — higher is
+//! better.
+//!
+//! ```text
+//! engine    / complexity    256 B         4 KiB         64 KiB
+//! ----------------------------------------------------------------
+//! literal   / simple        1.10 GiB/s    1.65 GiB/s    1.52 GiB/s
+//! literal   / medium        4.44 GiB/s    16.5 GiB/s    13.1 GiB/s
+//! literal   / complex       2.28 GiB/s    6.76 GiB/s    9.29 GiB/s
+//! wildcard  / simple         236 MiB/s     250 MiB/s     252 MiB/s
+//! wildcard  / medium         293 MiB/s     292 MiB/s     296 MiB/s
+//! wildcard  / complex        164 MiB/s     199 MiB/s     173 MiB/s
+//! glob      / simple         220 MiB/s     190 MiB/s     172 MiB/s
+//! glob      / medium         200 MiB/s     267 MiB/s     287 MiB/s
+//! glob      / complex        196 MiB/s     192 MiB/s     211 MiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **`literal` is the fastest by an order of magnitude.** `Literal`
+//!   dispatches to `memchr::memmem` which uses SSE2 / AVX2 on x86_64
+//!   and NEON on aarch64; the "medium" and "complex" needles are
+//!   longer, so `memmem`'s per-check work amortizes further and the
+//!   throughput actually *rises* with needle length until the L1
+//!   cache boundary kicks in around 64 KiB.
+//! * **`wildcard` and `glob` sit at ~200-300 MiB/s** — both are
+//!   regex-backed under the hood (globset → `regex` engine), so they
+//!   walk the haystack byte-by-byte through the compiled DFA. The
+//!   per-byte cost is the DFA transition, not a SIMD scan; the
+//!   ~7× gap vs `literal/simple` at the same size is the expected
+//!   ratio between a byte-oriented `memmem` and a DFA-oriented
+//!   regex match.
+//! * **`glob` and `wildcard` are ~the same speed** — the extra
+//!   glob-only primitives (`[abc]`, `[a-z]`, `[!0-9]`) compile to
+//!   character-class transitions in the same DFA, so per-byte cost
+//!   moves ~10 % either way depending on how much the class rules
+//!   let the engine skip.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression or
+//!   a measurement environment change (thermal throttling, background
+//!   load); rerun with `--sample-size 30` and a quiet host before
+//!   filing a fix.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]

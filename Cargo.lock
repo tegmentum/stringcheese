@@ -3484,6 +3484,7 @@ dependencies = [
 name = "stringcheese-pattern"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "globset",
  "memchr",
  "regex",

@@ -2589,6 +2589,40 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Pattern bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-pattern/benches/pattern.rs` — same shape as
+  # the `phonetic-bench` / `manip-bench` jobs above. Catches API drift
+  # on `Literal::new` / `Wildcard::anywhere` / `Glob::anywhere` and on
+  # the shared [`Pattern`] trait `find_iter` signature.
+  # ------------------------------------------------------------------
+  pattern-bench:
+    name: pattern bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: pattern-bench-stable
+
+      - name: Compile-check the pattern bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-pattern \
+            --bench pattern \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:
