@@ -34,6 +34,7 @@ cache on the nightly job).
 | `jaro_range`                    | Property     | Jaro similarity stays within `[0, 1]`.                                                        |
 | `ngram_count_agreement`         | Property     | Two n-gram counters agree per gram.                                                           |
 | `metric_axioms_levenshtein`     | Property     | Levenshtein satisfies identity, symmetry, and triangle inequality.                            |
+| `align_score_traceback_agree`   | Property     | NW / SW `score()`, `align().score`, and sum-over-edit-script all agree under linear gaps.     |
 
 ### Parser-robustness targets (binary / JSON loaders)
 
@@ -78,6 +79,13 @@ Seed corpus per parser target:
   * `04_malformed_bracket.bin` — mode=`new` + `[a-` + `abc` (compile-error path — `RegexError`, no panic)
   * `05_huge_repeat.bin` — mode=`new` + `a{999999}` + `aaa` (size-limit path — `RegexError`, no panic)
   * `06_recursive_backreference.bin` — mode=`new` + `(?P<a>foo)(?P=a)` + `foofoo` (backreferences unsupported — `RegexError`, no panic)
+* `align_score_traceback_agree`
+  * Input decoded via `arbitrary::Unstructured` into a `FuzzPair { a, b }` with each length bounded to `[0, 64]`.
+  * `01_identical.bin` — `a == b == "ACGT"` (all-match path, score == length).
+  * `02_all_different.bin` — `a = "AAAA"`, `b = "TTTT"` (all-mismatch or gap paths).
+  * `03_one_empty.bin` — `a = "AAAA"`, `b = ""` (boundary column path).
+  * `04_gap_heavy.bin` — `a = "AAAABBBB"`, `b = "AABBBBAA"` (out-of-phase, gap-preferring).
+  * `05_short_dna.bin` — `a = "GATTACA"`, `b = "GCATGCU"` (canonical mixed-op pair).
 
 **Note on vocab bytes.** The `hf_tokenizer_json` seeds ship
 hand-crafted synthetic examples only. Real-vocab tokenizer.json fixtures

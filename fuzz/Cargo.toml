@@ -70,6 +70,14 @@ stringcheese-pattern-regex = { path = "../crates/stringcheese-pattern-regex" }
 # baked-in pack byte statics.
 stringcheese-tokenizer-tiktoken = { path = "../crates/stringcheese-tokenizer-tiktoken", default-features = false }
 
+# `stringcheese-align` — the Needleman-Wunsch / Smith-Waterman
+# aligner pair exercised by `align_score_traceback_agree`. `std`
+# feature is enabled to match the shape every other consumer uses;
+# the `alloc` gate is transitively pulled in and is what makes the
+# `align` full-matrix path (with edit-script reconstruction)
+# compile.
+stringcheese-align = { path = "../crates/stringcheese-align", default-features = false, features = ["std"] }
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -155,6 +163,13 @@ bench = false
 [[bin]]
 name = "tiktoken_merges_parse"
 path = "fuzz_targets/tiktoken_merges_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "align_score_traceback_agree"
+path = "fuzz_targets/align_score_traceback_agree.rs"
 test = false
 doc = false
 bench = false

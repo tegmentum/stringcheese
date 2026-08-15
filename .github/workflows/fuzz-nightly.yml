@@ -68,6 +68,7 @@ jobs:
           - hf_tokenizer_json
           - regex_compile_and_match
           - tiktoken_merges_parse
+          - align_score_traceback_agree
     steps:
       - uses: actions/checkout@v4
 
