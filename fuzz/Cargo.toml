@@ -44,6 +44,15 @@ stringcheese-scud = { path = "../crates/stringcheese-scud", default-features = f
 # fully round-trip.
 stringcheese-tokenizer-hf = { path = "../crates/stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
 
+# `stringcheese-pattern` + `stringcheese-pattern-regex` — the regex
+# constructor pipeline and the `Pattern` trait exercised by the
+# `regex_compile_and_match` target. `stringcheese-pattern-regex` has
+# no cargo features of its own; the transitive `stringcheese-pattern`
+# is pulled in with `alloc` (the trait itself lives in an alloc-gated
+# module — `Match`, `is_match`, `find_iter` all need heap allocation).
+stringcheese-pattern = { path = "../crates/stringcheese-pattern", default-features = false, features = ["alloc"] }
+stringcheese-pattern-regex = { path = "../crates/stringcheese-pattern-regex" }
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -108,6 +117,13 @@ bench = false
 [[bin]]
 name = "hf_tokenizer_json"
 path = "fuzz_targets/hf_tokenizer_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regex_compile_and_match"
+path = "fuzz_targets/regex_compile_and_match.rs"
 test = false
 doc = false
 bench = false

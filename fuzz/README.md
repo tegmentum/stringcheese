@@ -37,10 +37,11 @@ cache on the nightly job).
 
 ### Parser-robustness targets (binary / JSON loaders)
 
-| Target                | Surface                                            | Invariant                                                                 |
-| --------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
-| `scud_load`           | `stringcheese_scud::ScudFile::from_slice`          | Arbitrary bytes → `Ok(ScudFile)` or typed `ScudError`, never panic.       |
-| `hf_tokenizer_json`   | `stringcheese_tokenizer_hf::hf::parse_tokenizer_json` | UTF-8 bytes → `Ok(HfTokenizerConfig)` or typed `HfParseError`, never panic. |
+| Target                     | Surface                                            | Invariant                                                                 |
+| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `scud_load`                | `stringcheese_scud::ScudFile::from_slice`          | Arbitrary bytes → `Ok(ScudFile)` or typed `ScudError`, never panic.       |
+| `hf_tokenizer_json`        | `stringcheese_tokenizer_hf::hf::parse_tokenizer_json` | UTF-8 bytes → `Ok(HfTokenizerConfig)` or typed `HfParseError`, never panic. |
+| `regex_compile_and_match`  | `stringcheese_pattern_regex::Regex::{new,bytes,case_insensitive,literal}` + `Pattern::is_match` | Arbitrary bytes → `Ok(Regex)` or typed `RegexError`, never panic; `is_match` never panics on a compiled `Regex`. |
 
 The parser-robustness targets are the highest-value because their
 inputs (SCUD binary blobs, `tokenizer.json`) come from external
@@ -61,6 +62,14 @@ Seed corpus per parser target:
   * `03_invalid_json.json` — `{` (parser must return `HfParseError`, not panic)
   * `04_null.json` — `null` (top-level shape mismatch)
   * `05_small_bpe_with_merges.json` — BPE config with normalizer, pre-tokenizer, and one merge
+* `regex_compile_and_match`
+  * Input layout: `byte0 = mode (mod 4)` (0=`new`, 1=`bytes`, 2=`case_insensitive`, 3=`literal`), then pattern bytes, `0x00` separator, haystack bytes.
+  * `01_literal_match.bin` — mode=`literal` + `hello` + `hello world` (auto-escape path, guaranteed hit)
+  * `02_simple_match.bin` — mode=`new` + `^foo` + `foobar` (anchor path)
+  * `03_unicode_class.bin` — mode=`new` + `\p{Nd}+` + `abc123def` (Unicode property class)
+  * `04_malformed_bracket.bin` — mode=`new` + `[a-` + `abc` (compile-error path — `RegexError`, no panic)
+  * `05_huge_repeat.bin` — mode=`new` + `a{999999}` + `aaa` (size-limit path — `RegexError`, no panic)
+  * `06_recursive_backreference.bin` — mode=`new` + `(?P<a>foo)(?P=a)` + `foofoo` (backreferences unsupported — `RegexError`, no panic)
 
 **Note on vocab bytes.** The `hf_tokenizer_json` seeds ship
 hand-crafted synthetic examples only. Real-vocab tokenizer.json fixtures
