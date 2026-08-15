@@ -39,11 +39,73 @@
 //! overlap by more bytes than either one contains, the shorter
 //! chunk sets the overlap bound.
 //!
-//! ## Baseline (2026-08-09)
+//! ## Benchmarks
 //!
-//! Throughput on synthetic prose, from
-//! `stringcheese-bench/benches/textsplit.rs` (chunk_size 1000
-//! where applicable):
+//! An in-crate criterion bench harness lives at `benches/textsplit.rs`;
+//! run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-textsplit
+//! ```
+//!
+//! Three groups drive every shipped splitter (RecursiveSplitter,
+//! ParagraphSplitter, SentenceSplitter). Each group runs three input
+//! byte lengths (1 KiB / 10 KiB / 100 KiB) crossed with two flavors
+//! (`prose` — the shape the splitters were designed for — and `code`
+//! — no sentence-ending punctuation, few paragraph breaks, forces
+//! every splitter off its fast path). 18 measurement points total.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`) at
+//! `chunk_size = 1000, overlap = 0`. Wall-clock samples vary
+//! ±10-20 % on a laptop under load; treat the order-of-magnitude
+//! column as the load-bearing part, not the last digit. Throughput
+//! reported over *input bytes* — higher is better.
+//!
+//! ```text
+//! splitter    / flavor    1 KiB         10 KiB        100 KiB
+//! ----------------------------------------------------------------
+//! recursive   / prose     1.45 GiB/s    1.42 GiB/s    1.47 GiB/s
+//! recursive   / code       395 MiB/s     431 MiB/s     404 MiB/s
+//! paragraph   / prose     1.73 GiB/s    1.93 GiB/s    2.01 GiB/s
+//! paragraph   / code       329 MiB/s     367 MiB/s     354 MiB/s
+//! sentence    / prose     1.02 GiB/s    1.16 GiB/s    1.21 GiB/s
+//! sentence    / code      1.19 GiB/s    1.28 GiB/s    1.30 GiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **ParagraphSplitter is the fastest on prose** — one `\n\n` scan
+//!   plus the merge, and no recursion when paragraphs fit under the
+//!   chunk_size. RecursiveSplitter sits ~20-30 % behind on the same
+//!   input because it makes an extra pass down the separator list
+//!   before landing on `. ` / space.
+//! * **The `code` flavor collapses paragraph + recursive to
+//!   ~350-430 MiB/s**. No sentence-ending punctuation and few
+//!   paragraph breaks force both splitters into their space-split
+//!   fallback arm; the ~3-4× slowdown vs prose is the load-bearing
+//!   caveat callers on non-prose inputs should be aware of.
+//! * **SentenceSplitter is actually *faster* on `code`** than on
+//!   prose. The naive `. `/`? `/`! `/`\n\n` fallback in
+//!   `stringcheese-segment` finds no sentence markers in the code
+//!   pool, so `.split()` returns one long "sentence" and the merge
+//!   loop runs a small handful of times; on prose it splits per
+//!   clause and runs many more merge iterations. This is a naive-
+//!   splitter artifact — under the `sentences-icu` feature (ICU4X
+//!   detection) the numbers should reverse.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression or
+//!   a measurement environment change (thermal throttling, background
+//!   load); rerun with `--sample-size 30` and a quiet host before
+//!   filing a fix.
+//!
+//! ## Prior baseline (2026-08-09, `stringcheese-bench/benches/textsplit.rs`)
+//!
+//! Retained for context — the earlier prose-only rows against which
+//! the current suite's numbers should be compared:
 //!
 //! | Splitter                      | 1 KB      | 8 KB      | 32 KB    |
 //! |-------------------------------|-----------|-----------|----------|

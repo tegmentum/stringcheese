@@ -3633,6 +3633,7 @@ dependencies = [
 name = "stringcheese-textsplit"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "stringcheese-segment",
 ]
 
