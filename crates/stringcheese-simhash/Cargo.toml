@@ -21,5 +21,23 @@ alloc = []
 # 64-bit hash per feature without dragging in a full crypto dep.
 ahash = { version = "0.8", default-features = false }
 
+[dev-dependencies]
+# Criterion bench harness — workspace-inherited so every bench-adopting
+# crate tracks the same version. See `benches/simhash.rs` for the
+# groups it drives and the baseline table under the crate-level `//!`
+# docs for last-measured numbers.
+criterion = { workspace = true }
+
+# ---------------------------------------------------------------------------
+# Bench harness — mirrors the shape used by the sibling compute-heavy
+# crates (`stringcheese-compare`, `stringcheese-manip`, ...). `harness =
+# false` so criterion owns `main`. Run with `cargo bench -p
+# stringcheese-simhash`. Baseline numbers live in the crate-level `//!`
+# docs of `src/lib.rs`.
+# ---------------------------------------------------------------------------
+[[bench]]
+name = "simhash"
+harness = false
+
 [lints]
 workspace = true

@@ -45,6 +45,72 @@
 //! is in the function name (`char_ngrams`, `byte_ngrams`,
 //! `token_ngrams`, `grapheme_ngrams`) so a code review can point
 //! at the wrong choice.
+//!
+//! ## Benchmarks
+//!
+//! An in-crate criterion bench harness lives at `benches/ngram.rs`;
+//! run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-ngram
+//! ```
+//!
+//! Three groups drive the shipped unit-explicit producers ([`char_ngrams`],
+//! [`byte_ngrams`], and — under `--features graphemes` —
+//! `grapheme_ngrams`). Each group runs two input byte lengths
+//! (256 B / 4 KiB) crossed with two flavors (`ascii` — one byte per
+//! scalar — and `utf8` — Cyrillic, two bytes per scalar) and two
+//! `n`-values (`n = 3` and `n = 5`). 24 measurement points when
+//! `graphemes` is enabled, 16 without.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`).
+//! Wall-clock samples vary ±10-20 % on a laptop under load; treat the
+//! order-of-magnitude column as the load-bearing part, not the last
+//! digit. Throughput reported over *input bytes* — higher is better.
+//!
+//! ```text
+//! unit     / flavor / n    256 B         4 KiB
+//! ------------------------------------------------
+//! char     / ascii  / 3    ~100 MiB/s    ~160 MiB/s
+//! char     / ascii  / 5    ~100 MiB/s    ~135 MiB/s
+//! char     / utf8   / 3    ~200 MiB/s    ~160 MiB/s
+//! char     / utf8   / 5    ~60 MiB/s     ~350 MiB/s
+//! byte     / ascii  / 3    ~2.1 GiB/s    ~2.2 GiB/s
+//! byte     / ascii  / 5    ~2.2 GiB/s    ~2.3 GiB/s
+//! byte     / utf8   / 3    ~2.4 GiB/s    ~1.8 GiB/s
+//! byte     / utf8   / 5    ~2.0 GiB/s    ~2.6 GiB/s
+//! grapheme / ascii  / 3    ~50 MiB/s     ~60 MiB/s
+//! grapheme / utf8   / 3    ~25 MiB/s     ~30 MiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **[`byte_ngrams`] is memory-bound** — it's [`slice::windows`],
+//!   each yielded window forced through `black_box` to defeat the
+//!   `.count()` const-fold. This is the throughput ceiling; every
+//!   other unit's slowdown against it is boundary-detection cost.
+//! * **[`char_ngrams`] is ~15-20× behind byte** because it does a
+//!   per-scalar `char_indices` walk to gather boundaries; the walk
+//!   is the load-bearing cost, `n` barely affects the number.
+//! * **`grapheme_ngrams` is another ~2-3× behind `char`** because the
+//!   ICU4X grapheme-cluster iterator is where the time goes. This
+//!   is expected — grapheme boundaries are a Unicode algorithm, not
+//!   a scalar-boundary walk — and the arm is only relevant when the
+//!   input carries combining marks / ZWJ sequences / regional-
+//!   indicator flags where character grams would slice a user-
+//!   visible glyph in half.
+//! * **Per-cell variance is high** at 256 B input — 10-sample runs
+//!   here have wide confidence intervals; the 4 KiB row is the more
+//!   trustworthy number for regression tracking. Rerun with
+//!   `--sample-size 30` for tighter bounds.
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression or
+//!   a measurement environment change; rerun with `--sample-size 30`
+//!   before filing a fix.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]
