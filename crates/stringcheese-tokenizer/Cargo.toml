@@ -44,5 +44,26 @@ stringcheese-unicode = { workspace = true, default-features = false }
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 proptest = "1"
 
+[package.metadata.docs.rs]
+# Render on docs.rs with every feature exposed. crates.io / docs.rs
+# defaults to `--default-features` only, which hides the majority of
+# this crate's surface (feature-gated ICU backends, SCUD packs, wasm
+# component wrappers, opt-in engines, and so on). Enumerating a
+# specific `features = [...]` set is unnecessary because none of the
+# stringcheese feature axes are mutually exclusive — `all-features`
+# builds the full public API.
+all-features = true
+# Pin the target so docs.rs does not attempt speculative wasm32
+# builds it can't satisfy (e.g. `wasm32-unknown-unknown` for crates
+# that transitively pull `std`-only deps, or the `wasm32-wasip1`
+# component builds gated behind `wit-component` features).
+targets = ["x86_64-unknown-linux-gnu"]
+# Enable the conventional `docsrs` cfg so per-crate
+# `#[cfg_attr(docsrs, doc(cfg(feature = "...")))]` badges resolve.
+# No crate has been retrofitted with such gates in this pass — this
+# arg is a forward-compatibility hook so the metadata does not have
+# to be touched again when the first crate adopts the pattern.
+rustdoc-args = ["--cfg", "docsrs"]
+
 [lints]
 workspace = true
