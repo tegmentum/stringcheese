@@ -84,6 +84,24 @@
 //! Inherited from `stringcheese-scud`: SCUD packs are trusted
 //! input. This crate does not defend against maliciously
 //! crafted packs.
+//!
+//! # When to reach for `stringcheese-collate` instead
+//!
+//! This crate is the **locale-aware, pack-driven, WIT-fronted**
+//! collator. Its cost is a SCUD-pack dependency, a `CollationEngine`
+//! constructor, and a per-query BCP 47 fallback walk.
+//!
+//! [`stringcheese-collate`] is the **root-locale, in-process** crate
+//! this one wraps. It ships `UcaCollator` (the feruca-backed CLDR-root
+//! UCA implementation reused here as the oracle for every non-tailored
+//! compare), plus `NaturalCollator` (`file2 < file10`) and
+//! `AsciiCiCollator` (ASCII case-insensitive fast path) — none of
+//! which need pack data or a locale tag.
+//!
+//! Rule of thumb: **locale tag → this crate. No locale, or the
+//! ASCII-CI / natural-sort variants → `stringcheese-collate`.**
+//!
+//! [`stringcheese-collate`]: https://docs.rs/stringcheese-collate
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

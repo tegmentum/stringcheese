@@ -52,6 +52,29 @@
 //! sort keys would win in the "sort once, look up many" pattern
 //! but require reaching under `feruca`'s public API. A follow-up
 //! can add them if the ergonomic pull becomes real.
+//!
+//! ## Relationship to `stringcheese-icu-collation`
+//!
+//! This crate is the **in-process, root-locale** collator: three
+//! implementations, one trait, no data packs, no WIT boundary,
+//! no per-locale tailoring. Reach for it when the caller wants a
+//! plain `Ordering` under the CLDR-root Unicode Collation Algorithm
+//! (or the ASCII-CI / natural-sort variants) and can spell the
+//! import in Rust.
+//!
+//! [`stringcheese-icu-collation`] is the Phase-2 WIT-i18n crate that
+//! **wraps this crate's [`UcaCollator`]** with per-locale SCUD packs
+//! (Turkish primary-weight overrides, French backwards-secondary,
+//! Russian case-second, German phonebook expansions, …), exposes a
+//! `sort_key` byte encoding, walks the BCP 47 fallback chain
+//! (`de-DE → de → ""`) at query time, and ships behind a WASM
+//! component boundary. Reach for it when the caller needs locale
+//! tailoring, sort keys, or WIT-shaped access from a non-Rust host.
+//!
+//! Rule of thumb: **no locale → this crate. Locale tag →
+//! `stringcheese-icu-collation`.**
+//!
+//! [`stringcheese-icu-collation`]: https://docs.rs/stringcheese-icu-collation
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(unsafe_code)]

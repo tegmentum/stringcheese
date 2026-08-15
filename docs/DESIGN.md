@@ -184,6 +184,37 @@ packages CLDR-derived tables at a fraction of ICU's binary size by
 composing range deltas, adaptive paging, packed integers, and outer
 Brotli/Zstd compression.
 
+**In-process vs WIT-fronted crates for the same concern.** Two
+capability areas ship both an in-process crate *and* a WIT-fronted
+`stringcheese-icu-*` sibling; the split is by shape, not by
+duplicated correctness:
+
+- Collation — `stringcheese-collate` is the in-process, root-locale
+  crate (`Collator` trait, `UcaCollator` / `NaturalCollator` /
+  `AsciiCiCollator`, no data packs, no locale tag).
+  `stringcheese-icu-collation` is the Phase-2 WIT-i18n crate that
+  **wraps `stringcheese-collate::UcaCollator`** with per-locale SCUD
+  packs (Turkish dotless-i, French backwards-secondary, Russian
+  case-second, German phonebook), exposes `sort_key`, and ships
+  behind a WASM component boundary. Rule of thumb: no locale →
+  `-collate`; locale tag → `-icu-collation`.
+- Segmentation — `stringcheese-segment` is the in-process
+  convenience splitter (one `SegmentUnit` enum, iterator of `&str`
+  slices, ICU4X-backed for graphemes/words/sentences under its `icu`
+  feature). `stringcheese-icu-segment` is the Phase-5 WIT-i18n crate
+  that walks UAX #29 rules from its own classification tables,
+  returns boundary byte offsets, consumes SCUD `BreakPack` data
+  (including CJK dictionary word-break), and ships behind a WASM
+  component boundary. The two implementations do not share code —
+  pick by shape (slices vs offsets, in-process vs WIT), not by
+  correctness of segmentation.
+
+The umbrella `stringcheese` crate re-exports the in-process side of
+each pair (`stringcheese::collate`, `stringcheese::segment`); the
+WIT-fronted `stringcheese-icu-*` siblings stay opt-in, added to the
+caller's `Cargo.toml` when they cross a component boundary or need
+per-locale tailoring.
+
 **Substrate** — `stringcheese-core`, `stringcheese-corpus`. Traits,
 result newtypes, algorithm-variant descriptors, workspace/sequence
 abstractions, and the golden-case validation schema every sub-project
