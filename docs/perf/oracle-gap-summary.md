@@ -1,8 +1,9 @@
 # Oracle gap summary
 
 Cross-crate roll-up of the `--features oracle-benches` measurements
-taken on `stringcheese-compare`, `stringcheese-align`, and
-`stringcheese-cdc`. Answers the question the perf audit posed:
+taken on `stringcheese-compare`, `stringcheese-align`,
+`stringcheese-cdc`, and `stringcheese-phonetic`. Answers the question
+the perf audit posed:
 
 > Are stringcheese's baselines already competitive, or is there real
 > headroom vs best-in-class Rust libraries?
@@ -15,6 +16,8 @@ For per-kernel raw numbers see:
   score / align)
 * `docs/perf/cdc-oracle-gaps.md` (FastCDC 8k/16k, GEAR roll,
   GEAR SIMD digest)
+* `docs/perf/phonetic-oracle-gaps.md` (Soundex, NYSIIS, primary
+  Double Metaphone, full Double Metaphone)
 
 ## Oracles used
 
@@ -25,6 +28,7 @@ For per-kernel raw numbers see:
 | `stringcheese-align`     | `bio`           | 2.3     | canonical Rust exact NW/SW (Gotoh three-matrix DP)   | **~117 packages**        |
 | `stringcheese-cdc`       | `fastcdc`       | 4.0     | canonical Rust FastCDC v2020 (Fiedler)               | 1 transitive dep (cfg-if) |
 | `stringcheese-cdc`       | `gearhash`      | 0.1     | dedicated GEAR rolling hash (scalar + AVX2/SSE4.2)   | 1 transitive dep (cfg-if) |
+| `stringcheese-phonetic`  | `rphonetic`     | 3.0     | Rust port of Apache commons-codec phonetic family    | 6 new lock entries       |
 
 The `bio` footprint is the one dep-footprint red flag in this round.
 The `oracle-benches` feature is off by default and only compile-
@@ -55,6 +59,24 @@ Alternative oracles considered and rejected for cdc:
   fingerprint families therefore have no oracle row; their baselines
   continue to live under the standalone baseline table in
   `crates/stringcheese-cdc/benches/cdc.rs`'s module doc.
+
+Alternative oracles considered and rejected for phonetic:
+
+* `metaphone` (0.1) — Metaphone-only crate. Would add ~2 additional
+  `Cargo.lock` entries (`aho-corasick`, `itertools`) on top of
+  `rphonetic` for zero incremental algorithm coverage. Rejected as
+  duplicate.
+* `soundex` / `soundex-rs` — Soundex-only. Same rejection as
+  `metaphone`; `rphonetic` covers Soundex already.
+* `goldenphonetic-core`, `phonetics`, `amt-phonetic` — newer /
+  less-established. Rejected in favour of the widely-adopted
+  Apache-commons-codec-derived `rphonetic` to hold the "canonical
+  Rust ecosystem" bar.
+* Slavic Metaphone has no Rust oracle at all — the algorithm is
+  stringcheese-specific across ru / uk / be / bg / mk / sr / hr /
+  bs / sl / pl / cs / sk on Cyrillic and Latin. Baseline continues
+  to live under `crates/stringcheese-phonetic/src/lib.rs`'s `//!`
+  docs table; regression tripwire is preserved.
 
 ## Verdict per crate × kernel
 
@@ -126,6 +148,37 @@ Notes:
   true SIMD-vs-SIMD head-to-head.
 * `Buzhash`, `PolynomialHash`, `RabinFingerprint` have no oracle rows
   (no maintained pure-Rust crate at the maturity bar).
+
+### `stringcheese-phonetic`
+
+Fair-comparison (same-work) rows only. rphonetic's Soundex runs an
+upfront full-input `soundex_clean` pass and its Double Metaphone
+default caps output at 4 chars while stringcheese's does not; see
+`docs/perf/phonetic-oracle-gaps.md` for the methodology note and the
+`rphonetic-cap4` early-exit rows.
+
+| kernel                         | size | oracle          | mult    | verdict                              |
+| :----------------------------- | ---: | :-------------- | ------: | :----------------------------------- |
+| soundex                        |   32 | rphonetic       |  0.022× | stringcheese 45× ahead               |
+| soundex                        |  256 | rphonetic       |  0.006× | stringcheese 175× ahead              |
+| soundex                        | 2048 | rphonetic       |  0.0003× | stringcheese 3000× ahead            |
+| nysiis                         |   32 | rphonetic       |  0.104× | stringcheese 9.6× ahead              |
+| nysiis                         |  256 | rphonetic       |  0.097× | stringcheese 10.3× ahead             |
+| nysiis                         | 2048 | rphonetic       |  0.078× | stringcheese 12.8× ahead             |
+| double_metaphone_primary       |   32 | rphonetic-uncapped |  0.113× | stringcheese 8.8× ahead           |
+| double_metaphone_primary       |  256 | rphonetic-uncapped |  0.045× | stringcheese 22× ahead            |
+| double_metaphone_primary       | 2048 | rphonetic-uncapped |  0.032× | stringcheese 31× ahead            |
+| double_metaphone_full          |   32 | rphonetic-uncapped |  0.204× | stringcheese 4.9× ahead           |
+| double_metaphone_full          |  256 | rphonetic-uncapped |  0.082× | stringcheese 12× ahead            |
+| double_metaphone_full          | 2048 | rphonetic-uncapped |  0.042× | stringcheese 24× ahead            |
+| double_metaphone_full          |   32 | rphonetic-cap4  |  2.54×  | **feature-parity gap** (cap4 wins on 4-char early exit) |
+
+Read: stringcheese is 5-3000× ahead on every fair (same-work)
+oracle row. The one row where rphonetic leads (`double_metaphone_full`
+at n = 32 with `rphonetic-cap4`) is a feature-parity gap — rphonetic
+early-exits after emitting 4 characters. Adding an optional
+`max_code_length` to `DoubleMetaphoneVariant` would close it
+mechanically; see the perf-target section below.
 
 ### `stringcheese-align`
 
@@ -223,6 +276,25 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
   incidentally if the Levenshtein DP-loop cleanup (item 1) generalises
   to the OSA / Damerau kernels (same rolling-rows shape).
 
+### 5. `phonetic/double_metaphone_full` at n = 32 — vs `rphonetic-cap4` (2.54×)
+
+* **Gap**: `rphonetic-cap4` is 2.54× ahead at n = 32 only (130 MiB/s
+  vs 51 MiB/s). Under the fair (uncapped) comparison stringcheese
+  is 4.9× *ahead* at the same size, so the number is entirely the
+  "capped rphonetic terminates early on short input" effect — not
+  an algorithmic win.
+* **What's likely wrong**: nothing on the perf side. This is a
+  *feature-parity* gap: stringcheese's `DoubleMetaphoneVariant`
+  emits uncapped keys, rphonetic's default emits a 4-char-capped
+  key. Adding an optional `max_code_length` to
+  `stringcheese-phonetic::DoubleMetaphoneVariant` would close it
+  mechanically.
+* **Estimated cost**: small. Convenience-only; callers who need a
+  4-char cap today can post-truncate the returned key.
+* **Priority**: low. Included only because it is the single row in
+  the entire phonetic oracle round where any rphonetic column ever
+  leads stringcheese.
+
 ### Not on the list
 
 * **All `stringcheese-align` kernels**: stringcheese is 2-5× *ahead*
@@ -239,6 +311,14 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
   bench file's module doc remains the regression tripwire.
 * **`compare/{search, minhash, ngram, lcs, learned}`**: no comparable
   scalar Rust oracle in the ecosystem worth wiring up right now.
+* **All `stringcheese-phonetic` fair (same-work) rows**: stringcheese
+  is 5-3000× *ahead* of `rphonetic` on every one — Soundex, NYSIIS,
+  primary Double Metaphone (uncapped), and full Double Metaphone
+  (uncapped). No perf lever.
+* **`phonetic/slavic_metaphone`**: no comparable Rust oracle
+  (stringcheese-specific multilingual arm). Baseline table under
+  the crate's `src/lib.rs` `//!` docs remains the regression
+  tripwire.
 
 ## Actionable takeaway
 
@@ -258,6 +338,13 @@ random / default_16k) closes to 0.88×.
 
 Everything else is either already best-in-class (align, jaro,
 jaro_winkler, hamming vs strsim, gear roll vs gearhash, gear SIMD
-digest vs gearhash on aarch64, and now FastCDC vs fastcdc-rs),
-sub-2× (osa, damerau), or SIMD-territory (hamming vs triple_accel;
-Levenshtein bit-parallel Myers).
+digest vs gearhash on aarch64, FastCDC vs fastcdc-rs, and every
+`stringcheese-phonetic` fair-comparison row vs rphonetic — 5-3000×
+ahead), sub-2× (osa, damerau), or SIMD-territory (hamming vs
+triple_accel; Levenshtein bit-parallel Myers).
+
+The phonetic oracle round surfaced one feature-parity item — an
+optional output-length cap on `DoubleMetaphoneVariant` — that would
+close a stylistic "off-the-shelf default" gap against
+`rphonetic::DoubleMetaphone::default()` at n = 32. Convenience-only;
+not a perf lever.
