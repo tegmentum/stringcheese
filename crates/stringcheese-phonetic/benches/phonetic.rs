@@ -315,6 +315,198 @@ fn bench_slavic_metaphone(c: &mut Criterion) {
     group.finish();
 }
 
+// ---------------------------------------------------------------------------
+// Oracle-comparison groups (feature-gated on `oracle-benches`).
+//
+// Goal: side-by-side throughput of stringcheese vs a best-in-class Rust
+// phonetic-encoder crate on identical inputs. Not a correctness oracle
+// — the two implementations of each algorithm are not obliged to agree
+// on output byte-for-byte (Soundex has census / genealogy variants; the
+// Double Metaphone paper leaves several rule details underspecified;
+// NYSIIS has a strict / non-strict split with different length caps) —
+// but a *perf* oracle: it answers "is stringcheese competitive, or is
+// there real headroom vs the ecosystem?"
+//
+// Oracle chosen (`optional = true` in `Cargo.toml`, gated on the
+// `oracle-benches` feature):
+//
+// * `rphonetic` (3.0) — Rust port of the Apache commons-codec phonetic
+//   family. The only Rust crate that covers all four stringcheese
+//   English encoders (Soundex, primary Double Metaphone, full Double
+//   Metaphone, NYSIIS) in one place. See the crate's `Cargo.toml`
+//   header for the alternative oracles considered and rejected, and
+//   the dep-footprint notes.
+//
+// Every oracle group cycles the ASCII flavor of the primary groups'
+// length grid (`LENGTHS = 32/256/2048`). The utf8 flavor is *not*
+// included in the oracle rows: every English-only encoder here (both
+// stringcheese and rphonetic) strips non-ASCII input in its first
+// pass, so the utf8 numbers would measure the strip-and-scan cost of
+// each implementation rather than any algorithmic difference. Slavic
+// Metaphone has no oracle counterpart (stringcheese-specific) so it
+// stays out of the oracle rows.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_soundex(c: &mut Criterion) {
+    use rphonetic::Encoder as _;
+    let mut group = c.benchmark_group("phonetic/oracle/soundex");
+    let rphonetic_soundex = rphonetic::Soundex::default();
+    for &len in LENGTHS {
+        let input = ascii_input(len);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+
+        // stringcheese lane — mirrors `bench_soundex`'s ASCII row.
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(Soundex::encode(black_box(input))));
+            },
+        );
+
+        // rphonetic lane — default US NARA Soundex mapping.
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(rphonetic_soundex.encode(black_box(input))));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_nysiis(c: &mut Criterion) {
+    use rphonetic::Encoder as _;
+    let mut group = c.benchmark_group("phonetic/oracle/nysiis");
+    // `Nysiis::default()` is strict-mode (6-char cap), which matches the
+    // canonical Taft-1970 NYSIIS. stringcheese's `Nysiis::encode` also
+    // produces the standard 6-char output.
+    let rphonetic_nysiis = rphonetic::Nysiis::default();
+    for &len in LENGTHS {
+        let input = ascii_input(len);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(Nysiis::encode(black_box(input))));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(rphonetic_nysiis.encode(black_box(input))));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_double_metaphone_primary(c: &mut Criterion) {
+    use rphonetic::Encoder as _;
+    let mut group = c.benchmark_group("phonetic/oracle/double_metaphone_primary");
+    let sc_encoder = DoubleMetaphone::primary_only();
+    // Two rphonetic configurations are benched side by side because the
+    // rphonetic default (`max_code_length = Some(4)`) *early-exits* as
+    // soon as the primary key has 4 characters — stringcheese's
+    // `DoubleMetaphone::primary_only()` emits an uncapped key. At
+    // n = 32 the two configurations agree; at n = 256 / 2048 the capped
+    // configuration walks a tiny fraction of the input before returning,
+    // which trivialises the throughput comparison for those sizes. The
+    // uncapped (`None`) row is the fair apples-to-apples comparison; the
+    // capped (`Some(4)`) row documents the "off-the-shelf default"
+    // gap that a caller who used `DoubleMetaphone::default()` would see.
+    let rphonetic_dm_capped = rphonetic::DoubleMetaphone::default();
+    let rphonetic_dm_uncapped = rphonetic::DoubleMetaphone::new(None);
+    for &len in LENGTHS {
+        let input = ascii_input(len);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(sc_encoder.encode(black_box(input))));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic-uncapped/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(rphonetic_dm_uncapped.encode(black_box(input))));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic-cap4/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(rphonetic_dm_capped.encode(black_box(input))));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+fn bench_oracle_double_metaphone_full(c: &mut Criterion) {
+    let mut group = c.benchmark_group("phonetic/oracle/double_metaphone_full");
+    let sc_encoder = DoubleMetaphone::full();
+    // Same capped/uncapped split as `bench_oracle_double_metaphone_primary`.
+    // `DoubleMetaphone::double_metaphone` returns a
+    // `DoubleMetaphoneResult { primary, alternate }` — the two-key
+    // shape stringcheese's `full()` variant produces.
+    let rphonetic_dm_capped = rphonetic::DoubleMetaphone::default();
+    let rphonetic_dm_uncapped = rphonetic::DoubleMetaphone::new(None);
+    for &len in LENGTHS {
+        let input = ascii_input(len);
+        group.throughput(Throughput::Bytes(input.len() as u64));
+
+        group.bench_with_input(
+            BenchmarkId::new("stringcheese/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(sc_encoder.encode(black_box(input))));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic-uncapped/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher
+                    .iter(|| black_box(rphonetic_dm_uncapped.double_metaphone(black_box(input))));
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("rphonetic-cap4/ascii", len),
+            &input,
+            |bencher, input| {
+                bencher.iter(|| black_box(rphonetic_dm_capped.double_metaphone(black_box(input))));
+            },
+        );
+    }
+    group.finish();
+}
+
+#[cfg(feature = "oracle-benches")]
+criterion_group!(
+    oracle_benches,
+    bench_oracle_soundex,
+    bench_oracle_nysiis,
+    bench_oracle_double_metaphone_primary,
+    bench_oracle_double_metaphone_full,
+);
+
 criterion_group!(
     phonetic,
     bench_soundex,
@@ -323,4 +515,8 @@ criterion_group!(
     bench_double_metaphone_full,
     bench_slavic_metaphone,
 );
+
+#[cfg(feature = "oracle-benches")]
+criterion_main!(phonetic, oracle_benches);
+#[cfg(not(feature = "oracle-benches"))]
 criterion_main!(phonetic);

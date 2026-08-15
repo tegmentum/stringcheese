@@ -2588,6 +2588,22 @@ jobs:
             --no-run \
             --locked
 
+      - name: Compile the phonetic bench with oracle-benches feature (no run)
+        # Compile-check the feature-gated oracle-comparison bench groups
+        # (`rphonetic`). Same rationale as the plain compile-check above —
+        # catch API drift in the optional oracle crate without pinning a
+        # perf budget on a shared runner. See
+        # `crates/stringcheese-phonetic/benches/phonetic.rs` for the
+        # gated groups and `docs/perf/phonetic-oracle-gaps.md` for the
+        # last-measured gap table.
+        run: |
+          cargo bench \
+            -p stringcheese-phonetic \
+            --bench phonetic \
+            --features oracle-benches \
+            --no-run \
+            --locked
+
   # ------------------------------------------------------------------
   # Pattern bench compile-check (optional, non-blocking).
   #

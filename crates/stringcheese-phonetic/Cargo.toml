@@ -20,9 +20,50 @@ std = ["alloc", "stringcheese-core/std"]
 # crate compiles as an empty no-alloc surface for embedded builds that
 # only need to link against the substrate crates.
 alloc = ["stringcheese-core/alloc"]
+# When enabled, the criterion bench harness pulls in a best-in-class
+# Rust phonetic-encoder oracle crate (`rphonetic`, the Rust port of the
+# Apache commons-codec phonetic algorithms — Soundex, Metaphone, Double
+# Metaphone, NYSIIS, Match-Rating, and more) and adds side-by-side
+# oracle-comparison bench groups. The feature is off by default because
+# it is bench-only: no library code looks at the oracle crate, and the
+# ordinary `cargo bench -p stringcheese-phonetic` invocation must keep
+# working without pulling the extra crate. See `benches/phonetic.rs`
+# for the gated groups and `docs/perf/phonetic-oracle-gaps.md` for the
+# last-measured gap table.
+oracle-benches = ["dep:rphonetic"]
 
 [dependencies]
 stringcheese-core = { workspace = true }
+# --- optional oracle-comparison bench dep --------------------------------
+#
+# `rphonetic` (3.0) — Rust port of the Apache commons-codec phonetic
+# encoder family (Soundex, Metaphone, Double Metaphone, NYSIIS,
+# Refined Soundex, Match-Rating, Beider-Morse, Caverphone, Cologne,
+# Daitch-Mokotoff). Best breadth in the Rust ecosystem, and the only
+# crate that covers all four English-language stringcheese encoders
+# (Soundex, primary Double Metaphone, full Double Metaphone, NYSIIS)
+# in one place.
+#
+# Marked `optional = true` and gated by the `oracle-benches` feature;
+# a plain `cargo build` / `cargo test` / `cargo bench` never pulls it
+# in. Lives in `[dependencies]` (not `[dev-dependencies]`) because
+# Cargo does not allow optional dev-deps. Locks ~21 additional
+# packages into `Cargo.lock` (regex, nom, serde-derive, and their
+# transitives) — one over the 20-entry budget documented in
+# `docs/perf/oracle-gap-summary.md`, flagged there and justified by
+# the four-encoder oracle coverage this single crate provides.
+#
+# Alternatives considered and rejected:
+#
+# * `metaphone` (0.1, max-frai/metaphone-rs) — Metaphone-only. Would
+#   add ~2 additional packages (aho-corasick, itertools) on top of
+#   rphonetic for zero incremental coverage; rphonetic already ships
+#   Metaphone. Rejected as duplicate.
+# * `soundex` / `soundex-rs` — Soundex-only. Same rejection reason;
+#   rphonetic already ships Soundex, and neither standalone crate is
+#   more mature than the rphonetic port of the Apache commons-codec
+#   reference. Rejected as duplicate.
+rphonetic = { version = "3", optional = true }
 
 [dev-dependencies]
 # Golden-case schema; test-only. `alloc` is enabled so the golden case
