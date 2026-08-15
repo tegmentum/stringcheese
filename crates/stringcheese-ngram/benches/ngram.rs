@@ -131,6 +131,19 @@ fn flavors() -> [(&'static str, &'static str); 2] {
 // bytes* — higher is better.
 // ---------------------------------------------------------------------------
 
+// Iterator drain that forces each gram to actually be produced. A
+// bare `.count()` gets specialized to `size_hint().0` for
+// `slice::Windows`, which the compiler then constant-folds — the
+// resulting "throughput" number is meaningless because the loop
+// never actually walked the input. `for_each(black_box)` blocks
+// that optimization: every gram flows through `black_box` and the
+// iterator has to produce it.
+fn drain<T, I: Iterator<Item = T>>(it: I) {
+    it.for_each(|gram| {
+        black_box(gram);
+    });
+}
+
 fn bench_char(c: &mut Criterion) {
     let mut group = c.benchmark_group("ngram/char");
     for (flavor, seed) in flavors() {
@@ -140,7 +153,7 @@ fn bench_char(c: &mut Criterion) {
                 group.throughput(Throughput::Bytes(input.len() as u64));
                 let id = BenchmarkId::new(format!("{flavor}/n{n}"), input.len());
                 group.bench_with_input(id, &input, |bencher, input| {
-                    bencher.iter(|| black_box(char_ngrams(black_box(input), n).count()));
+                    bencher.iter(|| drain(char_ngrams(black_box(input), n)));
                 });
             }
         }
@@ -158,7 +171,7 @@ fn bench_byte(c: &mut Criterion) {
                 group.throughput(Throughput::Bytes(bytes.len() as u64));
                 let id = BenchmarkId::new(format!("{flavor}/n{n}"), bytes.len());
                 group.bench_with_input(id, bytes, |bencher, bytes| {
-                    bencher.iter(|| black_box(byte_ngrams(black_box(bytes), n).count()));
+                    bencher.iter(|| drain(byte_ngrams(black_box(bytes), n)));
                 });
             }
         }
@@ -177,7 +190,7 @@ fn bench_grapheme(c: &mut Criterion) {
                 group.throughput(Throughput::Bytes(input.len() as u64));
                 let id = BenchmarkId::new(format!("{flavor}/n{n}"), input.len());
                 group.bench_with_input(id, &input, |bencher, input| {
-                    bencher.iter(|| black_box(grapheme_ngrams(black_box(input), n).count()));
+                    bencher.iter(|| drain(grapheme_ngrams(black_box(input), n)));
                 });
             }
         }

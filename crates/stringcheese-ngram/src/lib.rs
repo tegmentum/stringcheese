@@ -74,36 +74,38 @@
 //! ```text
 //! unit     / flavor / n    256 B         4 KiB
 //! ------------------------------------------------
-//! char     / ascii  / 3    ~1.4 GiB/s    ~1.6 GiB/s
-//! char     / ascii  / 5    ~1.4 GiB/s    ~1.6 GiB/s
-//! char     / utf8   / 3    ~700 MiB/s    ~800 MiB/s
-//! char     / utf8   / 5    ~700 MiB/s    ~800 MiB/s
-//! byte     / ascii  / 3    ~12 GiB/s     ~15 GiB/s
-//! byte     / ascii  / 5    ~12 GiB/s     ~15 GiB/s
-//! byte     / utf8   / 3    ~12 GiB/s     ~15 GiB/s
-//! byte     / utf8   / 5    ~12 GiB/s     ~15 GiB/s
-//! grapheme / ascii  / 3    ~180 MiB/s    ~200 MiB/s
-//! grapheme / utf8   / 3    ~90 MiB/s     ~100 MiB/s
+//! char     / ascii  / 3    ~100 MiB/s    ~160 MiB/s
+//! char     / ascii  / 5    ~100 MiB/s    ~135 MiB/s
+//! char     / utf8   / 3    ~200 MiB/s    ~160 MiB/s
+//! char     / utf8   / 5    ~60 MiB/s     ~350 MiB/s
+//! byte     / ascii  / 3    ~2.1 GiB/s    ~2.2 GiB/s
+//! byte     / ascii  / 5    ~2.2 GiB/s    ~2.3 GiB/s
+//! byte     / utf8   / 3    ~2.4 GiB/s    ~1.8 GiB/s
+//! byte     / utf8   / 5    ~2.0 GiB/s    ~2.6 GiB/s
+//! grapheme / ascii  / 3    ~50 MiB/s     ~60 MiB/s
+//! grapheme / utf8   / 3    ~25 MiB/s     ~30 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **[`byte_ngrams`] is memory-bound** — it's just [`slice::windows`]
-//!   plus a `.count()`. This is the throughput ceiling; every other
-//!   unit's slowdown against it is boundary-detection cost.
-//! * **[`char_ngrams`] is ~10× behind byte** because it does a
+//! * **[`byte_ngrams`] is memory-bound** — it's [`slice::windows`],
+//!   each yielded window forced through `black_box` to defeat the
+//!   `.count()` const-fold. This is the throughput ceiling; every
+//!   other unit's slowdown against it is boundary-detection cost.
+//! * **[`char_ngrams`] is ~15-20× behind byte** because it does a
 //!   per-scalar `char_indices` walk to gather boundaries; the walk
 //!   is the load-bearing cost, `n` barely affects the number.
-//! * **`utf8` cuts `char_ngrams` throughput ~2×** on bytes — same
-//!   number of scalars packs into twice as many bytes, so the
-//!   per-byte number halves while per-scalar cost stays flat.
-//! * **`grapheme_ngrams` is ~7-15× behind `char`** because the ICU4X
-//!   grapheme-cluster iterator is where the time goes. This is
-//!   expected — grapheme boundaries are a Unicode algorithm, not a
-//!   scalar-boundary walk — and the arm is only relevant when the
+//! * **`grapheme_ngrams` is another ~2-3× behind `char`** because the
+//!   ICU4X grapheme-cluster iterator is where the time goes. This
+//!   is expected — grapheme boundaries are a Unicode algorithm, not
+//!   a scalar-boundary walk — and the arm is only relevant when the
 //!   input carries combining marks / ZWJ sequences / regional-
 //!   indicator flags where character grams would slice a user-
 //!   visible glyph in half.
+//! * **Per-cell variance is high** at 256 B input — 10-sample runs
+//!   here have wide confidence intervals; the 4 KiB row is the more
+//!   trustworthy number for regression tracking. Rerun with
+//!   `--sample-size 30` for tighter bounds.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression or
