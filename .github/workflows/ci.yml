@@ -2552,6 +2552,43 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Phonetic bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-phonetic/benches/phonetic.rs` — same shape as
+  # the `manip-bench` / `compare-bench` jobs above. The bench crate is
+  # the biggest in the phonetic subsystem (6.1 KLoC, 5 encoders); the
+  # `--no-run` compile-check catches API drift on the load-bearing
+  # `Soundex::encode` / `Nysiis::encode` / `DoubleMetaphone::encode` /
+  # `SlavicMetaphone::encode` entry points without pinning a perf
+  # budget on a shared runner.
+  # ------------------------------------------------------------------
+  phonetic-bench:
+    name: phonetic bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: phonetic-bench-stable
+
+      - name: Compile-check the phonetic bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-phonetic \
+            --bench phonetic \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:
