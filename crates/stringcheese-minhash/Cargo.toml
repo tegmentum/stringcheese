@@ -22,5 +22,23 @@ alloc = []
 # stringcheese-index depends on downstream).
 ahash = { version = "0.8", default-features = false }
 
+[dev-dependencies]
+# Criterion bench harness — workspace-inherited so every bench-adopting
+# crate tracks the same version. See `benches/minhash.rs` for the
+# groups it drives and the baseline table under the crate-level `//!`
+# docs for last-measured numbers.
+criterion = { workspace = true }
+
+# ---------------------------------------------------------------------------
+# Bench harness — mirrors the shape used by the sibling compute-heavy
+# crates (`stringcheese-compare`, `stringcheese-manip`, ...). `harness =
+# false` so criterion owns `main`. Run with `cargo bench -p
+# stringcheese-minhash`. Baseline numbers live in the crate-level `//!`
+# docs of `src/lib.rs`.
+# ---------------------------------------------------------------------------
+[[bench]]
+name = "minhash"
+harness = false
+
 [lints]
 workspace = true
