@@ -3047,3 +3047,98 @@ jobs:
 
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --locked
+
+  # ------------------------------------------------------------------
+  # cargo-audit (RustSec advisory scan, optional).
+  #
+  # Scans `Cargo.lock` against the RustSec advisory database on every
+  # push / PR. The accepted set of advisories is captured in
+  # `.cargo/audit.toml` — each ignore carries an inline rationale so
+  # the list shrinks over time rather than becoming a permanent quiet.
+  # See `docs/security.md` for the local reproducer and the ignore-
+  # policy.
+  #
+  # `continue-on-error: true` — the initial pass runs advisory-only.
+  # Promote to hard-fail once the ignore list has been driven down
+  # (the wasmtime 26 -> 46 major bump is the dominant blocker as of
+  # first landing).
+  # ------------------------------------------------------------------
+  security-audit:
+    name: security-audit (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Pinned tool version — bump deliberately so a new cargo-audit
+      # release that reshapes the report format is a visible PR.
+      CARGO_AUDIT_VERSION: "0.22.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache ~/.cargo/bin (cargo-audit)
+        id: cargo-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-bin-audit-${{ env.CARGO_AUDIT_VERSION }}
+
+      - name: Install cargo-audit (${{ env.CARGO_AUDIT_VERSION }}) if cache miss
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --version "${CARGO_AUDIT_VERSION}" cargo-audit
+
+      - name: Run cargo audit
+        # `--config` picks up the workspace ignore list. Fails on any
+        # advisory outside that list; a green run means every
+        # observed advisory is either patched or explicitly accepted.
+        run: cargo audit
+
+  # ------------------------------------------------------------------
+  # cargo-deny (bans / licenses / sources / advisories, optional).
+  #
+  # Broader supply-chain check than cargo-audit alone: license SPDX
+  # policy (allow-list of permissive licenses only), duplicate-version
+  # detection (warn, since transitive dup-versions are the norm),
+  # unknown-registry / unknown-git deny, plus the same RustSec sweep.
+  # Configuration lives in `deny.toml` at the workspace root; the
+  # ignore list mirrors `.cargo/audit.toml`.
+  #
+  # `continue-on-error: true` for the same reason as security-audit —
+  # a first-pass hygiene job promoted to blocking after a stable
+  # window. See `docs/security.md`.
+  # ------------------------------------------------------------------
+  dep-policy:
+    name: dep-policy (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      # Pinned tool version — same rationale as CARGO_AUDIT_VERSION.
+      CARGO_DENY_VERSION: "0.19.9"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache ~/.cargo/bin (cargo-deny)
+        id: cargo-deny-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-bin-deny-${{ env.CARGO_DENY_VERSION }}
+
+      - name: Install cargo-deny (${{ env.CARGO_DENY_VERSION }}) if cache miss
+        if: steps.cargo-deny-cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --version "${CARGO_DENY_VERSION}" cargo-deny
+
+      - name: Run cargo deny check
+        # Runs all four checks: advisories, bans, licenses, sources.
+        # Duplicate-version warnings are informational only — the
+        # top offenders (icu_provider 1/2, hashbrown 0.14/0.17,
+        # itertools 0.11/0.12/0.14) are called out in `deny.toml`.
+        run: cargo deny check
