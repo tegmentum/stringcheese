@@ -65,6 +65,7 @@ jobs:
           - metric_axioms_levenshtein
           - scud_load
           - hf_tokenizer_json
+          - regex_compile_and_match
     steps:
       - uses: actions/checkout@v4
 
