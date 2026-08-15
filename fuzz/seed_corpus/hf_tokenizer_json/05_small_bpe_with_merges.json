@@ -1,0 +1,1 @@
+{"version":"1.0","added_tokens":[{"id":0,"content":"<pad>","special":true}],"normalizer":{"type":"NFC"},"pre_tokenizer":{"type":"Whitespace"},"model":{"type":"BPE","vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]}}

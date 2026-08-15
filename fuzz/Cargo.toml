@@ -26,6 +26,24 @@ libfuzzer-sys = "0.4"
 stringcheese-core = { path = "../crates/stringcheese-core", default-features = false, features = ["std"] }
 stringcheese-compare = { path = "../crates/stringcheese-compare", default-features = false, features = ["std"] }
 
+# Parser-heavy surfaces for the binary/JSON fuzz targets.
+#
+# `stringcheese-scud` — the SCUD binary loader (`ScudFile::from_slice`).
+# Feature set matches the crate's default: `std` (implies `alloc`) so
+# `OwnedScudFile` and the disk-loading paths compile alongside the
+# zero-copy `from_slice` entry point exercised by `scud_load`.
+stringcheese-scud = { path = "../crates/stringcheese-scud", default-features = false, features = ["std"] }
+
+# `stringcheese-tokenizer-hf` — the Hugging Face `tokenizer.json`
+# deserialiser. The `hf-tokenizer` feature is what wires in
+# `serde_json` + the typed config shapes exercised by
+# `hf_tokenizer_json`; without it the `hf` module compiles to an empty
+# surface. `hf-tokenizer` transitively enables `std` and
+# `hf-normalizer` (unicode-normalization + unicode-general-category
+# static tables), which the tokenizer.json normalizer variants need to
+# fully round-trip.
+stringcheese-tokenizer-hf = { path = "../crates/stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -76,6 +94,20 @@ bench = false
 [[bin]]
 name = "metric_axioms_levenshtein"
 path = "fuzz_targets/metric_axioms_levenshtein.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scud_load"
+path = "fuzz_targets/scud_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hf_tokenizer_json"
+path = "fuzz_targets/hf_tokenizer_json.rs"
 test = false
 doc = false
 bench = false

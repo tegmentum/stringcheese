@@ -63,6 +63,8 @@ jobs:
           - jaro_range
           - ngram_count_agreement
           - metric_axioms_levenshtein
+          - scud_load
+          - hf_tokenizer_json
     steps:
       - uses: actions/checkout@v4
 
@@ -123,8 +125,20 @@ jobs:
           TIME_SECONDS: ${{ github.event.inputs.time_seconds || '1800' }}
         run: |
           set -euo pipefail
+          # Primary (writable) corpus lives under fuzz/corpus/<target>/ and
+          # is cached across runs; libFuzzer writes discovered inputs here.
+          # Seed corpus (checked in, read-only inputs) lives under
+          # fuzz/seed_corpus/<target>/ and is passed as an additional
+          # positional argument so libFuzzer merges those inputs on start.
+          mkdir -p "fuzz/corpus/${{ matrix.target }}"
+          extra_corpus=()
+          if [ -d "fuzz/seed_corpus/${{ matrix.target }}" ]; then
+            extra_corpus+=("fuzz/seed_corpus/${{ matrix.target }}")
+          fi
           cargo fuzz run ${{ matrix.target }} \
             --fuzz-dir fuzz \
+            "fuzz/corpus/${{ matrix.target }}" \
+            "${extra_corpus[@]}" \
             -- -max_total_time="${TIME_SECONDS}"
 
       # Crash artifacts. libFuzzer writes reproducers to
