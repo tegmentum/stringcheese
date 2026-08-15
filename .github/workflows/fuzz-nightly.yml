@@ -99,7 +99,7 @@ jobs:
       # simpler than the split restore/save+run-id pattern, and sufficient for
       # v0.1. If we later need to preserve per-run historical corpora, revisit.
       - name: Restore and save fuzz corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}

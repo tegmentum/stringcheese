@@ -488,7 +488,7 @@ jobs:
 
       - name: Cache ~/.cargo/bin (twiggy, cargo-component)
         id: cargo-bin-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/twiggy
@@ -607,7 +607,7 @@ jobs:
           key: tiktoken-parity-stable
 
       - name: Cache vocab blobs
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/stringcheese-tokenizer-tiktoken
           # Bust the cache only when the hash constants in
@@ -681,7 +681,7 @@ jobs:
         # job has already run on this ref, the `cl100k_base.tiktoken`
         # blob is present and the bench's cl100k group produces
         # numbers; otherwise it soft-skips.
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/stringcheese-tokenizer-tiktoken
           key: tiktoken-vocabs-${{ hashFiles('crates/stringcheese-tokenizer-tiktoken-conformance/src/variant.rs') }}
@@ -2415,7 +2415,7 @@ jobs:
           key: wasm-tokenizer-component-cl100k-stable
 
       - name: Cache cl100k vocab blob
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/stringcheese-tokenizer-tiktoken
           # Bust the cache only when the hash constant in the
@@ -3081,7 +3081,7 @@ jobs:
 
       - name: Cache ~/.cargo/bin (cargo-audit)
         id: cargo-audit-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-audit
           key: cargo-bin-audit-${{ env.CARGO_AUDIT_VERSION }}
@@ -3127,7 +3127,7 @@ jobs:
 
       - name: Cache ~/.cargo/bin (cargo-deny)
         id: cargo-deny-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cargo/bin/cargo-deny
           key: cargo-bin-deny-${{ env.CARGO_DENY_VERSION }}
