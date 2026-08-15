@@ -31,11 +31,16 @@
 //!
 //! Two per size:
 //!
-//! * `plain` — ASCII prose with no metacharacters. Every target's
-//!   fast path fires (JSON: 128-entry table hit-miss; URI:
-//!   passthrough; HTML: no substitutions; shell: no embedded
-//!   quotes). Numbers here are what the "ambient" per-byte cost
-//!   looks like.
+//! * `plain` — ASCII prose (`"the quick brown fox …"`). JSON,
+//!   HTML, and shell all take their fast paths here (no
+//!   backslash/entity/quote metacharacters in prose). URI is the
+//!   exception: `NON_ALPHANUMERIC` treats space (0x20) as needing
+//!   `%20`, so the prose seed's ~18 % spaces break URI's
+//!   passthrough path on every space — the URI `plain` cell
+//!   measures a partial-escape workload, not the passthrough hot
+//!   path. See the crate-level `//!` docs for the resulting
+//!   ~4× gap between URI `plain` and the earlier
+//!   all-alphanumeric baseline.
 //! * `meta` — dense with characters each target has to escape.
 //!   URI and JSON pay per-scalar substitution cost; HTML pays
 //!   per-entity substitution; shell pays for every embedded

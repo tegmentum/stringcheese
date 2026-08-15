@@ -69,11 +69,20 @@
 //!   only ~30-40 % on `meta` — the entity substitution set is
 //!   small (`& < > " ' /`) so the fast path stays hot even when
 //!   most bytes need to be inspected.
-//! * **`uri` is the slowest passthrough arm** at ~340-440 MiB/s
-//!   plain — surprising given the earlier prior baseline reported
-//!   ~1.4 GiB/s. The gap is worth investigating in a follow-up
-//!   round; possibly a `percent-encoding` version change since the
-//!   prior measurement.
+//! * **`uri` on the shared `plain` seed sits at ~340-440 MiB/s**
+//!   — not a passthrough number despite the flavor name. The
+//!   `NON_ALPHANUMERIC` encode set treats space (0x20) as
+//!   needing `%20`, so the shared prose seed
+//!   (`"the quick brown fox …"`, ~18 % spaces) breaks the URI
+//!   passthrough fast path on every space. HTML/JSON/shell
+//!   don't consider space a metachar, so their fast paths still
+//!   fire on the same seed — which is why only URI looks like a
+//!   regression against the earlier all-alphanumeric baseline
+//!   (1.41 GiB/s, see the prior table below). The percent-encoding
+//!   hot path itself is unchanged: a probe on all-alphanumeric
+//!   input reproduces ~1.4-1.6 GiB/s on the current crate
+//!   version. The URI numbers here are the honest cost of
+//!   percent-encoding realistic prose, not a hot-path regression.
 //! * **`shell` on `meta` drops 3-4×** — every embedded single quote
 //!   forces a backslash-escape and the whole input is wrapped in
 //!   quotes. `shlex`'s per-scalar quoting logic dominates. A
