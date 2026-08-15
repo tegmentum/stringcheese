@@ -96,7 +96,12 @@ tolerance_pct = 5
 name = "stringcheese-cdc"
 kind = "library"
 probe_feature = "probe-stringcheese-cdc"
-optimized_bytes = 21511
+# Grew from 21511 -> 23896 B (+11%) when FastCDC's hot loop was rewritten
+# to process two bytes per iteration with a pre-shifted gear table
+# (GEAR_TABLE_LS1 = 256 * 8 = 2 KiB). Paid for by 1.8-2.1x throughput
+# speedup vs the prior byte-at-a-time impl, and 1.13-1.14x ahead of
+# fastcdc-rs at every measured cell. See docs/perf/cdc-oracle-gaps.md.
+optimized_bytes = 23896
 tolerance_pct = 5
 
 [[crate]]
