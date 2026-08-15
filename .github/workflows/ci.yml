@@ -2552,6 +2552,147 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Phonetic bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-phonetic/benches/phonetic.rs` — same shape as
+  # the `manip-bench` / `compare-bench` jobs above. The bench crate is
+  # the biggest in the phonetic subsystem (6.1 KLoC, 5 encoders); the
+  # `--no-run` compile-check catches API drift on the load-bearing
+  # `Soundex::encode` / `Nysiis::encode` / `DoubleMetaphone::encode` /
+  # `SlavicMetaphone::encode` entry points without pinning a perf
+  # budget on a shared runner.
+  # ------------------------------------------------------------------
+  phonetic-bench:
+    name: phonetic bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: phonetic-bench-stable
+
+      - name: Compile-check the phonetic bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-phonetic \
+            --bench phonetic \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Pattern bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-pattern/benches/pattern.rs` — same shape as
+  # the `phonetic-bench` / `manip-bench` jobs above. Catches API drift
+  # on `Literal::new` / `Wildcard::anywhere` / `Glob::anywhere` and on
+  # the shared [`Pattern`] trait `find_iter` signature.
+  # ------------------------------------------------------------------
+  pattern-bench:
+    name: pattern bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: pattern-bench-stable
+
+      - name: Compile-check the pattern bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-pattern \
+            --bench pattern \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Stats bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-stats/benches/stats.rs` — same shape as the
+  # sibling bench jobs. Catches API drift on the four public
+  # characterization entry points (`entropy`, `Histogram::of`,
+  # `Ratios::of`, `Lengths::of`) without pinning a perf budget on a
+  # shared runner.
+  # ------------------------------------------------------------------
+  stats-bench:
+    name: stats bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: stats-bench-stable
+
+      - name: Compile-check the stats bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-stats \
+            --bench stats \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Textsplit bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-textsplit/benches/textsplit.rs` — same shape
+  # as the sibling bench jobs. Catches API drift on the three shipped
+  # splitters (`RecursiveSplitter`, `ParagraphSplitter`,
+  # `SentenceSplitter`) and on the shared [`TextSplitter`] trait
+  # `split` signature.
+  # ------------------------------------------------------------------
+  textsplit-bench:
+    name: textsplit bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: textsplit-bench-stable
+
+      - name: Compile-check the textsplit bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-textsplit \
+            --bench textsplit \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:
