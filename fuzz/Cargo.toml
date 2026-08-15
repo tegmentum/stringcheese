@@ -44,6 +44,15 @@ stringcheese-scud = { path = "../crates/stringcheese-scud", default-features = f
 # fully round-trip.
 stringcheese-tokenizer-hf = { path = "../crates/stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
 
+# `stringcheese-tokenizer-tiktoken` — the tiktoken plaintext
+# `mergeable_ranks` parser (`builder::build_scud_from_tiktoken`)
+# exercised by `tiktoken_merges_parse`. Feature set is empty to keep
+# the fuzz build lean: we do not need any embedded SCUD-lite pack
+# (`cl100k_base` / `p50k_base` / ...) linked in — the parser under
+# fuzz operates on plaintext bytes handed to it, independent of the
+# baked-in pack byte statics.
+stringcheese-tokenizer-tiktoken = { path = "../crates/stringcheese-tokenizer-tiktoken", default-features = false }
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -108,6 +117,13 @@ bench = false
 [[bin]]
 name = "hf_tokenizer_json"
 path = "fuzz_targets/hf_tokenizer_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tiktoken_merges_parse"
+path = "fuzz_targets/tiktoken_merges_parse.rs"
 test = false
 doc = false
 bench = false
