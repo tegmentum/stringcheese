@@ -18,6 +18,14 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
+# Structured-input generator for differential / roundtrip fuzz targets.
+# `arbitrary` turns the raw libFuzzer byte stream into typed
+# `Arbitrary` values via `Unstructured`; the `scud_roundtrip` target
+# builds a bounded, well-formed SCUD input from the byte stream and
+# asserts the writer/reader pair are inverses. Fuzz-only dep — the
+# main workspace crates never pull this in.
+arbitrary = "1"
+
 # Path deps back into the main workspace crates. `default-features = false`
 # with the `std` feature explicitly turned on matches the shape of every
 # other consumer in the workspace — the fuzz targets need heap allocation,
@@ -101,6 +109,13 @@ bench = false
 [[bin]]
 name = "scud_load"
 path = "fuzz_targets/scud_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scud_roundtrip"
+path = "fuzz_targets/scud_roundtrip.rs"
 test = false
 doc = false
 bench = false

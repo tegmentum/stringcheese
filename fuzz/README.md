@@ -40,6 +40,7 @@ cache on the nightly job).
 | Target                | Surface                                            | Invariant                                                                 |
 | --------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
 | `scud_load`           | `stringcheese_scud::ScudFile::from_slice`          | Arbitrary bytes → `Ok(ScudFile)` or typed `ScudError`, never panic.       |
+| `scud_roundtrip`      | `ScudWriter` + `ScudFile::from_slice`              | Structured input → serialize → deserialize preserves case pairs, collation primary overrides + options blob, plural cardinal rules. |
 | `hf_tokenizer_json`   | `stringcheese_tokenizer_hf::hf::parse_tokenizer_json` | UTF-8 bytes → `Ok(HfTokenizerConfig)` or typed `HfParseError`, never panic. |
 
 The parser-robustness targets are the highest-value because their
@@ -55,6 +56,12 @@ Seed corpus per parser target:
   * `03_case_all_sections.bin` — CAP_CASE + every case section id (empty payloads) + locale
   * `04_magic_only.bin` — truncated to the four magic bytes
   * `05_zeros_64.bin` — 64 bytes of zeros (invalid magic, catches early rejection)
+* `scud_roundtrip`
+  * `01_empty_input.bin` — empty (`arbitrary` returns `IncorrectFormat`; target no-ops)
+  * `02_one_case_pair.bin` — decodes to CLDR "44.1" + one `(A, a)` case pair
+  * `03_all_zero.bin` — 32 zero bytes (minimal-values variant)
+  * `04_max_values.bin` — 64 bytes of `0xFF` (max u32 fields, edge case)
+  * `05_alternating.bin` — 96 alternating `0x5A`/`0xA5` bytes (mixed picks)
 * `hf_tokenizer_json`
   * `01_minimal_bpe.json` — smallest well-formed BPE tokenizer config
   * `02_empty_object.json` — `{}` (parses; every optional field defaulted)

@@ -64,6 +64,7 @@ jobs:
           - ngram_count_agreement
           - metric_axioms_levenshtein
           - scud_load
+          - scud_roundtrip
           - hf_tokenizer_json
     steps:
       - uses: actions/checkout@v4
