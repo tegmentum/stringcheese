@@ -131,6 +131,33 @@ pub const TIKTOKEN_CANONICAL_PATTERN: &str = concat!(
     r"|\s+",
 );
 
+/// GLiNER's `WordsSplitter` regex — the whitespace-based
+/// pre-tokenizer that GLiNER models expect BEFORE their SentencePiece
+/// / BPE sub-tokenizer runs. Both zero-shot NER (`urchade/gliner_medium-v2.1`,
+/// `knowledgator/gliner-multitask-v1.0`, ...) and their span-classifier
+/// output shapes are word-indexed relative to what this splitter
+/// emits — so a downstream tokenizer that wants to speak GLiNER's
+/// span coordinate system must first split the input with this regex
+/// and then align its subword offsets against those word ranges.
+///
+/// Verbatim from `gliner/data_processing/tokenizer.py::WhitespaceTokenSplitter`:
+///
+/// * A run of Unicode word characters (`\w+`, letters + digits + `_`),
+///   optionally continued across a single `-` or `_` join into more
+///   word characters — so `state-of-the-art` and `some_var` stay
+///   glued as a single word.
+/// * OR any single non-whitespace character (punctuation like `.`,
+///   `,`, `!` each becomes its own word).
+///
+/// The regex is Unicode-aware via the `unicode` feature of
+/// `fancy-regex` — `café`, `ñoño`, `你好世界` are all single words —
+/// matching Python's default `re.UNICODE` mode.
+///
+/// The Python splitter emits `(str, start, end)` triples;
+/// [`RegexPreTokenizer::split_ranges`] gives the `start..end` range
+/// directly and [`RegexPreTokenizer::split`] gives `(start, &str)`.
+pub const GLINER_WORDS_PATTERN: &str = r"\w+(?:[-_]\w+)*|\S";
+
 /// The GPT-2 / `r50k_base` / `p50k_base` pre-tokenizer pattern.
 ///
 /// Structurally the same as [`TIKTOKEN_CANONICAL_PATTERN`] but
@@ -245,6 +272,23 @@ impl RegexPreTokenizer {
     #[must_use]
     pub fn gpt2() -> Self {
         Self::new(GPT2_PATTERN).expect("the hard-coded GPT-2 pattern must compile")
+    }
+
+    /// Convenience: compile [`GLINER_WORDS_PATTERN`] — the whitespace
+    /// / punctuation splitter GLiNER models expect BEFORE their
+    /// SentencePiece / BPE sub-tokenizer runs.
+    ///
+    /// See the [pattern's docs](GLINER_WORDS_PATTERN) for semantics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hard-coded GLiNER pattern fails to compile,
+    /// which would indicate a regression in the crate. A test
+    /// (`gliner_words_pattern_compiles`) guards against this.
+    #[must_use]
+    pub fn gliner_words() -> Self {
+        Self::new(GLINER_WORDS_PATTERN)
+            .expect("the hard-coded GLiNER WordsSplitter pattern must compile")
     }
 
     /// The pattern this pre-tokenizer was compiled from.
@@ -987,6 +1031,86 @@ mod tests {
         );
         // GPT-2 groups digits without the {1,3} cap.
         assert_eq!(split_strs(&pre, "1234567"), vec!["1234567"]);
+    }
+
+    // ---------------------------------------------------------------
+    // GLiNER WordsSplitter
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn gliner_words_pattern_compiles() {
+        let _ = RegexPreTokenizer::gliner_words();
+    }
+
+    #[test]
+    fn gliner_words_matches_python_words_splitter_on_reference_input() {
+        // Ground truth captured from
+        //   gliner/data_processing/tokenizer.py::WhitespaceTokenSplitter
+        // running on the same input (2026-08-15):
+        //   [('Bill', 0, 4), ('Gates', 5, 10), ('founded', 11, 18),
+        //    ('Microsoft', 19, 28), ('in', 29, 31),
+        //    ('Albuquerque', 32, 43), ('in', 44, 46),
+        //    ('1975', 47, 51), ('.', 51, 52)]
+        let pre = RegexPreTokenizer::gliner_words();
+        let text = "Bill Gates founded Microsoft in Albuquerque in 1975.";
+        let got: Vec<(&str, usize, usize)> = pre
+            .split(text)
+            .into_iter()
+            .map(|(s, sub)| (sub, s, s + sub.len()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Bill", 0, 4),
+                ("Gates", 5, 10),
+                ("founded", 11, 18),
+                ("Microsoft", 19, 28),
+                ("in", 29, 31),
+                ("Albuquerque", 32, 43),
+                ("in", 44, 46),
+                ("1975", 47, 51),
+                (".", 51, 52),
+            ]
+        );
+    }
+
+    #[test]
+    fn gliner_words_glues_hyphens_and_underscores() {
+        // Both `-` and `_` glue adjacent word-char runs into a single
+        // word, matching the `[-_]\w+` alternation.
+        let pre = RegexPreTokenizer::gliner_words();
+        assert_eq!(
+            split_strs(&pre, "state-of-the-art some_var and-punct"),
+            vec!["state-of-the-art", "some_var", "and-punct"]
+        );
+    }
+
+    #[test]
+    fn gliner_words_treats_each_punct_char_as_its_own_word() {
+        let pre = RegexPreTokenizer::gliner_words();
+        assert_eq!(
+            split_strs(&pre, "Hello, world!"),
+            vec!["Hello", ",", "world", "!"]
+        );
+    }
+
+    #[test]
+    fn gliner_words_is_unicode_aware() {
+        // `\w` under the `unicode` feature covers Unicode letters, so
+        // `café`, `ñoño`, and CJK words are single tokens — matching
+        // Python's default `re.UNICODE` mode.
+        let pre = RegexPreTokenizer::gliner_words();
+        assert_eq!(
+            split_strs(&pre, "café ñoño 你好世界"),
+            vec!["café", "ñoño", "你好世界"]
+        );
+    }
+
+    #[test]
+    fn gliner_words_skips_all_whitespace() {
+        let pre = RegexPreTokenizer::gliner_words();
+        assert!(pre.split("").is_empty());
+        assert!(pre.split("   \n\t  ").is_empty());
     }
 
     // ---------------------------------------------------------------

@@ -11,6 +11,23 @@ bump; `0.x` versions are pre-stability.
 
 ### Added
 
+- **`stringcheese-tokenizer-hf` — GLiNER `WordsSplitter` pre-tokenizer.**
+  New `GLINER_WORDS_PATTERN` constant and
+  `RegexPreTokenizer::gliner_words()` convenience constructor for the
+  whitespace/punctuation splitter GLiNER models
+  (`urchade/gliner_medium-v2.1`, `knowledgator/gliner-multitask-v1.0`, …)
+  expect BEFORE their SentencePiece / BPE sub-tokenizer runs. Verbatim
+  port of `gliner/data_processing/tokenizer.py::WhitespaceTokenSplitter`'s
+  `\w+(?:[-_]\w+)*|\S` regex: word-char runs stay glued across `-` or
+  `_` joins (`state-of-the-art`, `some_var`), punctuation each becomes
+  its own word, `\w` is Unicode-aware via `fancy-regex`'s `unicode`
+  feature (`café`, `你好世界` are single words). Ships with a Python-
+  parity fixture test on the reference input
+  `"Bill Gates founded Microsoft in Albuquerque in 1975."` matching the
+  upstream splitter output byte-for-byte. Unblocks GLiNER-style
+  span-classifier consumers that need to build `words_mask` / `span_idx`
+  in word space and map word indices back to char offsets.
+
 - **`stringcheese-am` — Amharic language pack.** New workspace crate,
   registered as BCP-47 `"am"`. **First Ge'ez-script pack** in
   StringCheese (Ethiopic syllabary — an abugida where each character
