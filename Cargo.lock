@@ -2982,6 +2982,7 @@ dependencies = [
 name = "stringcheese-detect"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "stringcheese-detect-lingua",
  "stringcheese-detect-script",
  "stringcheese-detect-whatlang",
@@ -3569,6 +3570,7 @@ name = "stringcheese-segment"
 version = "0.1.0"
 dependencies = [
  "icu_segmenter",
+ "proptest",
  "unicode-linebreak",
 ]
 
