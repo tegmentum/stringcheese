@@ -20,8 +20,16 @@ Version 0.1 is under active development. Every subsystem in
 `docs/design/scope-and-decomposition.md`'s implementation-staging
 list ships as a dedicated crate today (see the workspace table
 below), and each carries its own tests, benchmarks, and — where
-relevant — an oracle-backed conformance corpus. Notable
-subsystems shipping today:
+relevant — an oracle-backed conformance corpus. As of the current
+wave the workspace contains 60+ crates: 16 compute crates ship
+criterion benches; ASCII fast paths land across ~15 hot sites
+(the biggest wins are `icu-case` at 169-537× on non-Turkic
+locales and `normalize` / `ident` at ~200×); the HF-parity
+tokenizer corpus stands at 27 real-vocab checkpoints; and the
+WIT-fronted i18n subsystem ships six phases (case, collation,
+plural, number, datetime, break/linebreak) with SCUD data packs
+for 11 locales on the plural/number phases. Notable subsystems
+shipping today:
 
 - **Comparison kernels** (`stringcheese-compare`) — Levenshtein,
   Hamming, Jaro/Jaro-Winkler, Damerau/OSA, LCS, set similarity,
@@ -51,6 +59,13 @@ subsystems shipping today:
 - **Fingerprints and sketches** — MinHash (one-permutation),
   SimHash (64/128-bit + weighted features + banded LSH),
   Winnowing.
+- **WIT-fronted i18n** (`stringcheese-icu-case`,
+  `-icu-collation`, `-icu-plural`, `-icu-number`, `-icu-datetime`,
+  `-icu-segment`, `-icu-linebreak`) — six phases shipped, each
+  behind a WASM component boundary, consuming SCUD data packs
+  from the language crates. Callers who don't cross a WIT boundary
+  stay on the in-process `stringcheese-collate` / `-segment`
+  siblings.
 - **Diff, pattern, segment, unicode, normalize, textsplit,
   collate, translit, escape, ident, stats, ngram, minhash,
   index** — see the workspace table for each.
@@ -212,6 +227,77 @@ Subsystem crates each carry their own opt-in features — for
 example `stringcheese-tokenizer-tiktoken` gates each vocabulary
 behind its own feature (`cl100k`, `o200k`, `p50k`, `r50k`) so a
 caller only pays for the packs they need.
+
+## Usage
+
+Add the facade to your `Cargo.toml`:
+
+```toml
+[dependencies]
+stringcheese = "0.1"
+```
+
+Reach for a subsystem by its re-export path:
+
+```rust
+use stringcheese::DistanceMetric;
+use stringcheese::compare::Levenshtein;
+
+let d = Levenshtein.distance("kitten".as_bytes(), "sitting".as_bytes());
+assert_eq!(d.into_inner(), 3);
+```
+
+Runnable examples live in
+[`crates/stringcheese/examples/`](crates/stringcheese/examples/):
+
+| Example                   | What it demonstrates                                                                    |
+|---------------------------|----------------------------------------------------------------------------------------|
+| `hello`                   | Smallest possible use of the facade — one Levenshtein call.                            |
+| `distance_kernels`        | Levenshtein / Jaro / Jaro-Winkler / Hamming on the same input pair, side by side.      |
+| `phonetic_encoders`       | Soundex, NYSIIS, and Double Metaphone keys over a small name list.                     |
+| `case_conversion`         | Snake / Camel / Pascal / Kebab / Train case conversions plus `Case::detect`.           |
+| `content_defined_chunks`  | FastCDC content-defined chunking with per-chunk offsets and sizes.                     |
+| `tokenizer_encode`        | Built-in whitespace and identifier segmenters (offsets + text).                        |
+| `near_duplicate_docs`     | MinHash sketches + LSH banding + rescore — the canonical dedup pipeline.               |
+| `normalize_and_sort`      | `normalize::search_key` + `NaturalCollator` for case/diacritic-insensitive natural sort. |
+| `text_chunk_for_llm`      | `RecursiveSplitter` chunks with byte/code-point lengths and content ratios for RAG.    |
+
+Run any example with:
+
+```sh
+cargo run -p stringcheese --example <name>
+```
+
+## Performance
+
+Every compute-heavy crate ships a criterion benchmark harness and
+a baseline table in its module docs. Sixteen crates carry
+`benches/` directories today (`compare`, `align`, `cdc`, `phonetic`,
+`unicode`, `manip`, `ident`, `normalize`, `escape`, `stats`,
+`ngram`, `minhash`, `simhash`, `translit`, `textsplit`, `pattern`,
+`icu-case`), plus a compile-only CI job per bench so a broken
+bench build surfaces as a red mark rather than silent drift.
+
+Cross-library oracle comparisons live under
+[`docs/perf/`](docs/perf/):
+
+- [`oracle-gap-summary.md`](docs/perf/oracle-gap-summary.md) — the
+  cross-crate roll-up: where StringCheese is competitive with,
+  matches, or is ahead of best-in-class Rust ecosystem crates
+  (`strsim`, `triple_accel`, `bio`, `fastcdc`, `gearhash`,
+  `rphonetic`).
+- [`compare-oracle-gaps.md`](docs/perf/compare-oracle-gaps.md) —
+  Levenshtein / OSA / Damerau / Hamming / Jaro / Jaro-Winkler
+  raw numbers.
+- [`align-oracle-gaps.md`](docs/perf/align-oracle-gaps.md) —
+  Needleman-Wunsch / Smith-Waterman × linear / affine × score /
+  align (StringCheese runs 2-5× ahead of `bio`).
+- [`cdc-oracle-gaps.md`](docs/perf/cdc-oracle-gaps.md) — FastCDC
+  and Gear rolling-hash throughput vs the `fastcdc-rs` and
+  `gearhash` references.
+- [`phonetic-oracle-gaps.md`](docs/perf/phonetic-oracle-gaps.md) —
+  Soundex / NYSIIS / Double Metaphone throughput vs `rphonetic`
+  (StringCheese runs 5-3000× ahead on every fair same-work row).
 
 ## Correctness
 
