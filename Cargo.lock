@@ -3066,6 +3066,7 @@ dependencies = [
 name = "stringcheese-escape"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "html-escape",
  "percent-encoding",
  "shlex",
@@ -3295,6 +3296,7 @@ dependencies = [
 name = "stringcheese-ident"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "deunicode",
  "heck",
 ]
@@ -3401,6 +3403,7 @@ name = "stringcheese-minhash"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "criterion",
 ]
 
 [[package]]
@@ -3469,6 +3472,7 @@ dependencies = [
 name = "stringcheese-normalize"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "stringcheese-unicode",
 ]
 
@@ -3583,6 +3587,7 @@ name = "stringcheese-simhash"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "criterion",
 ]
 
 [[package]]
@@ -3722,6 +3727,7 @@ dependencies = [
 name = "stringcheese-translit"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "deunicode",
 ]
 

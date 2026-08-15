@@ -96,8 +96,7 @@ const ASCII_SEED: &str =
 /// Diacritics-heavy seed — mixed Latin prose with smart quotes, em
 /// dashes, non-breaking spaces, combining marks; every stage of
 /// every pipeline does load-bearing work here.
-const DIACRITICS_SEED: &str =
-    "Café \u{201c}résumé\u{201d} — façade\u{a0}naïve piñata Zürich Kraków\u{2026} \
+const DIACRITICS_SEED: &str = "Café \u{201c}résumé\u{201d} — façade\u{a0}naïve piñata Zürich Kraków\u{2026} \
      jalapeño coöperate\u{200b}nöel.  ";
 
 /// Build a string of *at least* `bytes` bytes by cycling `seed`.

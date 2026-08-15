@@ -92,7 +92,8 @@ const PLAIN_SEED: &str = "the quick brown fox jumps over the lazy dog and finds 
 /// - `'`, `$`, `` ` ``, `|`, `&`, `;` — shell metacharacters
 ///
 /// A single seed exercises every target's substitution arm.
-const META_SEED: &str = "hello & world <tag attr=\"v\">'quoted'</tag>\t/path?q=1&r=2\n$foo|bar;baz `cmd`\\";
+const META_SEED: &str =
+    "hello & world <tag attr=\"v\">'quoted'</tag>\t/path?q=1&r=2\n$foo|bar;baz `cmd`\\";
 
 /// Build a string of *at least* `bytes` bytes by cycling `seed`.
 fn build_input(seed: &str, bytes: usize) -> String {

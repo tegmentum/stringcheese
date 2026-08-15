@@ -85,7 +85,8 @@ use stringcheese_ident::{Case, Sanitizer, slugify, to_case};
 
 /// ASCII identifier-shaped seed — `snake_case` words separated by
 /// underscores. Cycled to build inputs of arbitrary size.
-const ASCII_SEED: &str = "hello_world_foo_bar_baz_quux_alpha_beta_gamma_delta_epsilon_zeta_eta_theta ";
+const ASCII_SEED: &str =
+    "hello_world_foo_bar_baz_quux_alpha_beta_gamma_delta_epsilon_zeta_eta_theta ";
 
 /// Accented seed — mostly ASCII with sprinkled Latin diacritics.
 /// Same shape as ASCII (so structural surfaces like `detect` /

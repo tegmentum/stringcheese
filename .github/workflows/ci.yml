@@ -2693,6 +2693,246 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Ngram bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-ngram/benches/ngram.rs` — same shape as the
+  # sibling bench jobs. Catches API drift on the three unit-explicit
+  # producers (`char_ngrams`, `byte_ngrams`, `grapheme_ngrams`)
+  # without pinning a perf budget on a shared runner.
+  # ------------------------------------------------------------------
+  ngram-bench:
+    name: ngram bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ngram-bench-stable
+
+      - name: Compile-check the ngram bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-ngram \
+            --bench ngram \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Minhash bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-minhash/benches/minhash.rs` — same shape as
+  # the sibling bench jobs. Catches API drift on `Sketcher::new`,
+  # `Sketcher::sketch`, and `Sketch::jaccard` without pinning a perf
+  # budget on a shared runner.
+  # ------------------------------------------------------------------
+  minhash-bench:
+    name: minhash bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: minhash-bench-stable
+
+      - name: Compile-check the minhash bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-minhash \
+            --bench minhash \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Simhash bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-simhash/benches/simhash.rs` — same shape as
+  # the sibling bench jobs. Catches API drift on `Sketcher::add_all`,
+  # `Sketcher::finalize_64`, and `Sketch64::hamming_distance` /
+  # `Sketch64::similarity` without pinning a perf budget on a shared
+  # runner.
+  # ------------------------------------------------------------------
+  simhash-bench:
+    name: simhash bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: simhash-bench-stable
+
+      - name: Compile-check the simhash bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-simhash \
+            --bench simhash \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Translit bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-translit/benches/translit.rs` — same shape
+  # as the sibling bench jobs. Catches API drift on
+  # `DeunicodeTransliterator::transliterate` without pinning a perf
+  # budget on a shared runner.
+  # ------------------------------------------------------------------
+  translit-bench:
+    name: translit bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: translit-bench-stable
+
+      - name: Compile-check the translit bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-translit \
+            --bench translit \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Ident bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-ident/benches/ident.rs` — same shape as
+  # the sibling bench jobs. Catches API drift on `to_case`,
+  # `Case::detect`, `slugify`, and `Sanitizer::sanitize` without
+  # pinning a perf budget on a shared runner.
+  # ------------------------------------------------------------------
+  ident-bench:
+    name: ident bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ident-bench-stable
+
+      - name: Compile-check the ident bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-ident \
+            --bench ident \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Escape bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-escape/benches/escape.rs` — same shape as
+  # the sibling bench jobs. Catches API drift on the four target
+  # variants of `escape` (`UriComponent`, `Html`, `JsonString`,
+  # `ShellWord`) without pinning a perf budget on a shared runner.
+  # ------------------------------------------------------------------
+  escape-bench:
+    name: escape bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: escape-bench-stable
+
+      - name: Compile-check the escape bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-escape \
+            --bench escape \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
+  # Normalize bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-normalize/benches/normalize.rs` — same shape
+  # as the sibling bench jobs. Catches API drift on the four shipped
+  # pipelines (`identifier`, `display_safe`, `search_key`,
+  # `punctuation_canonical`) without pinning a perf budget on a
+  # shared runner.
+  # ------------------------------------------------------------------
+  normalize-bench:
+    name: normalize bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: normalize-bench-stable
+
+      - name: Compile-check the normalize bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-normalize \
+            --bench normalize \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:
