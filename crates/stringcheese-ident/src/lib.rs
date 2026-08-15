@@ -47,29 +47,37 @@
 //! ```text
 //! surface   / flavor    / 256 B         / 4 KiB
 //! --------------------------------------------------
-//! detect    / ascii     / ~10 GiB/s     / ~10 GiB/s
-//! detect    / accented  / ~4 GiB/s      / ~4 GiB/s
-//! slugify   / ascii     / ~550 MiB/s    / ~570 MiB/s
-//! slugify   / accented  / ~250 MiB/s    / ~270 MiB/s
-//! sanitize  / ascii     / ~420 MiB/s    / ~435 MiB/s
-//! sanitize  / accented  / ~200 MiB/s    / ~220 MiB/s
-//! to_case   / any / any / ~65-70 MiB/s  / ~65-70 MiB/s
+//! detect    / ascii     / ~630 MiB/s    / ~670 MiB/s
+//! detect    / accented  / ~2.2 GiB/s    / ~12 GiB/s
+//! slugify   / ascii     / ~530 MiB/s    / ~640 MiB/s
+//! slugify   / accented  / ~256 MiB/s    / ~270 MiB/s
+//! sanitize  / ascii     / ~445 MiB/s    / ~470 MiB/s
+//! sanitize  / accented  / ~500 MiB/s    / ~540 MiB/s
+//! to_case   / any / any / ~75 MiB/s     / ~80 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **`detect` is memory-bound** — a byte-level scan with no
-//!   allocation, hits multi-GiB/s. `accented` drops ~2× because
-//!   `char::is_uppercase` / `is_lowercase` on non-ASCII scalars
-//!   is heavier than the ASCII fast path.
-//! * **`slugify` and `sanitize` sit in the 400-600 MiB/s band on
-//!   ASCII**; both drop 2× on `accented` because `deunicode`'s
-//!   per-scalar transliteration table (`slugify`) or the per-scalar
-//!   allowed-char check (`sanitize`) do more work per input byte.
+//! * **`detect` ASCII sits at ~650 MiB/s** — a full byte-level scan
+//!   that walks the entire input to verify the snake_case
+//!   convention. The `accented` flavor short-circuits early
+//!   (mixed-case-plus-diacritics doesn't match any convention;
+//!   `detect` returns `None` after checking a handful of scalars),
+//!   which is why the accented column reports "throughput" numbers
+//!   in the multi-GiB/s range — the load-bearing signal there is
+//!   the ~100 ns fixed early-exit cost, not the per-byte scan
+//!   rate.
+//! * **`slugify` and `sanitize` sit in the 450-640 MiB/s band on
+//!   ASCII**. `slugify` drops 2× on `accented` because `deunicode`'s
+//!   per-scalar transliteration table walks the non-ASCII scalars;
+//!   `sanitize` is actually *faster* on `accented` in this bench
+//!   because the accented shape has more short words → more
+//!   filtered characters → shorter output allocation per input
+//!   byte.
 //! * **`to_case` is the slowest surface** — the heck wrap costs
-//!   ~10× more per byte than the in-house scanners, reflecting
+//!   ~8-10× more per byte than the in-house scanners, reflecting
 //!   heck's per-word word-boundary detection and re-encoding. All
-//!   four case targets land in the same 65-70 MiB/s band because
+//!   four case targets land in the same 70-85 MiB/s band because
 //!   the boundary detection dominates over the emit-formatting.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside

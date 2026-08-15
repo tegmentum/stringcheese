@@ -71,32 +71,36 @@
 //! ```text
 //! pipeline              / flavor       / 1 KiB      / 4 KiB      / 16 KiB
 //! ---------------------------------------------------------------------------
-//! punctuation_canonical / ascii        / ~1.1 GiB/s / ~1.2 GiB/s / ~1.2 GiB/s
-//! punctuation_canonical / diacritics   / ~750 MiB/s / ~800 MiB/s / ~800 MiB/s
-//! display_safe          / ascii        / ~500 MiB/s / ~530 MiB/s / ~540 MiB/s
-//! display_safe          / diacritics   / ~70 MiB/s  / ~75 MiB/s  / ~75 MiB/s
-//! identifier            / ascii        / ~250 MiB/s / ~260 MiB/s / ~265 MiB/s
-//! identifier            / diacritics   / ~28 MiB/s  / ~30 MiB/s  / ~30 MiB/s
-//! search_key            / ascii        / ~200 MiB/s / ~210 MiB/s / ~215 MiB/s
-//! search_key            / diacritics   / ~25 MiB/s  / ~27 MiB/s  / ~27 MiB/s
+//! punctuation_canonical / ascii        / ~2.5 GiB/s / ~2.5 GiB/s / ~2.6 GiB/s
+//! punctuation_canonical / diacritics   / ~480 MiB/s / ~490 MiB/s / ~495 MiB/s
+//! display_safe          / ascii        / ~82 MiB/s  / ~87 MiB/s  / ~87 MiB/s
+//! display_safe          / diacritics   / ~66 MiB/s  / ~68 MiB/s  / ~70 MiB/s
+//! identifier            / ascii        / ~27 MiB/s  / ~29 MiB/s  / ~30 MiB/s
+//! identifier            / diacritics   / ~28 MiB/s  / ~29 MiB/s  / ~30 MiB/s
+//! search_key            / ascii        / ~27 MiB/s  / ~28 MiB/s  / ~29 MiB/s
+//! search_key            / diacritics   / ~28 MiB/s  / ~29 MiB/s  / ~29 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **`punctuation_canonical` is fastest** — a single-pass in-house
-//!   primitive with no ICU cost. ASCII hits the passthrough arm
-//!   at ~1.2 GiB/s.
-//! * **`display_safe` is 2.5× faster than `identifier`** because NFC
-//!   is lighter than NFKC; the diacritics flavor collapses both by
-//!   ~7-8× vs their ASCII fast paths.
+//! * **`punctuation_canonical` is fastest by an order of magnitude**
+//!   — a single-pass in-house primitive with no ICU cost. ASCII
+//!   hits the passthrough arm at ~2.5 GiB/s.
+//! * **`display_safe` sits at ~85 MiB/s** on ASCII — the NFC ICU
+//!   pass is the dominant cost even when it has nothing to
+//!   decompose; the diacritics flavor drops only ~20 % because
+//!   the NFC pass is doing the same per-scalar work either way.
 //! * **`identifier` and `search_key` bottleneck on NFKC** — both
-//!   drop to ~30 MiB/s on the diacritics flavor. NFKC is
-//!   ~10× slower than any in-house primitive; a caller building
-//!   high-throughput indexes on diacritic-heavy text should
-//!   consider whether NFC (via `display_safe`) is enough.
-//! * **ASCII-flavor `identifier` still sits at 250 MiB/s** — the
-//!   NFKC ICU pass is not free even when it has nothing to
-//!   decompose; the per-byte scan is the load-bearing cost.
+//!   sit at ~28-30 MiB/s across every flavor and size. NFKC is
+//!   ~3× slower than NFC and the difference doesn't depend on
+//!   input shape — the ICU pass does the full compatibility
+//!   decomposition traversal on every scalar. A caller building
+//!   high-throughput indexes should consider whether NFC (via
+//!   `display_safe`) is enough.
+//! * **ASCII flavor doesn't buy anything for the ICU-bound
+//!   pipelines** — same throughput as `diacritics` because ICU's
+//!   per-scalar walk pays the same visit cost regardless of what
+//!   the substitution decision ends up being.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression

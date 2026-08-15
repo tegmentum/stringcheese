@@ -71,26 +71,29 @@
 //! ```text
 //! script            / 256 B        / 1 KiB       / 4 KiB
 //! --------------------------------------------------------
-//! latin_diacritics  / ~1.0 GiB/s   / ~1.1 GiB/s  / ~1.1 GiB/s
-//! cyrillic          / ~350 MiB/s   / ~380 MiB/s  / ~400 MiB/s
-//! cjk               / ~250 MiB/s   / ~280 MiB/s  / ~290 MiB/s
+//! latin_diacritics  / ~360 MiB/s   / ~360 MiB/s  / ~370 MiB/s
+//! cyrillic          / ~460 MiB/s   / ~510 MiB/s  / ~500 MiB/s
+//! cjk               / ~320 MiB/s   / ~480 MiB/s  / ~510 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **`latin_diacritics` is fastest** — the crate's ASCII passthrough
-//!   arm avoids the substitution table entirely for base letters;
-//!   only the accented scalars pay the deunicode lookup cost.
-//! * **`cyrillic` and `cjk` are ~3-4× slower per input byte** —
-//!   every scalar hits the substitution table. The gap between the
-//!   two is output width: CJK expands ~3× to ASCII while Cyrillic
-//!   expands ~1× (2 input bytes → 1-2 output ASCII bytes), so
-//!   per-byte throughput on `cjk` sits ~30 % behind `cyrillic`
-//!   because the output allocation is doing more work.
-//! * **Size dependence is small** — throughput at 4 KiB is only
-//!   slightly higher than at 256 B, so the per-call setup cost of
-//!   `deunicode::deunicode` is amortised by the smallest input.
-//!   Real callers don't pay a startup tax on small inputs.
+//! * **All three scripts land in the same 350-500 MiB/s band** on
+//!   larger inputs — deunicode's per-scalar substitution table is
+//!   the load-bearing cost regardless of what the substitution
+//!   ends up being. There's no fast-path for ASCII-adjacent input
+//!   the way there is in `stringcheese-normalize`'s pipelines; the
+//!   crate hands every scalar to `deunicode::deunicode` and lets
+//!   the substitution table handle the branching.
+//! * **`latin_diacritics` is slightly slower per byte than
+//!   `cyrillic`** because the mixed ASCII + accented shape means
+//!   the substitution table is walked for ASCII bytes too. A
+//!   follow-up round could measure an "in-house ASCII passthrough"
+//!   optimization against the current single-pass deunicode call.
+//! * **Size dependence is small at 1 KiB and above** — the per-call
+//!   setup cost of `deunicode::deunicode` is amortised by ~1 KiB
+//!   input. Small-input calls (256 B) still see some jitter but no
+//!   catastrophic startup tax.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression

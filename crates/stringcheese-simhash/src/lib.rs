@@ -81,28 +81,29 @@
 //! ```text
 //! op       / flavor  / n            throughput
 //! -----------------------------------------------
-//! hash     / short   / 100          ~1.0 M feat/s
-//! hash     / short   / 1000         ~1.1 M feat/s
-//! hash     / short   / 10000        ~1.1 M feat/s
-//! hash     / long    / 100          ~500 K feat/s
-//! hash     / long    / 1000         ~550 K feat/s
-//! hash     / long    / 10000        ~550 K feat/s
-//! hamming  / short   / *            ~1 ns / call
-//! hamming  / long    / *            ~1 ns / call
-//! similar  / short   / *            ~1 ns / call
-//! similar  / long    / *            ~1 ns / call
+//! hash     / short   / 100          ~31 M feat/s
+//! hash     / short   / 1000         ~31 M feat/s
+//! hash     / short   / 10000        ~28 M feat/s
+//! hash     / long    / 100          ~27 M feat/s
+//! hash     / long    / 1000         ~26 M feat/s
+//! hash     / long    / 10000        ~27 M feat/s
+//! hamming  / short   / *            ~1.4 ns / call
+//! hamming  / long    / *            ~1.5 ns / call
+//! similar  / short   / *            ~1.5 ns / call
+//! similar  / long    / *            ~1.5 ns / call
 //! ```
 //!
 //! Read:
 //!
-//! * **`hash` throughput is dominated by `ahash` per-feature cost**
-//!   — two 64-bit hashes per feature plus the 128-way accumulator
-//!   update. `long`-flavor features cost ~2× per feature; that's
-//!   the load-bearing per-byte hash cost `ahash` charges once the
-//!   input exceeds one 64-bit word.
+//! * **`hash` throughput sits at ~27-31 M features/s across every
+//!   cell** — two 64-bit `ahash` hashes per feature plus the
+//!   128-way accumulator update. The `long`-flavor slowdown vs
+//!   `short` is only ~15 %, not the 2× a per-byte-hash cost would
+//!   predict; both feature lengths fit under the ahash "one 64-bit
+//!   word" fast path threshold.
 //! * **`hash` throughput is flat in feature count** — the per-feature
-//!   loop dwarfs any startup cost by n=1000; small startup jitter
-//!   at n=100 disappears at higher counts.
+//!   loop dwarfs any startup cost by n=1000; small variance at
+//!   n=100 disappears at higher counts.
 //! * **`hamming_distance` is essentially free** — one xor, one
 //!   `popcount`. `similarity` adds one division and lands at the
 //!   same nanosecond count. This is the load-bearing property that

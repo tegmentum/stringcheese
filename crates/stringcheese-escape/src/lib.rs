@@ -48,32 +48,37 @@
 //! ```text
 //! target  / flavor  / 256 B         / 1 KiB        / 4 KiB
 //! ----------------------------------------------------------
-//! json    / plain   / ~1.6 GiB/s    / ~1.8 GiB/s   / ~1.9 GiB/s
-//! json    / meta    / ~950 MiB/s    / ~1.05 GiB/s  / ~1.10 GiB/s
-//! uri     / plain   / ~1.3 GiB/s    / ~1.4 GiB/s   / ~1.4 GiB/s
-//! uri     / meta    / ~600 MiB/s    / ~660 MiB/s   / ~680 MiB/s
-//! html    / plain   / ~900 MiB/s    / ~990 MiB/s   / ~1.0 GiB/s
-//! html    / meta    / ~880 MiB/s    / ~940 MiB/s   / ~960 MiB/s
-//! shell   / plain   / ~680 MiB/s    / ~710 MiB/s   / ~730 MiB/s
-//! shell   / meta    / ~440 MiB/s    / ~470 MiB/s   / ~490 MiB/s
+//! json    / plain   / ~1.35 GiB/s   / ~1.75 GiB/s  / ~1.82 GiB/s
+//! json    / meta    / ~580 MiB/s    / ~635 MiB/s   / ~670 MiB/s
+//! uri     / plain   / ~335 MiB/s    / ~388 MiB/s   / ~437 MiB/s
+//! uri     / meta    / ~265 MiB/s    / ~312 MiB/s   / ~325 MiB/s
+//! html    / plain   / ~1.01 GiB/s   / ~1.13 GiB/s  / ~1.19 GiB/s
+//! html    / meta    / ~600 MiB/s    / ~730 MiB/s   / ~772 MiB/s
+//! shell   / plain   / ~770 MiB/s    / ~820 MiB/s   / ~690 MiB/s
+//! shell   / meta    / ~190 MiB/s    / ~322 MiB/s   / ~346 MiB/s
 //! ```
 //!
 //! Read:
 //!
 //! * **`json` leads on plain input** — the in-house 128-entry ASCII
-//!   table plus bulk-copy passthrough is the fastest arm. This is
-//!   the bench that drove the 2026-08-09 in-house rewrite over the
-//!   original per-scalar match.
-//! * **`html` is flat across plain/meta** — the entity substitution
-//!   set is small (`& < > " ' /`) so the meta flavor doesn't slow
-//!   the arm much.
-//! * **`uri` on meta drops ~2×** — every reserved character becomes
-//!   `%XX`, so output allocation and per-scalar substitution both
-//!   double the per-byte cost.
-//! * **`shell` is the slowest arm** — `shlex` is doing per-scalar
-//!   quoting logic and the wrap is `Vec<char>`-based rather than
-//!   byte-oriented; a follow-up round could measure an in-house
-//!   shell-quote path against the wrap.
+//!   table plus bulk-copy passthrough is the fastest arm at ~1.8
+//!   GiB/s on 4 KiB inputs. This is the bench that drove the
+//!   2026-08-09 in-house rewrite over the original per-scalar
+//!   match; the current numbers stand as the regression trip-wire.
+//! * **`html` on plain sits comfortably above 1 GiB/s** and drops
+//!   only ~30-40 % on `meta` — the entity substitution set is
+//!   small (`& < > " ' /`) so the fast path stays hot even when
+//!   most bytes need to be inspected.
+//! * **`uri` is the slowest passthrough arm** at ~340-440 MiB/s
+//!   plain — surprising given the earlier prior baseline reported
+//!   ~1.4 GiB/s. The gap is worth investigating in a follow-up
+//!   round; possibly a `percent-encoding` version change since the
+//!   prior measurement.
+//! * **`shell` on `meta` drops 3-4×** — every embedded single quote
+//!   forces a backslash-escape and the whole input is wrapped in
+//!   quotes. `shlex`'s per-scalar quoting logic dominates. A
+//!   follow-up round could measure an in-house shell-quote path
+//!   against the wrap.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression
