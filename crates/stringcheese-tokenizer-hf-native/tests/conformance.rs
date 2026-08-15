@@ -370,6 +370,8 @@ const REGISTERED_FIXTURES: &[&str] = &[
     "command_r_v01.json",
     "deepseek_coder_1_3b.json",
     "llama_3_8b.json",
+    "phi_4.json",
+    "mistral_small_24b_instruct_2501.json",
 ];
 
 #[test]
@@ -703,4 +705,36 @@ fn conformance_deepseek_coder_1_3b() {
 )]
 fn conformance_llama_3_8b() {
     run_fixture("llama_3_8b.json", "llama-3-8b");
+}
+
+// Real microsoft/phi-4 tokenizer.json — tiktoken-style byte-level BPE
+// (100352 vocab, null normalizer, Sequence[Split(Regex=cl100k-family,
+// behavior=Removed, invert=true), ByteLevel] pre-tokenizer, null
+// post-processor, ByteLevel decoder). 96 added_tokens at ids
+// 100256–100351, all special:true, lstrip:true, rstrip:true.
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_phi_4() {
+    run_fixture("phi_4.json", "phi-4");
+}
+
+// Real mistralai/Mistral-Small-24B-Instruct-2501 tokenizer.json — the
+// v3-Tekken byte-level BPE (major shape change from Mistral-7B-v0.3's
+// Metaspace-BPE + byte_fallback). 131072 vocab, null normalizer,
+// Sequence[Split(Regex=cl100k-family, behavior=Isolated), ByteLevel]
+// pre-tokenizer, TemplateProcessing(<s>) post-processor, ByteLevel
+// decoder. 1000 added_tokens (largest any fixture exercises).
+#[test]
+#[cfg_attr(
+    not(feature = "parity-real-vocab"),
+    ignore = "requires the `parity-real-vocab` feature and a materialised tokenizer.json on disk"
+)]
+fn conformance_mistral_small_24b_instruct_2501() {
+    run_fixture(
+        "mistral_small_24b_instruct_2501.json",
+        "mistral-small-24b-instruct-2501",
+    );
 }
