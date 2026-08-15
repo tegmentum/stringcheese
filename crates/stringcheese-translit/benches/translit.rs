@@ -21,13 +21,22 @@
 //!
 //! # Scripts
 //!
-//! Three per size — each stresses a different `deunicode` code
+//! Four per size — each stresses a different `deunicode` code
 //! path:
 //!
+//! * `ascii` — pure-ASCII prose. Every byte is `< 0x80`, so the
+//!   [`str::is_ascii`] gate on `DeunicodeTransliterator` (see
+//!   `src/deunicode_impl.rs`) fires and the input clones out
+//!   without walking deunicode's substitution table. This is
+//!   the fast-path baseline — the top-end of what the
+//!   transliterator can do when no non-ASCII scalars are
+//!   present.
 //! * `latin_diacritics` — Latin-alphabet prose with accents
 //!   (French / Spanish flavor). Every base letter is ASCII;
 //!   accented scalars are the only ones that hit deunicode's
-//!   substitution table. Fast path.
+//!   substitution table. The `is_ascii` gate short-circuits
+//!   on the first accented byte so this flavor still walks the
+//!   full deunicode path.
 //! * `cyrillic` — Cyrillic prose. Every scalar is non-ASCII;
 //!   every scalar hits the substitution table. This is where
 //!   deunicode does its actual work — the transliterator
@@ -84,6 +93,13 @@ use stringcheese_translit::{DeunicodeTransliterator, Transliterator};
 // inputs so criterion's noise floor stays meaningful across runs.
 // ---------------------------------------------------------------------------
 
+/// Pure-ASCII prose seed — no byte `>= 0x80`, so
+/// `DeunicodeTransliterator`'s `is_ascii` fast path fires and
+/// the input clones out without walking deunicode's
+/// substitution table.
+const ASCII_SEED: &str =
+    "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ";
+
 /// Latin prose with diacritics — mostly ASCII with sprinkled
 /// accented scalars.
 const LATIN_SEED: &str =
@@ -109,9 +125,10 @@ fn build_input(seed: &str, bytes: usize) -> String {
 /// Byte lengths swept by every (script) cell.
 const SIZES: &[usize] = &[256, 1024, 4 * 1024];
 
-/// The three scripts every group runs.
-fn scripts() -> [(&'static str, &'static str); 3] {
+/// The four scripts every group runs.
+fn scripts() -> [(&'static str, &'static str); 4] {
     [
+        ("ascii", ASCII_SEED),
         ("latin_diacritics", LATIN_SEED),
         ("cyrillic", CYRILLIC_SEED),
         ("cjk", CJK_SEED),

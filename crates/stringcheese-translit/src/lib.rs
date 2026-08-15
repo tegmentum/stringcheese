@@ -56,10 +56,11 @@
 //! ```
 //!
 //! One group drives the shipped [`DeunicodeTransliterator`] across
-//! three scripts (`latin_diacritics` — mostly ASCII with sprinkled
-//! accents, `cyrillic` — every scalar non-ASCII 2-byte, `cjk` —
-//! every scalar 3-byte Han) and three input byte lengths
-//! (256 B / 1 KiB / 4 KiB). 9 measurement points total.
+//! four scripts (`ascii` — pure ASCII, gates through the
+//! `is_ascii` fast path; `latin_diacritics` — mostly ASCII with
+//! sprinkled accents; `cyrillic` — every scalar non-ASCII 2-byte;
+//! `cjk` — every scalar 3-byte Han) and three input byte lengths
+//! (256 B / 1 KiB / 4 KiB). 12 measurement points total.
 //!
 //! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
 //!
@@ -69,31 +70,41 @@
 //! Throughput reported over *input bytes* — higher is better.
 //!
 //! ```text
-//! script            / 256 B        / 1 KiB       / 4 KiB
-//! --------------------------------------------------------
-//! latin_diacritics  / ~360 MiB/s   / ~360 MiB/s  / ~370 MiB/s
-//! cyrillic          / ~460 MiB/s   / ~510 MiB/s  / ~500 MiB/s
-//! cjk               / ~320 MiB/s   / ~480 MiB/s  / ~510 MiB/s
+//! script            / 256 B         / 1 KiB        / 4 KiB
+//! ---------------------------------------------------------------
+//! ascii             / ~2.1 GiB/s    / ~4.2 GiB/s   / ~4.7 GiB/s
+//! latin_diacritics  / ~360 MiB/s    / ~360 MiB/s   / ~370 MiB/s
+//! cyrillic          / ~460 MiB/s    / ~510 MiB/s   / ~500 MiB/s
+//! cjk               / ~320 MiB/s    / ~480 MiB/s   / ~510 MiB/s
 //! ```
 //!
 //! Read:
 //!
-//! * **All three scripts land in the same 350-500 MiB/s band** on
-//!   larger inputs — deunicode's per-scalar substitution table is
-//!   the load-bearing cost regardless of what the substitution
-//!   ends up being. There's no fast-path for ASCII-adjacent input
-//!   the way there is in `stringcheese-normalize`'s pipelines; the
-//!   crate hands every scalar to `deunicode::deunicode` and lets
-//!   the substitution table handle the branching.
+//! * **`ascii` lives on the `str::is_ascii` fast path** added
+//!   alongside this baseline (`deunicode_impl::transliterate`
+//!   short-circuits pure-ASCII input to a plain `to_string`
+//!   clone). SIMD `is_ascii` + a single alloc is ~20-40× faster
+//!   than walking deunicode's per-scalar substitution table.
+//!   Any input with even one non-ASCII byte falls off this path
+//!   into the deunicode walker below.
+//! * **The three deunicode-path scripts land in the same
+//!   350-500 MiB/s band** on larger inputs — deunicode's
+//!   per-scalar substitution table is the load-bearing cost
+//!   regardless of what the substitution ends up being. There
+//!   is no "in-place ASCII passthrough" scan; the fast path is
+//!   all-or-nothing, so `latin_diacritics` still walks the
+//!   full table.
 //! * **`latin_diacritics` is slightly slower per byte than
 //!   `cyrillic`** because the mixed ASCII + accented shape means
-//!   the substitution table is walked for ASCII bytes too. A
-//!   follow-up round could measure an "in-house ASCII passthrough"
-//!   optimization against the current single-pass deunicode call.
-//! * **Size dependence is small at 1 KiB and above** — the per-call
-//!   setup cost of `deunicode::deunicode` is amortised by ~1 KiB
-//!   input. Small-input calls (256 B) still see some jitter but no
-//!   catastrophic startup tax.
+//!   the substitution table is walked for ASCII bytes too, and
+//!   there are more ASCII bytes per input scalar (so more table
+//!   lookups per input byte).
+//! * **Size dependence is small at 1 KiB and above** for the
+//!   deunicode-path scripts — per-call setup cost of
+//!   `deunicode::deunicode` is amortised by ~1 KiB input. The
+//!   `ascii` fast path scales the opposite way — larger inputs
+//!   amortise the single `to_string` allocation over more bytes
+//!   copied via bulk memcpy.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression
