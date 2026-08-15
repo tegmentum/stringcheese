@@ -74,25 +74,32 @@
 //! ```text
 //! unit     / flavor / n    256 B         4 KiB
 //! ------------------------------------------------
-//! char     / ascii  / 3    ~100 MiB/s    ~160 MiB/s
-//! char     / ascii  / 5    ~100 MiB/s    ~135 MiB/s
-//! char     / utf8   / 3    ~200 MiB/s    ~160 MiB/s
-//! char     / utf8   / 5    ~60 MiB/s     ~350 MiB/s
-//! byte     / ascii  / 3    ~2.1 GiB/s    ~2.2 GiB/s
-//! byte     / ascii  / 5    ~2.2 GiB/s    ~2.3 GiB/s
-//! byte     / utf8   / 3    ~2.4 GiB/s    ~1.8 GiB/s
-//! byte     / utf8   / 5    ~2.0 GiB/s    ~2.6 GiB/s
-//! grapheme / ascii  / 3    ~55 MiB/s     ~55 MiB/s   (ASCII fast-path)
-//! grapheme / utf8   / 3    ~35 MiB/s     ~40 MiB/s
+//! char     / ascii  / 3    ~145 MiB/s    ~160 MiB/s
+//! char     / ascii  / 5    ~130 MiB/s    ~180 MiB/s
+//! char     / utf8   / 3    ~295 MiB/s    ~310 MiB/s
+//! char     / utf8   / 5    ~270 MiB/s    ~310 MiB/s
+//! byte     / ascii  / 3    ~2.0 GiB/s    ~2.5 GiB/s
+//! byte     / ascii  / 5    ~2.1 GiB/s    ~2.4 GiB/s
+//! byte     / utf8   / 3    ~2.6 GiB/s    ~2.5 GiB/s
+//! byte     / utf8   / 5    ~2.4 GiB/s    ~2.3 GiB/s
+//! grapheme / ascii  / 3    ~465 MiB/s    ~545 MiB/s  (ASCII fast-path)
+//! grapheme / ascii  / 5    ~480 MiB/s    ~540 MiB/s  (ASCII fast-path)
+//! grapheme / utf8   / 3    ~90 MiB/s     ~110 MiB/s
+//! grapheme / utf8   / 5    ~90 MiB/s     ~90 MiB/s
 //! ```
 //!
 //! The `grapheme / ascii` row runs the ASCII fast-path: strict-ASCII
 //! input with no `\r` (which UAX #29 GB3 would combine with a
 //! following `\n` into a single cluster) skips the ICU4X segmenter
 //! entirely — every byte is its own grapheme, so byte windows equal
-//! grapheme windows. Per-gram `String` allocation now bounds the
-//! throughput; the ~1.5-2× lift over the pre-fast-path baseline
-//! (`~25-50 MiB/s`) is what remains once ICU4X is out of the loop.
+//! grapheme windows. Grams are `&str` slices of the caller's input —
+//! no per-gram heap allocation — which lifted the ASCII arm ~10× over
+//! the pre-borrow baseline (`~55 MiB/s`, bounded by `String::from` per
+//! gram). The `grapheme / utf8` row still routes through ICU4X for
+//! boundary detection but no longer concatenates cluster slices on
+//! every gram — a single up-front boundary walk feeds `&str` window
+//! slices — which is where the `~2-3×` lift over the pre-borrow slow
+//! path (`~35-40 MiB/s`) comes from.
 //!
 //! Read:
 //!
@@ -103,13 +110,19 @@
 //! * **[`char_ngrams`] is ~15-20× behind byte** because it does a
 //!   per-scalar `char_indices` walk to gather boundaries; the walk
 //!   is the load-bearing cost, `n` barely affects the number.
-//! * **`grapheme_ngrams` is another ~2-3× behind `char`** because the
-//!   ICU4X grapheme-cluster iterator is where the time goes. This
-//!   is expected — grapheme boundaries are a Unicode algorithm, not
-//!   a scalar-boundary walk — and the arm is only relevant when the
-//!   input carries combining marks / ZWJ sequences / regional-
-//!   indicator flags where character grams would slice a user-
-//!   visible glyph in half.
+//! * **`grapheme_ngrams` (ASCII fast-path) sits above `char_ngrams`**
+//!   because it bypasses the boundary walk entirely — one up-front
+//!   `is_ascii()` + `\r` scan and the iterator is a byte-window over
+//!   the input. `n = 3` and `n = 5` land within noise of each other.
+//! * **`grapheme_ngrams` (utf8 slow-path) is ~2-3× behind `char`**
+//!   because the ICU4X grapheme-cluster iterator is where the time
+//!   goes. This is expected — grapheme boundaries are a Unicode
+//!   algorithm, not a scalar-boundary walk — and the arm is only
+//!   relevant when the input carries combining marks / ZWJ sequences /
+//!   regional-indicator flags where character grams would slice a
+//!   user-visible glyph in half. Boundary offsets are collected once
+//!   up-front so each yielded gram is a plain `&str` slice — no
+//!   per-gram concat, no allocation.
 //! * **Per-cell variance is high** at 256 B input — 10-sample runs
 //!   here have wide confidence intervals; the 4 KiB row is the more
 //!   trustworthy number for regression tracking. Rerun with
