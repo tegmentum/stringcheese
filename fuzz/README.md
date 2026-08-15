@@ -46,6 +46,7 @@ cache on the nightly job).
 | `regex_compile_and_match`  | `stringcheese_pattern_regex::Regex::{new,bytes,case_insensitive,literal}` + `Pattern::is_match` | Arbitrary bytes → `Ok(Regex)` or typed `RegexError`, never panic; `is_match` never panics on a compiled `Regex`. |
 | `tiktoken_merges_parse`    | `stringcheese_tokenizer_tiktoken::builder::build_scud_from_tiktoken` | Arbitrary bytes → `Ok((vocab, merges))` or typed `String` error, never panic. |
 | `escape_decode_roundtrip`  | `stringcheese_escape::{escape, unescape}` for URI / HTML / JSON / shell targets | For URI / HTML / JSON: `unescape(escape(x), g) == Ok(x)` for all valid UTF-8 `x`. Shell is encode-only (round-trip is not defined over arbitrary bytes). Neither call may panic. |
+| `wit_parse`                | `wit_parser::Resolve::push_str`                        | Arbitrary bytes → `Ok(())` (well-formed WIT) or `Err(_)` (malformed), never panic. |
 
 The parser-robustness targets are the highest-value because their
 inputs (SCUD binary blobs, `tokenizer.json`) come from external
@@ -95,6 +96,12 @@ Seed corpus per parser target:
   * `04_shell_meta.bin` — Shell + `"it's a; rm -rf /"` (embedded quote + shell metachars; encode-only).
   * `05_empty_payload.bin` — JSON with empty payload (encode-only edge case).
   * `06_utf8_multibyte.bin` — URI + `"cafe\u{e9} \u{2603}"` (2-byte + 3-byte scalars for the multibyte path).
+* `wit_parse`
+  * `01_minimal_package.bin` — `package example:pkg@0.1.0;` (smallest well-formed WIT source).
+  * `02_shipped_plural.bin` — an actual shipped WIT (`component/wit/plural/stringcheese-icu-plural.wit`).
+  * `03_empty.bin` — zero bytes (edge case).
+  * `04_brace_soup.bin` — `{{{}}}` (unbalanced braces, must return `Err`).
+  * `05_malformed_ident.bin` — `package 1invalid:name;` (identifier starting with digit; must return `Err`).
 
 **Note on vocab bytes.** The `hf_tokenizer_json` seeds ship
 hand-crafted synthetic examples only. Real-vocab tokenizer.json fixtures

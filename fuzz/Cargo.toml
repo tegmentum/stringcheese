@@ -85,6 +85,16 @@ stringcheese-align = { path = "../crates/stringcheese-align", default-features =
 # is `no_std`-only.
 stringcheese-escape = { path = "../crates/stringcheese-escape", default-features = false, features = ["std"] }
 
+# `wit-parser` — the reference WIT / Component-Model parser, pulled
+# in as a fuzz-only dep for the `wit_parse` target. The main
+# workspace only depends on `wit-parser` transitively via
+# `wasm-tools` in `component/rust-host`; carrying it here as a
+# direct fuzz-only dep keeps the fuzz build independent of any
+# bindings-generation crate. Version tracks the current stable
+# release line; cargo-fuzz's independent `Cargo.lock` means a bump
+# here does not perturb the main workspace lockfile.
+wit-parser = "0.230"
+
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
 # false-flags keep them out of `cargo test`, `cargo doc`, and `cargo bench`
@@ -184,6 +194,13 @@ bench = false
 [[bin]]
 name = "escape_decode_roundtrip"
 path = "fuzz_targets/escape_decode_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wit_parse"
+path = "fuzz_targets/wit_parse.rs"
 test = false
 doc = false
 bench = false
