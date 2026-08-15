@@ -132,9 +132,6 @@ pub struct Selected {
     // Position of the LAST fingerprint we emitted; used to skip
     // duplicates when consecutive windows share their minimum.
     last_emitted: Option<usize>,
-    // Pending fingerprint emitted from the priming phase but not
-    // yet returned by `next()`.
-    pending: Option<Fingerprint>,
 }
 
 impl Selected {
@@ -145,7 +142,6 @@ impl Selected {
             deque: VecDeque::new(),
             next_pos: 0,
             last_emitted: None,
-            pending: None,
         }
     }
 }
@@ -154,9 +150,6 @@ impl Iterator for Selected {
     type Item = Fingerprint;
 
     fn next(&mut self) -> Option<Fingerprint> {
-        if let Some(fp) = self.pending.take() {
-            return Some(fp);
-        }
         // Prime the first window on the very first call. If the
         // input is shorter than the window there's nothing to
         // fingerprint — bail immediately.
@@ -280,8 +273,8 @@ mod tests {
         // and with window w = 4 reports the fingerprints:
         //   (3, 17), (6, 17)
         // (positions are 0-based; the paper's are 1-based but
-        // shift consistently). Our leftmost-min-of-window with
-        // rightmost-tiebreak matches exactly.
+        // shift consistently). Our rightmost-min tie-break
+        // matches the paper §4.2 rule exactly.
         let hashes = [77u64, 74, 42, 17, 98, 50, 17, 98];
         let fps: Vec<_> = Winnower::new(4).select(hashes).collect();
         assert_eq!(fps.len(), 2);
@@ -454,10 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn descending_stream_emits_each_new_leftmost_min() {
+    fn descending_stream_emits_each_new_min() {
         // With strictly-descending hashes each new hash becomes the
-        // new min, so windows past the first each emit a new
-        // fingerprint (the newest position).
+        // new min at the rightmost position of its window, so every
+        // window past the first emits a new fingerprint at the
+        // newest position.
         let hashes: Vec<u64> = (1..=6).rev().collect(); // [6,5,4,3,2,1]
         let fps: Vec<_> = Winnower::new(3).select(hashes).collect();
         // First window [6,5,4] emits (2, 4). Next [5,4,3] emits (3, 3).
