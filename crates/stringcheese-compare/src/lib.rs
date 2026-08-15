@@ -89,8 +89,8 @@
 //! ```text
 //! group                             32              256            2048
 //! ------------------------------------------------------------------------
-//! levenshtein         / ascii     13.2 MiB/s      1.33 MiB/s     160 KiB/s
-//! levenshtein         / utf8      14.3 MiB/s      1.32 MiB/s      84 KiB/s
+//! levenshtein         / ascii     35.1 MiB/s      3.23 MiB/s     402 KiB/s
+//! levenshtein         / utf8      35.1 MiB/s      3.24 MiB/s     403 KiB/s
 //! damerau_osa         / ascii      3.9 MiB/s       588 KiB/s      70 KiB/s
 //! damerau_osa         / utf8       5.0 MiB/s       655 KiB/s      65 KiB/s
 //! damerau_full        / ascii      1.8 MiB/s       458 KiB/s      43 KiB/s
@@ -150,9 +150,9 @@
 //! ```text
 //! kernel        / size       stringcheese   strsim         triple_accel   verdict
 //! -------------------------------------------------------------------------------
-//! levenshtein   / 32          15   MiB/s     10  MiB/s      7  MiB/s      competitive
-//! levenshtein   / 256          1.1 MiB/s      3.1 MiB/s   910 KiB/s        medium gap (strsim 2.8×)
-//! levenshtein   / 2048       135   KiB/s    447  KiB/s    119 KiB/s        medium gap (strsim 3.3×)
+//! levenshtein   / 32          35   MiB/s     26  MiB/s      9  MiB/s      stringcheese 1.3× ahead
+//! levenshtein   / 256          3.2 MiB/s      3.9 MiB/s     1.1 MiB/s     competitive (strsim 1.2×)
+//! levenshtein   / 2048       402   KiB/s    500  KiB/s    145 KiB/s        competitive (strsim 1.2×)
 //! osa           / 32          10.8 MiB/s     17.1 MiB/s   —                competitive (strsim 1.6×)
 //! osa           / 2048       152   KiB/s    276  KiB/s    —                competitive (strsim 1.8×)
 //! damerau       / 32           4.3 MiB/s      8.3 MiB/s   —                competitive (strsim 1.9×)
@@ -167,15 +167,20 @@
 //!
 //! Read:
 //!
-//! * **`levenshtein`** shows the biggest headroom: strsim's scalar DP
-//!   is ~3× faster at n ≥ 256. The gap traces to LLVM autovectorising
-//!   strsim's tight `chars()`-driven inner loop; stringcheese's generic
-//!   trait-abstracted DP does not vectorise. `triple_accel` on aarch64
-//!   is a *wash* with stringcheese here — its exponential-doubling
-//!   `levenshtein_exp` strategy pays a fixed multi-iteration overhead
-//!   that wipes out the SIMD win at unbounded edit distance. A SIMD
-//!   Myers bit-parallel or striped-DP implementation is the real
-//!   perf lever, not a straight port to `triple_accel`.
+//! * **`levenshtein`** is now competitive with `strsim` at every size
+//!   after the rolling-rows kernel was rewritten to hoist the outer
+//!   symbol and the "carry" cell `d[i][j-1]` into scalar locals and to
+//!   walk `row[1..=n]` and the inner sequence in lockstep via a `zip`
+//!   iterator. The change unblocked LLVM's autovectoriser on the tight
+//!   scalar loop and moved the throughput from ~2.8-3.3× behind `strsim`
+//!   at n ≥ 256 to within ~1.2× (competitive by the < 2× threshold),
+//!   without introducing SIMD intrinsics or hand-rolled bit-parallel
+//!   code. The next perf lever beyond this scalar cleanup is a Myers
+//!   1999 bit-parallel kernel dispatched via the existing `simd`
+//!   feature scaffold; `triple_accel` on aarch64 is a *wash* with
+//!   stringcheese here — its exponential-doubling `levenshtein_exp`
+//!   strategy pays a fixed multi-iteration overhead that wipes out the
+//!   SIMD win at unbounded edit distance.
 //! * **`hamming`** — stringcheese's block-compare fast path is 5-6×
 //!   faster than strsim's per-byte scan and within ~2× of
 //!   `triple_accel`'s NEON kernel. The residual 2× is real SIMD

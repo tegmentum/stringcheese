@@ -51,12 +51,12 @@ Verdict thresholds (task-defined):
 
 | kernel        | size | oracle       | mult   | verdict                       |
 | :------------ | ---: | :----------- | -----: | :---------------------------- |
-| levenshtein   |   32 | strsim       |  0.67× | competitive (stringcheese wins) |
-| levenshtein   |  256 | strsim       |  2.82× | **medium gap** (strsim ahead) |
-| levenshtein   | 2048 | strsim       |  3.31× | **medium gap** (strsim ahead) |
-| levenshtein   |   32 | triple_accel |  0.49× | competitive (stringcheese wins) |
-| levenshtein   |  256 | triple_accel |  0.83× | competitive                   |
-| levenshtein   | 2048 | triple_accel |  0.88× | competitive                   |
+| levenshtein   |   32 | strsim       |  0.74× | stringcheese 1.3× ahead       |
+| levenshtein   |  256 | strsim       |  1.20× | competitive (strsim ahead)    |
+| levenshtein   | 2048 | strsim       |  1.24× | competitive (strsim ahead)    |
+| levenshtein   |   32 | triple_accel |  0.26× | stringcheese 3.9× ahead       |
+| levenshtein   |  256 | triple_accel |  0.35× | stringcheese 2.9× ahead       |
+| levenshtein   | 2048 | triple_accel |  0.36× | stringcheese 2.8× ahead       |
 | osa           |   32 | strsim       |  1.58× | competitive                   |
 | osa           |  256 | strsim       |  1.81× | competitive                   |
 | osa           | 2048 | strsim       |  1.82× | competitive                   |
@@ -101,24 +101,25 @@ see `docs/perf/align-oracle-gaps.md` for the full table):
 Ranked by `(gap size × input-size-that-matters × implementation-cost)`.
 Only rows where an oracle is *ahead* of stringcheese are candidates.
 
-### 1. `compare/levenshtein` at n ≥ 256 — vs `strsim` (3× gap)
+### 1. `compare/levenshtein` at n ≥ 256 — vs `strsim` (closed to ~1.2×)
 
-* **Gap**: 2.8× at n = 256, 3.3× at n = 2048 vs pure-scalar `strsim`.
-* **What's likely wrong**: stringcheese's trait-abstracted DP is not
-  autovectorising. `strsim`'s tight `chars()`-iterator inner loop
-  hits LLVM's autovectoriser cleanly. This is scalar-loop work, not
-  SIMD-intrinsics work.
-* **Estimated cost**: low-medium. The DP body is small; the fix is
-  likely a `#[inline(always)]` on the cell update + eliminating a
-  trait boundary in the hot loop.
-* **Follow-on**: once the scalar loop closes the strsim gap, the next
-  jump is a Myers 1999 bit-parallel Levenshtein (the crate has a
-  `simd` feature scaffold; a dedicated Myers kernel is already the
-  documented target). That is where the 5-10× SIMD headroom lives —
-  but `triple_accel`'s `levenshtein_exp` shows that SIMD alone is not
-  enough: the exponential-doubling wrapper can wipe out the SIMD win,
-  and the bit-parallel Myers kernel needs to be dispatched
-  unconditionally at unbounded edit distance to actually win.
+* **Status**: closed. The rolling-rows kernel was rewritten to hoist
+  the outer symbol and the "carry" cell `d[i][j-1]` into scalar locals
+  and to walk `row[1..=n]` and the inner sequence in lockstep via a
+  `zip` iterator; that unblocked LLVM's autovectoriser and moved
+  throughput from 2.8× / 3.3× behind `strsim` at n = 256 / 2048 to
+  within ~1.2× at both sizes (below the 2× "medium gap" threshold).
+  Bench code and inputs are unchanged; the win is entirely in the
+  inner-loop shape.
+* **Follow-on**: the residual ~1.2× is the last bit of scalar
+  headroom. The next jump is a Myers 1999 bit-parallel Levenshtein
+  (the crate has a `simd` feature scaffold; a dedicated Myers kernel
+  is already the documented target). That is where the 5-10× SIMD
+  headroom lives — but `triple_accel`'s `levenshtein_exp` shows that
+  SIMD alone is not enough: the exponential-doubling wrapper can wipe
+  out the SIMD win, and the bit-parallel Myers kernel needs to be
+  dispatched unconditionally at unbounded edit distance to actually
+  win.
 
 ### 2. `compare/hamming` — vs `triple_accel` (2× gap, memory-bandwidth-bound)
 
@@ -153,7 +154,12 @@ Only rows where an oracle is *ahead* of stringcheese are candidates.
 
 ## Actionable takeaway
 
-The **one clear perf lever** surfaced by this measurement round is the
-`compare/levenshtein` scalar DP at n ≥ 256. Everything else is either
-already best-in-class (align, jaro, jaro_winkler, hamming vs strsim) or
-sub-2× (osa, damerau) or SIMD-territory (hamming vs triple_accel).
+The one clear scalar perf lever surfaced by the initial measurement
+round — `compare/levenshtein` at n ≥ 256 — has been **closed** by the
+rolling-rows autovectorisation pass; stringcheese is now within ~1.2×
+of `strsim` at every size (competitive by the < 2× threshold), and
+1.3× *ahead* of `strsim` at n = 32. Everything else is either
+already best-in-class (align, jaro, jaro_winkler, hamming vs strsim)
+or sub-2× (osa, damerau) or SIMD-territory (hamming vs triple_accel).
+The remaining Levenshtein headroom is bit-parallel Myers territory,
+not scalar DP.

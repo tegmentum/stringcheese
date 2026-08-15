@@ -47,26 +47,31 @@ clear perf lever).
 
 | size | stringcheese  | strsim        | triple_accel  | strsim mult | triple_accel mult | verdict                          |
 | ---: | :------------ | :------------ | :------------ | ----------: | ----------------: | :------------------------------- |
-|   32 |  15   MiB/s   |  10   MiB/s   |   7.3 MiB/s   |       0.67× |             0.49× | competitive (constant-fold win)  |
-|  256 |   1.1 MiB/s   |   3.1 MiB/s   | 910   KiB/s   |       2.82× |             0.83× | medium gap (strsim 2.8× ahead)   |
-| 2048 | 135   KiB/s   | 447   KiB/s   | 119   KiB/s   |       3.31× |             0.88× | medium gap (strsim 3.3× ahead)   |
+|   32 |  35   MiB/s   |  26   MiB/s   |   9.0 MiB/s   |       0.74× |             0.26× | stringcheese 1.34× ahead         |
+|  256 |   3.25 MiB/s  |   3.90 MiB/s  |   1.13 MiB/s  |       1.20× |             0.35× | competitive (strsim 1.20× ahead) |
+| 2048 | 402   KiB/s   | 500   KiB/s   | 145   KiB/s   |       1.24× |             0.36× | competitive (strsim 1.24× ahead) |
 
 Reads:
 
-* `strsim` outruns stringcheese at n ≥ 256 by ~3×. `strsim::levenshtein`
-  is a plain scalar two-row rolling-array DP over `char` iterators; the
-  gap traces to LLVM autovectorising strsim's tight loop while
-  stringcheese's trait-abstracted DP does not vectorise. This is real
-  headroom without needing SIMD.
-* `triple_accel` on aarch64 is *roughly tied* with stringcheese, which is
-  counter-intuitive given it has a NEON kernel. The reason:
-  `triple_accel::levenshtein` calls `levenshtein_exp`, which runs the
-  SIMD DP with successively doubling `k` (edit-distance bound); at 5 %
-  edit rate on 2048-byte inputs the cumulative overhead of multiple
-  SIMD passes wipes out the SIMD win against a single scalar pass.
-* Constant-factor at n = 32 favours stringcheese (workspace reuse
-  amortises across iters; strsim allocates a fresh scratch Vec every
-  call).
+* The rolling-rows kernel now walks the row buffer and the inner
+  sequence in lockstep via a `zip` iterator and keeps the outer symbol
+  and the "carry" cell `d[i][j-1]` in scalar locals. That change
+  unblocked LLVM's autovectoriser on the tight scalar inner loop and
+  moved throughput from ~2.8-3.3× behind `strsim` at n ≥ 256 into the
+  same band (within ~1.2× — below the 2× "medium gap" threshold, so
+  the row is now "competitive"). At n = 32 the constant-fold advantage
+  from workspace reuse pushes stringcheese ~1.3× *ahead* of `strsim`.
+* `triple_accel` on aarch64 is now 3-4× *behind* stringcheese, not
+  because its NEON kernel is slow but because it calls
+  `levenshtein_exp`, which runs the SIMD DP with successively doubling
+  `k` (edit-distance bound); at 5 % edit rate on 2048-byte inputs the
+  cumulative overhead of multiple SIMD passes wipes out the SIMD win
+  against a single scalar pass — and the scalar pass is now much
+  faster than it was before.
+* The residual 1.2× to `strsim` at large n is the last bit of scalar
+  headroom; a bit-parallel Myers 1999 kernel dispatched via the crate's
+  `simd` feature scaffold is the next perf lever, and one where the
+  5-10× SIMD headroom actually lives.
 
 ### OSA (restricted Damerau)
 
@@ -132,12 +137,15 @@ Same shape as Jaro — stringcheese wins. No action needed.
 
 ## Summary verdict for `stringcheese-compare`
 
-* **Real perf headroom**: Levenshtein at n ≥ 256 (strsim 3×) and
-  Hamming at every size (triple_accel 2×). Both are inner-loop
-  vectorisation stories.
-* **Competitive**: OSA, Damerau, Jaro, Jaro-Winkler are within ~2× of
-  best-in-class Rust scalar, and Jaro / Jaro-Winkler are actually 2-3×
-  *ahead* of strsim.
+* **Real perf headroom**: Hamming at every size (triple_accel 2×) —
+  the only remaining inner-loop vectorisation story after the
+  Levenshtein rolling-rows autovectorisation pass. Levenshtein is now
+  competitive with `strsim` (≤ 1.24× at every size); the next perf
+  lever is a bit-parallel Myers 1999 kernel via the crate's `simd`
+  feature scaffold, not further scalar cleanup.
+* **Competitive**: Levenshtein at every size, OSA, Damerau, Jaro,
+  Jaro-Winkler are within ~2× of best-in-class Rust scalar, and
+  Jaro / Jaro-Winkler are actually 2-3× *ahead* of strsim.
 
 See `docs/perf/oracle-gap-summary.md` for the ranked perf-lever list
 that combines this data with `stringcheese-align`'s.
