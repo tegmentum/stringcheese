@@ -66,7 +66,7 @@ use stringcheese_core::{
 };
 
 use crate::cdc::ChunkBoundary;
-use crate::fingerprint::gear::GEAR_TABLE;
+use crate::fingerprint::gear::{GEAR_TABLE, GEAR_TABLE_LS1};
 
 /// Configuration for a `FastCDC` chunker.
 ///
@@ -217,18 +217,28 @@ impl FastCdc {
     /// Returns an iterator over the chunk boundaries in `input`.
     ///
     /// The iterator is lazy: it holds only the input reference, a
-    /// position cursor, and the streaming state. No boundary vector is
+    /// position cursor, and the chunker config. No boundary vector is
     /// built up front.
     ///
     /// The returned boundaries partition `input` — the last boundary's
     /// [`ChunkBoundary::offset`] always equals `input.len()`.
+    ///
+    /// # Batch vs streaming
+    ///
+    /// This entry point drives the *batch* hot path — a two-byte-per-
+    /// iteration inner loop over the underlying gear-hash sequence
+    /// backed by a pre-shifted gear table
+    /// ([`crate::fingerprint::gear::GEAR_TABLE_LS1`]). Callers that
+    /// only have the input in pieces (network stream, arbitrary
+    /// buffered read) can instead drive [`FastCdcStream`] byte-at-a-
+    /// time; both paths emit the identical boundary sequence for any
+    /// given input, which is asserted as a property test.
     #[must_use]
     pub fn chunk_boundaries<'a>(&self, input: &'a [u8]) -> FastCdcIter<'a> {
         FastCdcIter {
-            stream: FastCdcStream::new(self.config),
+            config: self.config,
             input,
             pos: 0,
-            finished: false,
         }
     }
 
@@ -395,42 +405,216 @@ impl FastCdcStream {
 /// Iterator over the chunk boundaries in a contiguous input slice.
 ///
 /// Returned by [`FastCdc::chunk_boundaries`]. Iterates lazily: each
-/// [`next`][Iterator::next] call feeds bytes into the underlying
-/// [`FastCdcStream`] until a boundary is emitted, then returns that
-/// boundary. When the input is exhausted, the iterator drains the
-/// stream's pending bytes as one final boundary if any remain, and
-/// yields `None` on subsequent calls.
+/// [`next`][Iterator::next] call runs a batch two-byte-per-iteration
+/// cut search over the input suffix starting at the current cursor.
+/// When the cursor reaches the end of the input the iterator yields
+/// `None`.
 #[derive(Clone, Debug)]
 pub struct FastCdcIter<'a> {
-    /// The underlying streaming state machine.
-    stream: FastCdcStream,
+    /// The chunker configuration in force.
+    config: FastCdcConfig,
     /// The full input slice being iterated over.
     input: &'a [u8],
-    /// The next byte to be fed to the stream.
+    /// The next byte index in `input` a `next()` call will consider —
+    /// always the start of the next chunk (or `input.len()` when
+    /// iteration is exhausted).
     pos: usize,
-    /// Whether the terminal `finish()` call has already emitted a
-    /// boundary (or confirmed none was pending). Iteration returns
-    /// `None` for every subsequent call once this is `true`.
-    finished: bool,
 }
 
 impl Iterator for FastCdcIter<'_> {
     type Item = ChunkBoundary;
 
     fn next(&mut self) -> Option<ChunkBoundary> {
-        while self.pos < self.input.len() {
-            let byte = self.input[self.pos];
-            self.pos += 1;
-            if let Some(cb) = self.stream.feed(byte) {
-                return Some(cb);
-            }
+        if self.pos >= self.input.len() {
+            return None;
         }
-        if !self.finished {
-            self.finished = true;
-            return self.stream.finish();
-        }
-        None
+        // SAFETY-review: `pos < input.len()` by the guard above, so the
+        // suffix slice is non-empty. `next_cut` always returns a value
+        // in `1..=suffix.len()` on non-empty input, so the cursor
+        // strictly advances and never overruns.
+        let suffix = &self.input[self.pos..];
+        let size = next_cut(&self.config, suffix);
+        let offset = self.pos + size;
+        self.pos = offset;
+        Some(ChunkBoundary { offset, size })
     }
+}
+
+/// Finds the next chunk boundary in `source`, returning its length
+/// (i.e., the size of the chunk that starts at index `0` of `source`).
+///
+/// This is the batch hot-path used by [`FastCdcIter`]. It walks the
+/// underlying gear-hash sequence two bytes per iteration, backed by a
+/// pre-shifted copy of the gear table
+/// ([`crate::fingerprint::gear::GEAR_TABLE_LS1`]) so a byte pair can be
+/// folded into the running hash with one shift and two adds — shorter
+/// than the two-shift, two-add chain a byte-at-a-time loop would carry.
+/// It reproduces the *identical* boundary decisions the byte-at-a-time
+/// [`FastCdcStream::feed`] state machine produces on the same input;
+/// that equivalence is asserted differentially (both via the property
+/// tests in `property_tests.rs` and by
+/// [`tests::batch_matches_byte_at_a_time_over_pseudorandom_input`]).
+///
+/// Return value semantics:
+///
+/// * `source.len() < min_size` — no cut is possible; returns
+///   `source.len()` so the caller treats the whole slice as one (short)
+///   final chunk. Mirrors [`FastCdcStream::finish`] on a
+///   sub-`min_size` remainder.
+/// * `source.len() >= min_size` — returns the length of the emitted
+///   chunk, always in `min_size..=min(source.len(), max_size)`.
+///
+/// # Mask top-bit constraint
+///
+/// The two-byte fast path uses the identity
+/// `(h & mask) == 0  <=>  ((h << 1) & (mask << 1)) == 0`, which only
+/// holds when `mask & (1 << 63) == 0`. If either configured mask has
+/// bit 63 set — a shape no paper-derived `FastCDC` mask uses, but one a
+/// hand-rolled [`FastCdcConfig`] could produce — the function falls
+/// back to a byte-at-a-time scalar loop that computes the identical
+/// answer without relying on the identity.
+fn next_cut(cfg: &FastCdcConfig, source: &[u8]) -> usize {
+    let n = source.len();
+    // Whole-slice-as-final-chunk case: matches `FastCdcStream::finish`
+    // on a sub-`min_size` remainder.
+    if n < cfg.min_size {
+        return n;
+    }
+
+    // Hard cap: force-cut at `max_size` iff no organic cut fires first.
+    // The min ensures we do not walk past the end of `source`.
+    let cap = n.min(cfg.max_size);
+    // Boundary between the "small" (strict) and "large" (loose) mask
+    // regions. Byte-at-a-time semantics: strict mask when
+    // `bytes_in_chunk <= avg_size`, loose when `bytes_in_chunk >
+    // avg_size`. In this function's byte-index numbering
+    // (`bytes_in_chunk = i + 1`), that maps to `i < avg_size` for
+    // strict and `i >= avg_size` for loose.
+    let center = cap.min(cfg.avg_size);
+
+    let mask_small = cfg.mask_small;
+    let mask_large = cfg.mask_large;
+
+    // Fall back to a byte-at-a-time scalar loop if either mask uses bit
+    // 63 — the two-byte fast path's pre-shifted-mask identity does not
+    // hold there. No paper-derived FastCDC mask exercises this, but the
+    // public [`FastCdcConfig`] surface does not forbid it.
+    if ((mask_small | mask_large) & (1u64 << 63)) != 0 {
+        return next_cut_scalar(cfg, source);
+    }
+
+    let mask_small_shifted = mask_small << 1;
+    let mask_large_shifted = mask_large << 1;
+
+    let mut hash: u64 = 0;
+    // First byte to hash. In byte-at-a-time semantics, hashing starts
+    // when `bytes_in_chunk == min_size`, i.e., the byte at chunk index
+    // `min_size - 1`. `min_size >= 1` by `FastCdcConfig::is_valid`, so
+    // this subtraction is safe.
+    let mut i = cfg.min_size - 1;
+
+    // ----- Small-mask (strict) region, two bytes per iteration.
+    //
+    // Invariant on entry: `hash` holds the gear-hash state after the
+    // last byte processed (or 0 when none has been). The pair `(a, b)`
+    // covers indices `i` and `i + 1`, both strictly less than `center`
+    // (so both use the small mask). The identity
+    //   `hash_after_a = (hash << 1) + G[a]`
+    //   `hash_after_ab = (hash_after_a << 1) + G[b]`
+    //                 = (hash << 2) + (G[a] << 1) + G[b]
+    //                 = (hash << 2) + GEAR_LS1[a] + G[b]
+    // lets us fold two updates into a single shift-and-add-and-add.
+    // The intermediate check on `hash_after_a & mask_s` uses the
+    // equivalent `(hash_after_a << 1) & (mask_s << 1) == 0` so we only
+    // compute the pre-shifted intermediate `hash_1_ls` and never the
+    // (unshifted) `hash_after_a`.
+    while i + 1 < center {
+        let a = source[i] as usize;
+        let b = source[i + 1] as usize;
+        let hash_1_shifted = (hash << 2).wrapping_add(GEAR_TABLE_LS1[a]);
+        if (hash_1_shifted & mask_small_shifted) == 0 {
+            return i + 1;
+        }
+        let hash_2 = hash_1_shifted.wrapping_add(GEAR_TABLE[b]);
+        if (hash_2 & mask_small) == 0 {
+            return i + 2;
+        }
+        hash = hash_2;
+        i += 2;
+    }
+    // Odd tail of the small region (at most one byte).
+    if i < center {
+        hash = (hash << 1).wrapping_add(GEAR_TABLE[source[i] as usize]);
+        if (hash & mask_small) == 0 {
+            return i + 1;
+        }
+        i += 1;
+    }
+
+    // ----- Large-mask (loose) region, two bytes per iteration.
+    while i + 1 < cap {
+        let a = source[i] as usize;
+        let b = source[i + 1] as usize;
+        let hash_1_shifted = (hash << 2).wrapping_add(GEAR_TABLE_LS1[a]);
+        if (hash_1_shifted & mask_large_shifted) == 0 {
+            return i + 1;
+        }
+        let hash_2 = hash_1_shifted.wrapping_add(GEAR_TABLE[b]);
+        if (hash_2 & mask_large) == 0 {
+            return i + 2;
+        }
+        hash = hash_2;
+        i += 2;
+    }
+    // Odd tail of the large region.
+    if i < cap {
+        hash = (hash << 1).wrapping_add(GEAR_TABLE[source[i] as usize]);
+        if (hash & mask_large) == 0 {
+            return i + 1;
+        }
+    }
+
+    // No organic cut. Force-cut at `cap`:
+    //   * `cap == max_size` — the paper's hard limit fires.
+    //   * `cap == n`        — end of input; the whole slice is one final chunk.
+    cap
+}
+
+/// Byte-at-a-time reference implementation of the batch [`next_cut`].
+///
+/// Used as the fallback path when the mask top-bit constraint the fast
+/// path relies on would be violated (see [`next_cut`]'s docs).
+///
+/// This function is also referenced from the differential test that
+/// pins the batch and scalar implementations to the same output on
+/// pseudorandom input.
+fn next_cut_scalar(cfg: &FastCdcConfig, source: &[u8]) -> usize {
+    let n = source.len();
+    if n < cfg.min_size {
+        return n;
+    }
+    let cap = n.min(cfg.max_size);
+    let center = cap.min(cfg.avg_size);
+    let mask_small = cfg.mask_small;
+    let mask_large = cfg.mask_large;
+
+    let mut hash: u64 = 0;
+    let mut i = cfg.min_size - 1;
+    while i < center {
+        hash = (hash << 1).wrapping_add(GEAR_TABLE[source[i] as usize]);
+        if (hash & mask_small) == 0 {
+            return i + 1;
+        }
+        i += 1;
+    }
+    while i < cap {
+        hash = (hash << 1).wrapping_add(GEAR_TABLE[source[i] as usize]);
+        if (hash & mask_large) == 0 {
+            return i + 1;
+        }
+        i += 1;
+    }
+    cap
 }
 
 #[cfg(test)]
@@ -486,5 +670,163 @@ mod tests {
         assert_eq!(boundaries.len(), 1);
         assert_eq!(boundaries[0].size, 500);
         assert_eq!(boundaries[0].offset, 500);
+    }
+
+    // ---------------------------------------------------------------
+    // Differential tests: batch `next_cut` vs the byte-at-a-time
+    // `FastCdcStream::feed` state machine.
+    //
+    // The batch path is the perf-critical hot loop; the byte-at-a-time
+    // path is the semantic reference and remains what streaming
+    // consumers drive. Any divergence would silently produce different
+    // chunk boundaries under `FastCdc::chunk_boundaries` vs a
+    // `FastCdcStream::feed_slice` fed the same input — a correctness
+    // regression that would only surface at dedupe/rebuild time. The
+    // tests below pin the two paths to byte-identical output.
+    //
+    // Kept in-crate (not against fastcdc-rs as an external oracle)
+    // because the two crates use independent gear tables and slightly
+    // different min-size conventions — the byte-for-byte contract we
+    // care about is between stringcheese's own batch and scalar paths.
+    // ---------------------------------------------------------------
+
+    /// Deterministic PRNG used across the differential tests; mirrors
+    /// the `splitmix64` helper in `benches/cdc.rs` so both bench and
+    /// test streams stay byte-identical.
+    fn splitmix64(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn pseudorandom_bytes(len: usize, seed: u64) -> alloc::vec::Vec<u8> {
+        let mut state = seed;
+        let mut out = alloc::vec::Vec::with_capacity(len);
+        while out.len() + 8 <= len {
+            out.extend_from_slice(&splitmix64(&mut state).to_le_bytes());
+        }
+        while out.len() < len {
+            out.push((splitmix64(&mut state) & 0xFF) as u8);
+        }
+        out
+    }
+
+    fn boundaries_via_stream(cfg: FastCdcConfig, input: &[u8]) -> alloc::vec::Vec<ChunkBoundary> {
+        let mut stream = FastCdcStream::new(cfg);
+        let mut out = alloc::vec::Vec::new();
+        stream.feed_slice(input, |b| out.push(b));
+        if let Some(final_b) = stream.finish() {
+            out.push(final_b);
+        }
+        out
+    }
+
+    /// **Batch vs scalar** — the two internal implementations of
+    /// [`next_cut`] must produce the same chunk-length answer on every
+    /// suffix of a 1 MiB pseudorandom input under both paper configs.
+    ///
+    /// This is the raw kernel-level differential; the higher-level
+    /// tests below layer full-iteration boundary lists on top.
+    #[test]
+    fn batch_next_cut_matches_scalar_next_cut_on_random_input() {
+        let input = pseudorandom_bytes(1024 * 1024, 0xDEAD_BEEF_CAFE_F00D);
+        for cfg in [FastCdcConfig::default_8k(), FastCdcConfig::default_16k()] {
+            // Iterate chunk by chunk to walk the whole input as the
+            // real iterator would.
+            let mut pos = 0usize;
+            while pos < input.len() {
+                let suffix = &input[pos..];
+                let batch = next_cut(&cfg, suffix);
+                let scalar = next_cut_scalar(&cfg, suffix);
+                assert_eq!(
+                    batch,
+                    scalar,
+                    "batch vs scalar disagreed at pos {pos} on cfg {:?}",
+                    (cfg.min_size, cfg.avg_size, cfg.max_size),
+                );
+                pos += batch;
+            }
+        }
+    }
+
+    /// **Batch iterator vs byte-at-a-time stream** — the full
+    /// `FastCdc::chunk_boundaries` (which walks the input through the
+    /// batch [`next_cut`]) and the byte-at-a-time
+    /// [`FastCdcStream::feed`] state machine (unchanged from before
+    /// the batch rewrite) must produce identical boundary lists on 1
+    /// MiB of pseudorandom bytes under both paper configs.
+    ///
+    /// Serves as the "before-vs-after" pin the perf-rewrite task asks
+    /// for: the byte-at-a-time state machine is the semantic reference
+    /// and any silent regression in the batch fast path would show up
+    /// here first.
+    #[test]
+    fn batch_matches_byte_at_a_time_over_pseudorandom_input() {
+        let input = pseudorandom_bytes(1024 * 1024, 0xC0FF_EEC0_FFEE_C0FF);
+        for cfg in [FastCdcConfig::default_8k(), FastCdcConfig::default_16k()] {
+            let cdc = FastCdc::new(cfg);
+            let batch: alloc::vec::Vec<ChunkBoundary> = cdc.chunk_boundaries(&input).collect();
+            let scalar = boundaries_via_stream(cfg, &input);
+            assert_eq!(
+                batch,
+                scalar,
+                "batch vs stream diverged on cfg {:?} ({} vs {} chunks)",
+                (cfg.min_size, cfg.avg_size, cfg.max_size),
+                batch.len(),
+                scalar.len(),
+            );
+        }
+    }
+
+    /// **Prose input** — same test but on low-entropy ASCII text so a
+    /// bug that only surfaces on the small-mask branch (which fires
+    /// less often on prose because of the repetition profile) does not
+    /// hide behind a random-only test.
+    #[test]
+    fn batch_matches_byte_at_a_time_over_prose_input() {
+        let words: &[&[u8]] = &[
+            b"the", b"quick", b"brown", b"fox", b"jumps", b"over", b"lazy", b"dog", b"and",
+            b"then", b"runs", b"back", b"through", b"the", b"forest",
+        ];
+        let mut input: alloc::vec::Vec<u8> = alloc::vec::Vec::with_capacity(200_000);
+        let mut idx = 0usize;
+        while input.len() < 200_000 {
+            input.extend_from_slice(words[idx % words.len()]);
+            input.push(b' ');
+            idx += 1;
+        }
+        input.truncate(200_000);
+        for cfg in [FastCdcConfig::default_8k(), FastCdcConfig::default_16k()] {
+            let cdc = FastCdc::new(cfg);
+            let batch: alloc::vec::Vec<ChunkBoundary> = cdc.chunk_boundaries(&input).collect();
+            let scalar = boundaries_via_stream(cfg, &input);
+            assert_eq!(batch, scalar);
+        }
+    }
+
+    /// **Top-bit-mask fallback** — a config whose masks use bit 63
+    /// exercises the [`next_cut`] fallback branch to
+    /// [`next_cut_scalar`], and the full boundary list must still
+    /// match the byte-at-a-time reference exactly.
+    #[test]
+    fn top_bit_mask_falls_back_to_scalar_and_stays_correct() {
+        // Config with both masks carrying bit 63. The bit pattern is
+        // otherwise arbitrary — we only want the fallback branch to
+        // fire and the boundary list to remain semantically identical
+        // to the byte-at-a-time state machine.
+        let cfg = FastCdcConfig {
+            min_size: 64,
+            avg_size: 256,
+            max_size: 1024,
+            mask_small: 0x8000_0000_0000_00FF,
+            mask_large: 0x8000_0000_0000_000F,
+        };
+        let input = pseudorandom_bytes(64 * 1024, 0xABCD_1234_5678_9ABC);
+        let cdc = FastCdc::new(cfg);
+        let batch: alloc::vec::Vec<ChunkBoundary> = cdc.chunk_boundaries(&input).collect();
+        let scalar = boundaries_via_stream(cfg, &input);
+        assert_eq!(batch, scalar);
     }
 }

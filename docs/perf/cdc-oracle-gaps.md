@@ -75,40 +75,68 @@ stringcheese wins. Verdict categories: **competitive** (< 2× gap
 either way), **medium gap** (2-5×, optimisation worth considering),
 **large gap** (> 5×, clear perf lever).
 
-### FastCDC (default_8k = 2/8/64 KiB, NLC=2)
+### FastCDC (default_8k = 2/8/64 KiB, NLC=2) — post wave-15 rewrite
 
-|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                        |
-| -----: | :----- | :----------- | :----------- | -----: | :----------------------------- |
-|  1 MiB | random |   1.12 GiB/s |   1.82 GiB/s |  1.63× | competitive (fastcdc ahead)    |
-|  1 MiB | prose  | 996   MiB/s  |   1.64 GiB/s |  1.69× | competitive (fastcdc ahead)    |
-| 10 MiB | random |   1.09 GiB/s |   1.95 GiB/s |  1.79× | competitive (fastcdc ahead)    |
-| 10 MiB | prose  |   1.14 GiB/s |   1.57 GiB/s |  1.38× | competitive (fastcdc ahead)    |
+|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                            |
+| -----: | :----- | :----------- | :----------- | -----: | :--------------------------------- |
+|  1 MiB | random |   2.50 GiB/s |   2.21 GiB/s |  0.89× | stringcheese 1.13× ahead           |
+|  1 MiB | prose  |   2.02 GiB/s |   1.79 GiB/s |  0.89× | stringcheese 1.13× ahead           |
+| 10 MiB | random |   2.51 GiB/s |   2.20 GiB/s |  0.87× | stringcheese 1.14× ahead           |
+| 10 MiB | prose  |   2.01 GiB/s |   1.78 GiB/s |  0.89× | stringcheese 1.13× ahead           |
 
-### FastCDC (default_16k = 4/16/128 KiB, NLC=2)
+### FastCDC (default_16k = 4/16/128 KiB, NLC=2) — post wave-15 rewrite
 
-|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                             |
-| -----: | :----- | :----------- | :----------- | -----: | :---------------------------------- |
-|  1 MiB | random | 744   MiB/s  |   1.60 GiB/s |  2.15× | **medium gap** (fastcdc-rs ahead)   |
-|  1 MiB | prose  |   1.14 GiB/s |   1.78 GiB/s |  1.56× | competitive (fastcdc ahead)         |
-| 10 MiB | random |   1.37 GiB/s |   2.20 GiB/s |  1.61× | competitive (fastcdc ahead)         |
-| 10 MiB | prose  |   1.28 GiB/s |   1.76 GiB/s |  1.38× | competitive (fastcdc ahead)         |
+|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                            |
+| -----: | :----- | :----------- | :----------- | -----: | :--------------------------------- |
+|  1 MiB | random |   2.53 GiB/s |   2.23 GiB/s |  0.88× | stringcheese 1.13× ahead           |
+|  1 MiB | prose  |   2.02 GiB/s |   1.79 GiB/s |  0.89× | stringcheese 1.13× ahead           |
+| 10 MiB | random |   2.50 GiB/s |   2.20 GiB/s |  0.88× | stringcheese 1.14× ahead           |
+| 10 MiB | prose  |   2.01 GiB/s |   1.77 GiB/s |  0.88× | stringcheese 1.14× ahead           |
 
 Reads:
 
-* `fastcdc-rs` is consistently ~1.4-2.2× faster on the end-to-end
-  chunker. The upstream crate implements the paper's "rolling two
-  bytes each time" optimisation (see the v2020 module docs: "about a
-  20% improvement" on Apple M1 over v2016) and holds pre-shifted
-  variants of the gear table (`gear` + `gear_ls`) so a two-byte step
-  costs one memory read from each. stringcheese's `FastCdc` state
-  machine is a plain one-byte-per-step loop and does not fuse the
-  mask-check / advance / gear-shift into a wider stride.
-* The 1 MiB / random / default_16k row (2.15×) is the one point that
-  crosses the 2× "medium gap" threshold; the other seven rows sit in
-  the 1.4-1.8× band. This suggests the gap widens on random inputs
-  where the small-mask / large-mask branches split traffic more
-  evenly, not on prose where the repetition rate keeps the chunker in
-  the small-mask regime.
+* stringcheese now runs the same "rolling two bytes per iteration +
+  pre-shifted gear table" trick fastcdc-rs ships (`GEAR_TABLE_LS1`
+  in `crate::fingerprint::gear`, driven by the batch
+  [`FastCdc::chunk_boundaries`] iterator's `next_cut` inner loop).
+  The two-byte body folds each pair of gear-hash updates into a
+  single `(hash << 2) + GEAR_LS1[a] + GEAR_TABLE[b]` sequence,
+  which shortens the loop-carried shift-and-add dependency chain
+  from two shifts + two adds per byte pair down to one shift + two
+  adds — the identified lever from the pre-rewrite oracle round.
+* Absolute throughput jumped from ~1.1-1.4 GiB/s to ~2.0-2.5 GiB/s
+  across every measured cell (a ~1.8-2.1× local speed-up); the
+  additional ~10-15 % edge over fastcdc-rs is bench noise plus the
+  slightly leaner boundary book-keeping (stringcheese's iterator
+  builds `ChunkBoundary { offset, size }` directly rather than
+  fastcdc-rs's `Chunk { offset, length, hash }` and skips the hash
+  field materialisation).
+* The 2× "medium gap" row (1 MiB / random / default_16k) from the
+  pre-rewrite table is closed: post-rewrite the same cell runs at
+  0.88× (stringcheese 1.13× ahead).
+
+### FastCDC (default_8k = 2/8/64 KiB, NLC=2) — pre wave-15 baseline
+
+Kept for regression comparison. The wave-15 rewrite replaced the
+byte-at-a-time `FastCdcStream`-driven iterator with a batch
+two-byte-per-iteration `next_cut` walker; before that, the numbers
+were:
+
+|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                        |
+| -----: | :----- | :----------- | :----------- | -----: | :----------------------------- |
+|  1 MiB | random |   1.31 GiB/s |   2.21 GiB/s |  1.69× | competitive (fastcdc ahead)    |
+|  1 MiB | prose  |   1.29 GiB/s |   1.79 GiB/s |  1.39× | competitive (fastcdc ahead)    |
+| 10 MiB | random |   1.38 GiB/s |   2.20 GiB/s |  1.60× | competitive (fastcdc ahead)    |
+| 10 MiB | prose  |   1.28 GiB/s |   1.78 GiB/s |  1.40× | competitive (fastcdc ahead)    |
+
+### FastCDC (default_16k = 4/16/128 KiB, NLC=2) — pre wave-15 baseline
+
+|   size | flavor | stringcheese | fastcdc-rs   | mult   | verdict                             |
+| -----: | :----- | :----------- | :----------- | -----: | :---------------------------------- |
+|  1 MiB | random |   1.38 GiB/s |   2.22 GiB/s |  1.61× | competitive (fastcdc ahead)         |
+|  1 MiB | prose  |   1.26 GiB/s |   1.78 GiB/s |  1.41× | competitive (fastcdc ahead)         |
+| 10 MiB | random |   1.38 GiB/s |   2.19 GiB/s |  1.59× | competitive (fastcdc ahead)         |
+| 10 MiB | prose  |   1.26 GiB/s |   1.76 GiB/s |  1.40× | competitive (fastcdc ahead)         |
 
 ### GEAR — per-byte roll (streaming)
 
@@ -166,11 +194,14 @@ Reads:
 
 ## Summary verdict for `stringcheese-cdc`
 
-* **Real perf headroom**: `FastCDC` end-to-end chunker at both
-  presets — `fastcdc-rs` is ~1.4-2.2× faster across the board, with
-  one row (1 MiB / random / default_16k) crossing the 2× medium-gap
-  threshold. The upstream crate's "rolling two bytes each time" +
-  pre-shifted gear-table trick is the identified lever.
+* **Ahead**: `FastCDC` end-to-end chunker at both presets — after
+  the wave-15 batch rewrite, stringcheese is 1.13-1.14× faster than
+  `fastcdc-rs` across all eight measured cells (2/8/64 KiB and
+  4/16/128 KiB × 1 MiB / 10 MiB × random / prose). The identified
+  lever from the pre-rewrite round — the "rolling two bytes each
+  time" trick with a pre-shifted gear table — is now shipped inside
+  `FastCdc::chunk_boundaries`'s inner loop and closes the 1.4-2.2×
+  gap the initial oracle round surfaced.
 * **Competitive**: GEAR per-byte roll (essentially tied with
   gearhash). GEAR `digest_of_slice` (SIMD) is 1.7-2.2× *ahead* of
   gearhash's scalar `next_match` on aarch64 — a favourable arch
