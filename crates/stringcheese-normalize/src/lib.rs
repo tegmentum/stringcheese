@@ -75,37 +75,56 @@
 //! punctuation_canonical / diacritics   / ~480 MiB/s / ~490 MiB/s / ~495 MiB/s
 //! display_safe          / ascii        / ~82 MiB/s  / ~87 MiB/s  / ~87 MiB/s
 //! display_safe          / diacritics   / ~66 MiB/s  / ~68 MiB/s  / ~70 MiB/s
-//! identifier            / ascii        / ~27 MiB/s  / ~29 MiB/s  / ~30 MiB/s
+//! identifier            / ascii*       / ~4.0 GiB/s / ~5.4 GiB/s / ~6.5 GiB/s
 //! identifier            / diacritics   / ~28 MiB/s  / ~29 MiB/s  / ~30 MiB/s
-//! search_key            / ascii        / ~27 MiB/s  / ~28 MiB/s  / ~29 MiB/s
+//! search_key            / ascii*       / ~350 MiB/s / ~700 MiB/s / ~790 MiB/s
 //! search_key            / diacritics   / ~28 MiB/s  / ~29 MiB/s  / ~29 MiB/s
 //! ```
 //!
+//! *: ASCII rows for `identifier` and `search_key` take a
+//! fast-path introduced 2026-08-15 — an `input.is_ascii()` gate
+//! (bulk SIMD scan) skips the ICU NFKC pass and every downstream
+//! ICU stage, because all three ICU stages (NFKC, case-fold,
+//! strip-diacritics) reduce to the identity or ASCII-lowercase on
+//! ASCII input. See the doc on [`identifier`] for the correctness
+//! argument and the `identifier_ascii_fast_path_matches_full_
+//! pipeline` differential test for the runtime check.
+//!
 //! Read:
 //!
-//! * **`punctuation_canonical` is fastest by an order of magnitude**
-//!   — a single-pass in-house primitive with no ICU cost. ASCII
-//!   hits the passthrough arm at ~2.5 GiB/s.
-//! * **`display_safe` sits at ~85 MiB/s** on ASCII — the NFC ICU
-//!   pass is the dominant cost even when it has nothing to
-//!   decompose; the diacritics flavor drops only ~20 % because
-//!   the NFC pass is doing the same per-scalar work either way.
-//! * **`identifier` and `search_key` bottleneck on NFKC** — both
-//!   sit at ~28-30 MiB/s across every flavor and size. NFKC is
-//!   ~3× slower than NFC and the difference doesn't depend on
-//!   input shape — the ICU pass does the full compatibility
-//!   decomposition traversal on every scalar. A caller building
-//!   high-throughput indexes should consider whether NFC (via
+//! * **`punctuation_canonical` is fastest on ASCII** — a single-pass
+//!   in-house primitive with no ICU cost. ASCII hits the passthrough
+//!   arm at ~2.5 GiB/s.
+//! * **`identifier` on ASCII is now the fastest arm** — the fast
+//!   path is one bulk `is_ascii()` scan plus `to_ascii_lowercase`
+//!   on a `String::with_capacity(len)`, so throughput scales with
+//!   memory bandwidth rather than per-scalar ICU cost.
+//! * **`display_safe` still sits at ~85 MiB/s** on ASCII — no
+//!   fast-path was added here yet; the NFC ICU pass is the
+//!   dominant cost even when it has nothing to decompose. A
+//!   follow-up could apply the same fast-path trick since NFC is
+//!   also an identity on ASCII.
+//! * **`identifier` and `search_key` still bottleneck on NFKC for
+//!   non-ASCII input** — both sit at ~28-30 MiB/s on the
+//!   `diacritics` flavor. NFKC is ~3× slower than NFC and the
+//!   difference doesn't depend on input shape — the ICU pass does
+//!   the full compatibility decomposition traversal on every
+//!   scalar. A caller building high-throughput indexes over
+//!   non-ASCII input should consider whether NFC (via
 //!   `display_safe`) is enough.
-//! * **ASCII flavor doesn't buy anything for the ICU-bound
-//!   pipelines** — same throughput as `diacritics` because ICU's
-//!   per-scalar walk pays the same visit cost regardless of what
-//!   the substitution decision ends up being.
+//! * **`search_key` on ASCII is ~5-10× slower than `identifier`**
+//!   on ASCII because the fast path still allocates three
+//!   intermediate strings (lowercase, collapse-whitespace, trim)
+//!   whereas `identifier`'s fast path is a single allocation.
+//!   Still ~20× faster than the ICU-driven baseline.
 //! * **Regression trip-wire**: this table is the reference the bench
 //!   suite is expected to hold to within ±15-20 %. A number outside
 //!   that band on a subsequent run is either a genuine regression
 //!   or a measurement environment change; rerun with
-//!   `--sample-size 30` before filing a fix.
+//!   `--sample-size 30` before filing a fix. The ASCII rows for
+//!   `identifier` / `search_key` are especially sensitive because
+//!   the fast-path body is short enough that criterion's noise
+//!   floor becomes visible.
 //!
 //! ## Prior baseline (2026-08-09, `stringcheese-bench/benches/normalize.rs`)
 //!
