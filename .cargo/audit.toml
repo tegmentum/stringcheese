@@ -1,0 +1,70 @@
+# cargo-audit configuration for the stringcheese workspace.
+#
+# `cargo audit` scans `Cargo.lock` against the RustSec advisory database.
+# The `ignore` list below records advisories that are known to the
+# workspace and are handled outside of the audit tool — either because
+# they require a major-version dependency bump that is out of scope for
+# a hygiene sweep, or because they are informational (unmaintained)
+# rather than a live vulnerability.
+#
+# Every entry MUST carry a one-line rationale in the surrounding
+# comment block. Rebalance this list on every wasmtime / bio /
+# language-pack dep upgrade — the goal is a zero-ignore audit, not a
+# permanent quiet.
+#
+# Format reference: https://docs.rs/cargo-audit/latest/cargo_audit/config/
+[advisories]
+ignore = [
+    # ---------------------------------------------------------------
+    # wasmtime 26.x + wasmtime-wasi 26.x — component-model runtime
+    #
+    # The six `stringcheese-*-component` crates pin wasmtime 26 for
+    # the WIT component-model smoke tests. All 20 advisories below
+    # are fixed only in wasmtime >= 36 (major bump). The runtime is
+    # used exclusively to load trusted, in-tree wasm modules that we
+    # built ourselves — no untrusted-guest attack surface — so the
+    # residual risk is bounded to the CI runner during test.
+    #
+    # Follow-up: coordinate a wasmtime 26 → 46 bump in a dedicated PR,
+    # including the WIT smoke tests + the wasi:@0.2.1 → wasi:@0.2.3
+    # world upgrade in the six component crates.
+    "RUSTSEC-2025-0046",  # wasmtime: fd_renumber host panic (low)
+    "RUSTSEC-2025-0118",  # wasmtime: unsound shared linear memory (low)
+    "RUSTSEC-2026-0020",  # wasmtime: WASI resource exhaustion (medium)
+    "RUSTSEC-2026-0021",  # wasmtime: wasi:http/types.fields panic (medium)
+    "RUSTSEC-2026-0085",  # wasmtime: flags component lift panic (medium)
+    "RUSTSEC-2026-0086",  # wasmtime: 64-bit tables + Winch leakage (low)
+    "RUSTSEC-2026-0087",  # wasmtime: f64x2.splat Cranelift OOB (medium)
+    "RUSTSEC-2026-0088",  # wasmtime: pooling allocator leakage (low)
+    "RUSTSEC-2026-0089",  # wasmtime: Winch table.fill panic (medium)
+    "RUSTSEC-2026-0091",  # wasmtime: component string transcode OOB (medium)
+    "RUSTSEC-2026-0092",  # wasmtime: UTF-16 transcode misalign panic (medium)
+    "RUSTSEC-2026-0093",  # wasmtime: UTF-16 -> latin1+utf16 OOB read (medium)
+    "RUSTSEC-2026-0094",  # wasmtime: Winch table.grow return mask (medium)
+    "RUSTSEC-2026-0095",  # wasmtime: Winch sandbox-escape memory (critical)
+    "RUSTSEC-2026-0096",  # wasmtime: aarch64 Cranelift sandbox escape (critical)
+    "RUSTSEC-2026-0222",  # wasmtime: store type-index cross-engine mix (low)
+    "RUSTSEC-2026-0149",  # wasmtime-wasi: path_open TRUNCATE FilePerms bypass (high)
+    "RUSTSEC-2026-0182",  # wasmtime-wasi: fd_renumber leak (low)
+    "RUSTSEC-2026-0188",  # wasmtime-wasi: link/rename FilePerms bypass (medium)
+
+    # ---------------------------------------------------------------
+    # Unmaintained transitive crates — informational only, no CVE.
+    #
+    # atomic-polyfill (via heapless -> postcard -> wasmtime + feruca):
+    #   heapless 0.7 is what wasmtime 26 pulls in; heapless 0.8+ drops
+    #   the polyfill. Resolved when the wasmtime bump above lands.
+    "RUSTSEC-2023-0089",
+
+    # custom_derive, fxhash (via bio -> stringcheese-align):
+    #   bio 2.x pulls in both; bio 3.x/4.x drop them. Bio is a dev-
+    #   only oracle for the `oracle-benches` feature — no impact on
+    #   the shipped crate. Follow-up: bump bio in a dedicated PR.
+    "RUSTSEC-2025-0058",  # custom_derive unmaintained
+    "RUSTSEC-2025-0057",  # fxhash unmaintained
+
+    # paste (via wasmtime, tokenizers, and bio-tree):
+    #   Ubiquitous macro helper; upstream ecosystem is still on it.
+    #   No fix path short of the ecosystem-wide migration.
+    "RUSTSEC-2024-0436",
+]
