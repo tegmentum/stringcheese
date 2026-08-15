@@ -2623,6 +2623,41 @@ jobs:
             --locked
 
   # ------------------------------------------------------------------
+  # Stats bench compile-check (optional, non-blocking).
+  #
+  # Companion trip-wire for
+  # `crates/stringcheese-stats/benches/stats.rs` — same shape as the
+  # sibling bench jobs. Catches API drift on the four public
+  # characterization entry points (`entropy`, `Histogram::of`,
+  # `Ratios::of`, `Lengths::of`) without pinning a perf budget on a
+  # shared runner.
+  # ------------------------------------------------------------------
+  stats-bench:
+    name: stats bench (optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: stats-bench-stable
+
+      - name: Compile-check the stats bench (cargo bench --no-run)
+        run: |
+          cargo bench \
+            -p stringcheese-stats \
+            --bench stats \
+            --no-run \
+            --locked
+
+  # ------------------------------------------------------------------
   # rustdoc. Any broken intra-doc link or dead link fails the build.
   # ------------------------------------------------------------------
   docs:

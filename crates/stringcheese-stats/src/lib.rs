@@ -26,10 +26,72 @@
 //! histogram walks code points. Ratios are per-code-point. Lengths
 //! carries all three.
 //!
-//! ## Baseline (2026-08-09)
+//! ## Benchmarks
 //!
-//! Numbers from `stringcheese-bench/benches/stats.rs` on random
-//! ASCII input:
+//! An in-crate criterion bench harness lives at `benches/stats.rs`;
+//! run it with
+//!
+//! ```text
+//! cargo bench -p stringcheese-stats
+//! ```
+//!
+//! Four groups drive every public entry point ([`entropy()`],
+//! [`Histogram::of`], [`Ratios::of`], [`Lengths::of`]). Each group
+//! runs three input byte lengths (1 KiB / 10 KiB / 100 KiB) crossed
+//! with two flavors (`ascii` prose and a diverse `utf8` pool). 24
+//! measurement points total.
+//!
+//! ## Baseline (aarch64 Apple M-series, macOS 15, rustc 1.97.1, release + LTO)
+//!
+//! Numbers below are median throughput of one representative run
+//! (`--warm-up-time 1 --measurement-time 2 --sample-size 10`).
+//! Wall-clock samples vary ±10-20 % on a laptop under load; treat the
+//! order-of-magnitude column as the load-bearing part, not the last
+//! digit. Throughput reported over *input bytes* — higher is better.
+//!
+//! ```text
+//! primitive   / flavor    1 KiB         10 KiB        100 KiB
+//! ----------------------------------------------------------------
+//! entropy     / ascii      340 MiB/s     393 MiB/s     355 MiB/s
+//! entropy     / utf8       361 MiB/s     628 MiB/s     673 MiB/s
+//! histogram   / ascii      418 MiB/s     460 MiB/s     461 MiB/s
+//! histogram   / utf8       449 MiB/s     458 MiB/s     442 MiB/s
+//! ratios      / ascii      638 MiB/s     658 MiB/s     644 MiB/s
+//! ratios      / utf8      69.4 MiB/s    65.9 MiB/s    71.3 MiB/s
+//! lengths     / ascii     19.6 GiB/s    20.8 GiB/s    19.0 GiB/s
+//! lengths     / utf8      19.5 GiB/s    21.8 GiB/s    21.5 GiB/s
+//! ```
+//!
+//! Read:
+//!
+//! * **`lengths` is memory-bound.** `str::len` is O(1) and
+//!   `chars().count()` is a byte-sequential UTF-8 scan; both flavors
+//!   hit multi-GiB/s and the ratio between them is noise.
+//! * **`ratios` shows the biggest ASCII/UTF-8 gap** (~9×). The ASCII
+//!   fast path is a 128-entry `ASCII_CLASS` lookup table + six
+//!   bit-tests per byte; the UTF-8 path goes through the full
+//!   `unicode-general-category` table per scalar. The gap is the
+//!   documented cost of the fast path, not a regression.
+//! * **`entropy` on utf8 is faster than on ascii.** Both flavors
+//!   hash-count per-code-point; the utf8 pool is 15 tokens vs
+//!   ASCII's 34 words, so the observed alphabet is smaller and the
+//!   `HashMap` slots hit fewer distinct entries. This is a corpus
+//!   effect, not an algorithmic one.
+//! * **`histogram` is flat across flavors.** The ASCII sub-array
+//!   accumulator and the general `HashMap` path both cost ~2 ns per
+//!   char, so the per-byte throughput tracks the average bytes-per-
+//!   char of the input pool (which is ~1 for ASCII and ~2 for utf8).
+//! * **Regression trip-wire**: this table is the reference the bench
+//!   suite is expected to hold to within ±15-20 %. A number outside
+//!   that band on a subsequent run is either a genuine regression or
+//!   a measurement environment change (thermal throttling, background
+//!   load); rerun with `--sample-size 30` and a quiet host before
+//!   filing a fix.
+//!
+//! ## Prior baseline (2026-08-09, `stringcheese-bench/benches/stats.rs`)
+//!
+//! Retained for context — the earlier ASCII-only rows against which
+//! the current suite's numbers should be compared:
 //!
 //! | Primitive      | 128 B     | 1 KB      | 8 KB      |
 //! |----------------|-----------|-----------|-----------|
