@@ -66,7 +66,7 @@ wit-parser = "0.230"
 # exports through. Feature-pinned to the minimal set the tests
 # need (`runtime` + `cranelift` + `component-model` + `std`) —
 # same trimmed shape as `stringcheese-icu-datetime-component`.
-wasmtime = { version = "46", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime = { version = "47", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
 
 # Companion crate that ships the WASI preview2 host implementations
 # behind `add_to_linker_sync`. The segment component does no I/O

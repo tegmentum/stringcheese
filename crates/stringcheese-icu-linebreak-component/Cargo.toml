@@ -60,7 +60,7 @@ wit-parser = "0.230"
 # tests in `tests/component_smoke.rs` invoke each of the WIT
 # exports through. Feature-pinned to the minimal set the tests
 # need — same trimmed shape as the sibling icu-*-component crates.
-wasmtime = { version = "46", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime = { version = "47", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
 
 # Companion crate that ships the WASI preview2 host implementations
 # behind `add_to_linker_sync`. The line-break component does no
