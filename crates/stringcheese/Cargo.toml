@@ -122,5 +122,44 @@ stringcheese-pattern-regex = { workspace = true, optional = true }
 stringcheese-minhash = { workspace = true, features = ["std"] }
 stringcheese-ngram = { workspace = true, features = ["std"] }
 
+# WIT-i18n subsystem crates + a handful of language packs — pulled in
+# as dev-dependencies so the umbrella-crate example programs under
+# `examples/` can demonstrate the case-mapping, collation, plural,
+# number, datetime, and word-segmentation capabilities end-to-end.
+# The umbrella itself does NOT re-export these crates (see the
+# `stringcheese-icu-*` deferrals in `src/lib.rs`); example code
+# reaches for them under their own crate names, mirroring the shape a
+# real caller would use.
+stringcheese-icu-case = { workspace = true, features = ["alloc"] }
+stringcheese-icu-collation = { workspace = true, features = ["alloc"] }
+stringcheese-icu-plural = { workspace = true, features = ["std"] }
+stringcheese-icu-number = { workspace = true, features = ["std"] }
+stringcheese-icu-datetime = { workspace = true, features = ["std"] }
+stringcheese-icu-segment = { workspace = true, features = ["std"] }
+stringcheese-en = { workspace = true, features = [
+    "case-scud",
+    "collation-scud",
+    "plural-scud",
+    "number-scud",
+    "datetime-scud",
+] }
+stringcheese-de = { workspace = true, features = [
+    "case-scud",
+    "collation-scud",
+    "number-scud",
+    "datetime-scud",
+] }
+stringcheese-tr = { workspace = true, features = ["case-scud"] }
+stringcheese-fr = { workspace = true, features = ["number-scud"] }
+stringcheese-ru = { workspace = true, features = ["plural-scud"] }
+stringcheese-ar = { workspace = true, features = [
+    "plural-scud",
+    "number-scud",
+] }
+stringcheese-ja = { workspace = true, features = [
+    "datetime-scud",
+    "break-scud",
+] }
+
 [lints]
 workspace = true
