@@ -84,7 +84,7 @@ wasmtime = { version = "46", default-features = false, features = ["runtime", "c
 # the earlier 26.x/wasi:@0.2.1 pair to close the 19-advisory wasmtime
 # advisory backlog, including RUSTSEC-2026-0095 and RUSTSEC-2026-0096
 # critical-severity sandbox-escape entries).
-wasmtime-wasi = { version = "46", default-features = false }
+wasmtime-wasi = { version = "47", default-features = false }
 
 [package.metadata.docs.rs]
 # Render on docs.rs with every feature exposed. crates.io / docs.rs

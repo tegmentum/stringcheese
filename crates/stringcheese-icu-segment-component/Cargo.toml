@@ -76,7 +76,7 @@ wasmtime = { version = "46", default-features = false, features = ["runtime", "c
 # Pinned in lockstep with `wasmtime` (46.x → wasi:@0.2.12, up from
 # the earlier 26.x → wasi:@0.2.1 pair) so the 19 wasmtime advisories
 # the earlier pin ignored are closed.
-wasmtime-wasi = { version = "46", default-features = false }
+wasmtime-wasi = { version = "47", default-features = false }
 
 [package.metadata.docs.rs]
 # Render on docs.rs with every feature exposed. crates.io / docs.rs
