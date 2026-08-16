@@ -42,22 +42,16 @@ stringcheese-phonetic = { workspace = true }
 # their own.
 linkme = "0.3"
 
-[dev-dependencies]
-# The three shipped language packs are pulled in as dev-deps so
-# `tests/registry_integration.rs` can prove all three self-register
-# into the distributed slice at link time. The pack crates are the
-# integration test's only reason to be in the dev graph — they are
-# NOT runtime dependencies of stringcheese-lang, and pulling them in
-# outside `[dev-dependencies]` would break the "callers pay only for
-# the languages they want" commitment recorded in the crate docs.
-#
-# `default-features = true` (i.e. `std`, which pulls in `alloc`) is
-# required for the integration test — the pack constants
-# (`ENGLISH`, `GERMAN`, `FRENCH`) and the `Language` trait's
-# `stem` / `tokenize` methods live behind the `alloc` gate.
-stringcheese-en = { workspace = true, default-features = true }
-stringcheese-de = { workspace = true, default-features = true }
-stringcheese-fr = { workspace = true, default-features = true }
+# The multi-pack linkme integration test used to live here as
+# `tests/registry_integration.rs` with dev-dependencies on the shipped
+# `stringcheese-{en,de,fr}` packs. Those packs already carry regular
+# dependencies on `stringcheese-lang`, so the dev-deps formed a cycle
+# that `cargo publish --dry-run --workspace`'s topological sort
+# refused to accept (it broke at the 13th crate, `stringcheese-de`).
+# The test was hoisted into `crates/stringcheese-lang-test/` — a
+# `publish = false` crate that depends on `-lang` + the three packs
+# — so nothing this crate declares creates a publish-time cycle.
+# See `docs/publishing.md` for the full story.
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
 # `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so

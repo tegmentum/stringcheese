@@ -29,6 +29,7 @@ members = [
     "crates/stringcheese-manip",
     "crates/stringcheese-lang",
     "crates/stringcheese-lang-gen",
+    "crates/stringcheese-lang-test",
     "crates/stringcheese-detect-script",
     "crates/stringcheese-detect-whatlang",
     "crates/stringcheese-detect-lingua",

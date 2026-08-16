@@ -3554,9 +3554,6 @@ dependencies = [
  "linkme",
  "proptest",
  "stringcheese-core",
- "stringcheese-de",
- "stringcheese-en",
- "stringcheese-fr",
  "stringcheese-phonetic",
 ]
 
@@ -3566,6 +3563,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "toml",
+]
+
+[[package]]
+name = "stringcheese-lang-test"
+version = "0.0.0"
+dependencies = [
+ "stringcheese-de",
+ "stringcheese-en",
+ "stringcheese-fr",
+ "stringcheese-lang",
 ]
 
 [[package]]
