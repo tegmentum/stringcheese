@@ -133,9 +133,12 @@ published.
 
 ## What NOT to do
 
-- Do not publish `stringcheese-bench`. It has `publish = false` for a
-  reason (it depends on host-only benchmark tooling and is not
-  intended to be consumed as a library).
+- Do not publish `stringcheese-bench` or `stringcheese-lang-test`.
+  Both carry `publish = false` for a reason: the former depends on
+  host-only benchmark tooling; the latter is a `version = "0.0.0"`
+  integration-test host that pulls the shipped language packs
+  together for a linkme distributed-slice sanity check and would
+  reintroduce a dev-dep cycle if it were ever published.
 - Do not bump crate versions individually. The workspace pins every
   crate to `version.workspace = true`; releases move in lockstep.
 - Do not skip the dry-run sweep, even for a patch release. crates.io
@@ -177,37 +180,30 @@ expected behaviour of `cargo publish -p X` on a fresh workspace.
 Non-leaves must either (a) wait for their deps to publish first, or
 (b) be exercised via the workspace-scoped mode below.
 
-**`cargo publish --dry-run --workspace` (BLOCKED at 13th crate):**
+**`cargo publish --dry-run --workspace` (GREEN — full sweep):**
 
 Cargo 1.97's workspace-scoped publish packages crates in topological
 dep order, feeding earlier `.crate` archives into later verification
 steps so a downstream crate can resolve its sibling deps without them
-being on the registry. In the current workspace the first 12 crates
-package cleanly:
-
-`stringcheese-core`, `stringcheese-corpus`, `stringcheese-align`,
-`stringcheese-scud`, `stringcheese-icu-datetime`,
-`stringcheese-icu-number`, `stringcheese-icu-plural`,
-`stringcheese-icu-case`, `stringcheese-collate`,
-`stringcheese-icu-collation`, `stringcheese-lang-gen`,
-`stringcheese-phonetic`.
-
-Cargo then attempts `stringcheese-de` (13th) and fails with
-`no matching package named 'stringcheese-lang' found`. Root cause:
-`stringcheese-lang` declares dev-dependencies on `stringcheese-en`,
-`stringcheese-de`, and `stringcheese-fr` (for the multi-pack
-`tests/registry_integration.rs` linkme test), while each of those
-packs has a regular dependency on `stringcheese-lang`. Cargo's
-topological sort collapses the resulting dev-dep cycle by deferring
-`stringcheese-lang` past its own dependents, tripping the check when
-`-de` cannot resolve `-lang` against either the index or the
-freshly-packaged set. This does **not** block the manual publish
-flow — individual `cargo publish -p X` skips dev-dep resolution for
-non-workspace registries — but it does block the `--workspace`
-convenience mode and any CI that wants to exercise the full graph in
-one shot. Fix (deferred): move the linkme integration test out of
-`stringcheese-lang` into a `publish = false` inner crate that
-depends on `-lang`, `-en`, `-de`, and `-fr`. Tracked as a follow-up.
+being on the registry. The full 94-crate publishable set now runs
+end-to-end (`Packaging` → `Verifying` → `Uploading … aborting upload
+due to dry run`) with exit code 0. Prior to the
+`stringcheese-lang-test` extraction (see below) the sweep tripped at
+the 13th crate — `stringcheese-de` — with
+`no matching package named 'stringcheese-lang' found`; root cause was
+that `stringcheese-lang` carried dev-dependencies on
+`stringcheese-{en,de,fr}` (for the multi-pack
+`tests/registry_integration.rs` linkme test) while each of those
+packs had a regular dependency back on `stringcheese-lang`. Cargo's
+topological sort collapsed the resulting dev-dep cycle by deferring
+`-lang` past its own dependents, tripping the sibling-dep check on
+`-de`. The fix was to hoist the linkme integration test into
+`crates/stringcheese-lang-test/` — a `publish = false`, `version =
+"0.0.0"` crate that dev-depends on `-lang`, `-en`, `-de`, and `-fr`.
+Nothing publishes from it and no publishable crate depends on it, so
+the cycle is broken at the source. Individual manual publishes
+(`cargo publish -p X`) still work the same way they always did (they
+skip dev-dep resolution for non-workspace registries).
 
 **Publish order for the first workspace release (dep-graph topo
 sort):**
@@ -264,6 +260,21 @@ sort):**
    `stringcheese-icu-segment-component`,
    `stringcheese-icu-linebreak-component`.
 8. Tier 7 — the umbrella facade: `stringcheese`.
+
+**Not published (`publish = false`, deliberately skipped by the
+publish loop and the `--workspace` sweep):**
+
+- `stringcheese-bench` — host-only bench harness. Held at
+  `version.workspace = true` but the manifest sets `publish = false`
+  so it never enters the topo sort.
+- `stringcheese-lang-test` — integration-test host for the
+  `stringcheese-lang` registry's linkme distributed slice; pulls
+  `-lang`, `-en`, `-de`, `-fr` together at test-link time to prove
+  each pack's `register_language!` invocation lands in
+  `LANGUAGES`. Pinned at `version = "0.0.0"` and `publish = false`
+  precisely because dev-depending on the shipped packs from
+  `-lang` itself would reintroduce the topo-sort cycle described
+  above.
 
 Tiers must publish in order. Within a tier, order is free — the
 `sleep 10` in the publish loop is enough for the registry index to
