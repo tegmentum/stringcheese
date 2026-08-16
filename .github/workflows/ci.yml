@@ -3170,3 +3170,75 @@ jobs:
         # top offenders (icu_provider 1/2, hashbrown 0.14/0.17,
         # itertools 0.11/0.12/0.14) are called out in `deny.toml`.
         run: cargo deny check
+
+  # ------------------------------------------------------------------
+  # cargo publish --dry-run sweep over the workspace's leaf crates.
+  #
+  # Catches publish-blockers that only surface at packaging time
+  # (missing mandatory manifest fields, path-only workspace deps,
+  # `.crate` archives that exceed the 10 MiB registry ceiling, files
+  # excluded by an `include = [...]` list that the crate genuinely
+  # needs, git-source contamination, etc.) before an actual release
+  # attempt.
+  #
+  # Scoped to the leaves — the crates whose `[dependencies]` do not
+  # reference any other workspace crate — because `cargo publish
+  # --dry-run -p X` on a non-leaf hits the "no matching package named
+  # `stringcheese-core` found" error: cargo tries to resolve every
+  # declared dependency against the crates.io index, and the sibling
+  # workspace crates are not published yet. The leaves exercise the
+  # packaging + manifest-validation + `.crate` build machinery without
+  # requiring a real registry publish first. Non-leaf coverage is left
+  # to the manual `cargo publish --workspace --dry-run` step in the
+  # ship rehearsal (see `docs/publishing.md`), which packages the
+  # entire graph in topological order.
+  #
+  # Kept as `continue-on-error: true` — this is an early-warning gate,
+  # not a hard blocker: some publish-blockers only become fixable when
+  # a downstream fix lands elsewhere (e.g. a temporary workspace-dep
+  # rename mid-refactor), and the rest of CI should still surface its
+  # signal in the meantime.
+  # ------------------------------------------------------------------
+  publish-dryrun:
+    name: publish dry-run (leaf crates)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: publish-dryrun-stable
+
+      - name: cargo publish --dry-run — stringcheese-core
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-core
+
+      - name: cargo publish --dry-run — stringcheese-scud
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-scud
+
+      - name: cargo publish --dry-run — stringcheese-collate
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-collate
+
+      - name: cargo publish --dry-run — stringcheese-lang-gen
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-lang-gen
+
+      - name: cargo publish --dry-run — stringcheese-detect-script
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-detect-script
+
+      - name: cargo publish --dry-run — stringcheese-pattern
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-pattern
+
+      - name: cargo publish --dry-run — stringcheese-ident
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-ident
+
+      - name: cargo publish --dry-run — stringcheese-escape
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-escape
+
+      - name: cargo publish --dry-run — stringcheese-simhash
+        run: cargo publish --dry-run --locked --allow-dirty -p stringcheese-simhash
