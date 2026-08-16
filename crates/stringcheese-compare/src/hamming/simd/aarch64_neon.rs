@@ -71,13 +71,15 @@ pub unsafe fn distance(a: &[u8], b: &[u8]) -> u32 {
     let mut mismatches: u32 = 0;
     let mut off = 0usize;
     while off + BLOCK <= len {
-        // SAFETY: `off + BLOCK <= len` guarantees both 16-byte reads
-        // stay inside their respective slices; NEON is enabled by
-        // this function's `#[target_feature]`. The vld1q_u8 loads are
-        // the only unsafe intrinsics here — vceqq_u8, vshrq_n_u8, and
-        // vaddlvq_u8 are safe under a NEON target-feature context on
-        // Rust 1.87+.
+        // SAFETY: `off + BLOCK <= len` guarantees the 16-byte read from
+        // `a` stays inside its slice; NEON is enabled by this function's
+        // `#[target_feature]`. The vld1q_u8 loads are the only unsafe
+        // intrinsics here — vceqq_u8, vshrq_n_u8, and vaddlvq_u8 are
+        // safe under a NEON target-feature context on Rust 1.87+.
         let va = unsafe { vld1q_u8(a.as_ptr().add(off)) };
+        // SAFETY: same invariant as `va` above — `off + BLOCK <= len`
+        // holds for `b` (equal length asserted at entry) and NEON is
+        // enabled via `#[target_feature]`.
         let vb = unsafe { vld1q_u8(b.as_ptr().add(off)) };
         let eq = vceqq_u8(va, vb);
         // 0xff → 1, 0x00 → 0 per lane.
@@ -120,8 +122,11 @@ pub unsafe fn distance_within(a: &[u8], b: &[u8], cutoff: u32) -> u32 {
     let mut mismatches: u32 = 0;
     let mut off = 0usize;
     while off + BLOCK <= len {
-        // SAFETY: see `distance`.
+        // SAFETY: see `distance` — `off + BLOCK <= len` upholds the
+        // 16-byte read from `a`, NEON is enabled via `#[target_feature]`.
         let va = unsafe { vld1q_u8(a.as_ptr().add(off)) };
+        // SAFETY: same invariant as `va` above — the equal-length
+        // assertion at entry means the bound also holds for `b`.
         let vb = unsafe { vld1q_u8(b.as_ptr().add(off)) };
         let eq = vceqq_u8(va, vb);
         let ones = vshrq_n_u8::<7>(eq);

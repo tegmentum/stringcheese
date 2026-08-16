@@ -51,6 +51,70 @@ Duplicate-version warnings are informational (`multiple-versions =
 out in `deny.toml` and should be revisited when the ecosystem lands
 majority-adopted upgrades.
 
+## Unsafe-code policy
+
+Every `unsafe {}` block and every body of an `unsafe fn` MUST carry a
+`// SAFETY:` comment stating the invariant the caller (or the
+surrounding call site) upholds. The rule is enforced by the workspace
+lint
+
+```toml
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+```
+
+promoted from the pedantic-group `warn` default. CI already runs
+`RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets
+--all-features --locked`, so a missing SAFETY comment fails the build
+without any additional wiring. The initial promotion audited the ~262
+existing `unsafe` sites in tree — every one already carried a comment;
+enabling the lint at `deny` locks the invariant so a future patch
+cannot silently regress.
+
+**How to write the SAFETY comment.** One or two lines, placed on the
+line(s) *immediately preceding* the `unsafe` block (after any
+attributes on that block, not before them). State the invariant the
+caller upholds — the CPU-feature check, the length precondition, the
+lifetime, the pointer-provenance argument — using the same variable
+names as the surrounding code so the reader can trace it. Example:
+
+```rust
+#[allow(unsafe_code, reason = "SIMD intrinsic wrappers are unsafe by declaration")]
+// SAFETY: is_x86_feature_detected!("avx2") returned true; NEON is
+// enabled via `#[target_feature]` and `off + BLOCK <= len` upholds
+// the 16-byte read from `a`.
+let simd_result = unsafe { simd::x86_avx2::distance(&a, &b) };
+```
+
+Two adjacent `unsafe { … }` blocks each need their own comment (the
+lint checks per block, not per statement). A shared invariant can be
+referenced tersely on the second block — `// SAFETY: as above, `k * 2
++ 1 < 64` under the loop bound.` — but the comment must be present.
+
+**Machine-generated code.** The `src/bindings.rs` files that
+`wit-bindgen` emits into every `*-component` crate contain many
+`unsafe extern` blocks without SAFETY comments. Each such module is
+declared with
+
+```rust
+#[allow(
+    unsafe_code,
+    unsafe_op_in_unsafe_fn,
+    missing_docs,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::restriction
+)]
+mod bindings;
+```
+
+so the pedantic-group `undocumented_unsafe_blocks` lint is silenced
+for generated code only. Do not re-emit the generated file to add
+SAFETY comments — it will be overwritten the next time
+`wit-bindgen` runs. If you add a NEW component crate, mirror the same
+`#[allow]` on its `mod bindings;` declaration.
+
 ## Known follow-ups
 
 * **~~wasmtime 26 → 46 major bump.~~** ***Landed.*** The six
