@@ -140,6 +140,8 @@ unsafe fn block_hash_neon(block_ptr: *const u8) -> u64 {
         // SAFETY: `k * 2 + 2 <= 64`, and `block_ptr` is valid for 64
         // consecutive byte reads by this function's contract.
         let b0 = unsafe { *block_ptr.add(k * 2) };
+        // SAFETY: as above — `k * 2 + 1 < 64` under the loop bound and
+        // `block_ptr` is valid for 64 consecutive byte reads.
         let b1 = unsafe { *block_ptr.add(k * 2 + 1) };
 
         // Byte values are always in `0..=255`, well within the 256-entry

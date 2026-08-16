@@ -96,11 +96,11 @@ proptest! {
         if !is_x86_feature_detected!("avx2") {
             return Ok(());
         }
-        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         let simd_result = unsafe { simd::myers_x86_avx2::distance(&a, &b) };
         let scalar_result = myers_scalar::distance(&a, &b);
         prop_assert_eq!(simd_result, scalar_result, "avx2 disagreed with scalar");
@@ -116,11 +116,11 @@ proptest! {
         if !is_x86_feature_detected!("avx2") {
             return Ok(());
         }
-        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         let simd_result = unsafe { simd::myers_x86_avx2::distance(&a, &b) };
         let scalar_result = myers_scalar::distance(&a, &b);
         prop_assert_eq!(simd_result, scalar_result, "avx2 disagreed with scalar on wide input");
@@ -134,11 +134,11 @@ proptest! {
         if !is_x86_feature_detected!("sse2") {
             return Ok(());
         }
-        // SAFETY: is_x86_feature_detected!("sse2") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_x86_feature_detected!("sse2") returned true.
         let simd_result = unsafe { simd::myers_x86_sse2::distance(&a, &b) };
         let scalar_result = myers_scalar::distance(&a, &b);
         prop_assert_eq!(simd_result, scalar_result, "sse2 disagreed with scalar");
@@ -151,11 +151,11 @@ proptest! {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return Ok(());
         }
-        // SAFETY: is_aarch64_feature_detected!("neon") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_aarch64_feature_detected!("neon") returned true.
         let simd_result = unsafe { simd::myers_aarch64_neon::distance(&a, &b) };
         let scalar_result = myers_scalar::distance(&a, &b);
         prop_assert_eq!(simd_result, scalar_result, "neon disagreed with scalar");

@@ -121,11 +121,11 @@ proptest! {
         if !is_x86_feature_detected!("avx2") {
             return Ok(());
         }
-        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_x86_feature_detected!("avx2") returned true.
         let simd_result = unsafe { simd::x86_avx2::similarity(&a, &b) };
         let scalar_result = scalar::similarity(&a, &b);
         prop_assert_eq!(
@@ -143,11 +143,11 @@ proptest! {
         if !is_x86_feature_detected!("sse2") {
             return Ok(());
         }
-        // SAFETY: is_x86_feature_detected!("sse2") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_x86_feature_detected!("sse2") returned true.
         let simd_result = unsafe { simd::x86_sse2::similarity(&a, &b) };
         let scalar_result = scalar::similarity(&a, &b);
         prop_assert_eq!(
@@ -164,11 +164,11 @@ proptest! {
         if !std::arch::is_aarch64_feature_detected!("neon") {
             return Ok(());
         }
-        // SAFETY: is_aarch64_feature_detected!("neon") returned true.
         #[allow(
             unsafe_code,
             reason = "SIMD intrinsic wrappers are unsafe by declaration; the CPU-feature check above upholds the precondition"
         )]
+        // SAFETY: is_aarch64_feature_detected!("neon") returned true.
         let simd_result = unsafe { simd::aarch64_neon::similarity(&a, &b) };
         let scalar_result = scalar::similarity(&a, &b);
         prop_assert_eq!(

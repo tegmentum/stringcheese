@@ -155,6 +155,15 @@ must_use_candidate = "allow"
 # tree than are worth churning through, and the nested form remains
 # widely used in the ecosystem.
 collapsible_if = "allow"
+# `undocumented_unsafe_blocks` — every `unsafe {}` block and `unsafe fn`
+# body must carry a `// SAFETY:` comment stating the invariant the caller
+# is upholding. The prior workspace-wide unsafe audit confirmed 100%
+# coverage; bumping the pedantic lint from `warn` to `deny` locks that
+# invariant so any new unsafe site without a SAFETY comment fails the
+# build (both locally and on CI, where `-D warnings` is set). Generated
+# `src/bindings.rs` files carry a per-file `#[allow]` since wit-bindgen
+# output does not emit SAFETY comments.
+undocumented_unsafe_blocks = "deny"
 
 [workspace.dependencies]
 stringcheese-core = { version = "0.1.0", path = "crates/stringcheese-core", default-features = false }
