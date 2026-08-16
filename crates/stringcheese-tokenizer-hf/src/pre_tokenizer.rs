@@ -131,12 +131,12 @@ pub const TIKTOKEN_CANONICAL_PATTERN: &str = concat!(
     r"|\s+",
 );
 
-/// GLiNER's `WordsSplitter` regex — the whitespace-based
-/// pre-tokenizer that GLiNER models expect BEFORE their SentencePiece
+/// `GLiNER`'s `WordsSplitter` regex — the whitespace-based
+/// pre-tokenizer that `GLiNER` models expect BEFORE their `SentencePiece`
 /// / BPE sub-tokenizer runs. Both zero-shot NER (`urchade/gliner_medium-v2.1`,
 /// `knowledgator/gliner-multitask-v1.0`, ...) and their span-classifier
 /// output shapes are word-indexed relative to what this splitter
-/// emits — so a downstream tokenizer that wants to speak GLiNER's
+/// emits — so a downstream tokenizer that wants to speak `GLiNER`'s
 /// span coordinate system must first split the input with this regex
 /// and then align its subword offsets against those word ranges.
 ///
@@ -275,20 +275,20 @@ impl RegexPreTokenizer {
     }
 
     /// Convenience: compile [`GLINER_WORDS_PATTERN`] — the whitespace
-    /// / punctuation splitter GLiNER models expect BEFORE their
-    /// SentencePiece / BPE sub-tokenizer runs.
+    /// / punctuation splitter `GLiNER` models expect BEFORE their
+    /// `SentencePiece` / BPE sub-tokenizer runs.
     ///
     /// See the [pattern's docs](GLINER_WORDS_PATTERN) for semantics.
     ///
     /// # Panics
     ///
-    /// Panics if the hard-coded GLiNER pattern fails to compile,
+    /// Panics if the hard-coded `GLiNER` pattern fails to compile,
     /// which would indicate a regression in the crate. A test
     /// (`gliner_words_pattern_compiles`) guards against this.
     #[must_use]
     pub fn gliner_words() -> Self {
         Self::new(GLINER_WORDS_PATTERN)
-            .expect("the hard-coded GLiNER WordsSplitter pattern must compile")
+            .expect("the hard-coded `GLiNER` WordsSplitter pattern must compile")
     }
 
     /// The pattern this pre-tokenizer was compiled from.
@@ -342,10 +342,10 @@ impl PartialEq for RegexPreTokenizer {
 impl Eq for RegexPreTokenizer {}
 
 // ---------------------------------------------------------------------
-// Metaspace pre-tokenizer (`SentencePiece`).
+// Metaspace pre-tokenizer (``SentencePiece``).
 // ---------------------------------------------------------------------
 
-/// `SentencePiece`-style prepending policy for the [`Metaspace`]
+/// ``SentencePiece``-style prepending policy for the [`Metaspace`]
 /// pre-tokenizer.
 ///
 /// Mirrors Hugging Face's on-disk shape: the JSON string
@@ -384,7 +384,7 @@ pub enum PrependScheme {
     First,
 }
 
-/// `SentencePiece` "Metaspace" pre-tokenizer — Kudo & Richardson (2018).
+/// ``SentencePiece`` "Metaspace" pre-tokenizer — Kudo & Richardson (2018).
 ///
 /// Every ASCII space in the input is replaced with a single
 /// [`Self::replacement`] character (canonically `▁`, U+2581 LOWER ONE
@@ -392,7 +392,7 @@ pub enum PrependScheme {
 /// [`Self::prepend_scheme`] the replacement character may also be
 /// prepended to the string. When [`Self::split`] is `true` — HF's
 /// default — the transformed string is split on the replacement
-/// character with `SentencePiece`'s `MergedWithNext` semantics: each
+/// character with ``SentencePiece``'s `MergedWithNext` semantics: each
 /// output piece starts with the replacement character (except for the
 /// first piece when no prepend happened and the input did not start
 /// with a space).
@@ -422,7 +422,7 @@ pub struct Metaspace {
     pub prepend_scheme: PrependScheme,
     /// Whether to split the transformed string on the replacement
     /// character so each piece starts with [`Self::replacement`]
-    /// (`SentencePiece`'s `MergedWithNext` split behaviour). When
+    /// (``SentencePiece``'s `MergedWithNext` split behaviour). When
     /// `false`, [`Self::apply`] returns a single-element `Vec`
     /// containing the transformed string verbatim.
     pub split: bool,
@@ -431,7 +431,7 @@ pub struct Metaspace {
 impl Metaspace {
     /// The canonical replacement character (`▁`, U+2581 LOWER ONE
     /// EIGHTH BLOCK) — HF's own default and the shape used by every
-    /// `SentencePiece`-descended checkpoint on the Hub.
+    /// ``SentencePiece``-descended checkpoint on the Hub.
     pub const DEFAULT_REPLACEMENT: char = '\u{2581}';
 
     /// Construct a Metaspace with Hugging Face's default configuration:
@@ -472,7 +472,7 @@ impl Metaspace {
     ///      correct `is_first_piece` flag.
     ///    * [`PrependScheme::Never`] — never prepend.
     /// 3. If [`Self::split`] is `true`, the transformed string is
-    ///    split on the replacement character with `SentencePiece`'s
+    ///    split on the replacement character with ``SentencePiece``'s
     ///    `MergedWithNext` semantics: the delimiter stays glued to the
     ///    following piece. If `false`, the returned vec contains
     ///    exactly one element (the transformed string).
@@ -591,7 +591,7 @@ impl Default for Metaspace {
 ///   pieces. Adjacent whitespace runs collapse: `"a   b"` yields
 ///   `["a", "b"]`, not `["a", "", "", "b"]`.
 /// * [`Self::Metaspace`] — HF `Metaspace`. See [`Metaspace`] for the
-///   `SentencePiece`-style substitution and split policy.
+///   ``SentencePiece``-style substitution and split policy.
 ///
 /// New variants may be added over time; the enum is `#[non_exhaustive]`
 /// so external `match` sites must include a wildcard arm.
@@ -747,7 +747,7 @@ impl PreTokenizerSequence {
     }
 
     /// Apply every stage in left-to-right order, threading
-    /// `is_first_piece_of_input` through the `SentencePiece`
+    /// `is_first_piece_of_input` through the ``SentencePiece``
     /// [`Metaspace`] stages' `First` prepend scheme.
     ///
     /// Semantics:
@@ -800,7 +800,7 @@ impl PreTokenizerSequence {
     /// Used by the Unigram decoder to reverse the `▁ → ' '`
     /// substitution introduced at encode time: whichever stage owns the
     /// replacement character is the one that has to be inverted at
-    /// decode. Every real `SentencePiece`-descended checkpoint carries
+    /// decode. Every real ``SentencePiece``-descended checkpoint carries
     /// at most one Metaspace stage per sequence, so returning the first
     /// match matches every configuration we have seen in practice.
     #[must_use]
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // GLiNER WordsSplitter
+    // `GLiNER` WordsSplitter
     // ---------------------------------------------------------------
 
     #[test]
