@@ -93,7 +93,12 @@ stringcheese-escape = { path = "../crates/stringcheese-escape", default-features
 # bindings-generation crate. Version tracks the current stable
 # release line; cargo-fuzz's independent `Cargo.lock` means a bump
 # here does not perturb the main workspace lockfile.
-wit-parser = "0.230"
+#
+# Bumped 0.230 -> 0.256 after the nightly fuzz on 2026-08-16 caught
+# an Option::unwrap() panic at ast/resolve.rs:1475 on malformed
+# input. 0.256 is the latest stable release line and includes the
+# upstream fix.
+wit-parser = "0.256"
 
 # Every fuzz target is registered as its own [[bin]]. cargo-fuzz picks these
 # up by name via `cargo fuzz run <name>`; the `test`, `doc`, and `bench`
