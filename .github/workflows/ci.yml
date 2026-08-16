@@ -95,6 +95,76 @@ jobs:
         run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 
   # ------------------------------------------------------------------
+  # Cross-target clippy for aarch64 SIMD kernels.
+  #
+  # The main `clippy` job above runs on ubuntu-latest (native
+  # x86_64-unknown-linux-gnu), so it exercises every
+  # `#[cfg(target_arch = "x86_64")]` SIMD kernel in
+  # `stringcheese-compare` and `stringcheese-cdc` but never touches
+  # the sibling `#[cfg(target_arch = "aarch64")]` NEON kernels living
+  # in the same modules. A lint regression on the aarch64 path only
+  # surfaces when a contributor runs `cargo clippy` on an aarch64
+  # developer machine (e.g. Apple Silicon macOS) — miss that and CI
+  # is silent.
+  #
+  # Conversely, an aarch64 developer's local `cargo clippy` never
+  # compiles the x86_64 SIMD kernels, so a lint slipped into an x86
+  # `#[cfg(target_arch = "x86_64")]` block only surfaces on this
+  # workflow's main `clippy` job above — after push. That is the
+  # cross-arch coverage gap this job closes on the aarch64 side.
+  #
+  # Scope. Deliberately narrowed to the two SIMD-owning crates
+  # rather than the full workspace: the workspace pulls wasmtime +
+  # friends as dev-deps whose cross-compile story to
+  # aarch64-unknown-linux-gnu is fragile (`ring`, target C
+  # toolchains, and so on). If a new crate lands with a
+  # `#[cfg(target_arch = "aarch64")]` code path, add it to the `-p`
+  # list here.
+  #
+  # No linker install. `cargo clippy` runs in check mode
+  # (`--emit=metadata`, no link step) and build scripts execute on
+  # the host, so an aarch64 sysroot / cross-linker is NOT required
+  # for the two crates in scope. If a future extension pulls in a
+  # dep whose build.rs emits `cargo:rustc-link-lib` for the target
+  # (i.e. a genuine cross-link), install `gcc-aarch64-linux-gnu`
+  # here first and add `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc`.
+  # ------------------------------------------------------------------
+  cross-clippy:
+    name: cross-clippy (aarch64 SIMD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (aarch64-unknown-linux-gnu)
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache cargo registry and target/
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-clippy-aarch64
+
+      - name: Run clippy against SIMD-owning crates (aarch64)
+        # Scoped to the two crates that carry `#[cfg(target_arch =
+        # "aarch64")]` NEON kernels today (`stringcheese-compare`,
+        # `stringcheese-cdc`). Full-workspace cross-clippy would drag
+        # wasmtime dev-deps into an aarch64 cross-build that has no
+        # reason to work on the vanilla runner; the SIMD gap is what
+        # matters, and this covers it.
+        run: |
+          cargo clippy \
+            -p stringcheese-compare \
+            -p stringcheese-cdc \
+            --target aarch64-unknown-linux-gnu \
+            --all-targets \
+            --all-features \
+            --locked \
+            -- -D warnings
+
+  # ------------------------------------------------------------------
   # rustfmt. The workspace uses default formatting (no rustfmt.toml).
   # ------------------------------------------------------------------
   rustfmt:
