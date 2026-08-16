@@ -85,6 +85,7 @@ pub unsafe fn distance(a: &[u8], b: &[u8]) -> u32 {
         // the only unsafe ones here — cmpeq and movemask are safe under
         // an AVX2 target-feature context on Rust 1.87+.
         let va = unsafe { _mm256_loadu_si256(a.as_ptr().add(off).cast::<__m256i>()) };
+        // SAFETY: identical to the preceding load; second consecutive block for `b`.
         let vb = unsafe { _mm256_loadu_si256(b.as_ptr().add(off).cast::<__m256i>()) };
         let eq = _mm256_cmpeq_epi8(va, vb);
         let match_mask = _mm256_movemask_epi8(eq).cast_unsigned();
@@ -134,6 +135,7 @@ pub unsafe fn distance_within(a: &[u8], b: &[u8], cutoff: u32) -> u32 {
     while off + BLOCK <= len {
         // SAFETY: see `distance`.
         let va = unsafe { _mm256_loadu_si256(a.as_ptr().add(off).cast::<__m256i>()) };
+        // SAFETY: identical to the preceding load; second consecutive block for `b`.
         let vb = unsafe { _mm256_loadu_si256(b.as_ptr().add(off).cast::<__m256i>()) };
         let eq = _mm256_cmpeq_epi8(va, vb);
         let match_mask = _mm256_movemask_epi8(eq).cast_unsigned();

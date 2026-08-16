@@ -356,6 +356,7 @@ mod tests {
             let simd1 = unsafe { distance(&a, &b) };
             let sc1 = scalar::distance(&a, &b);
             assert_eq!(simd1, sc1, "at m={m} on (a, b)");
+            // SAFETY: identical to the preceding call; second call in the same guarded block.
             let simd2 = unsafe { distance(&a, &text_ext) };
             let sc2 = scalar::distance(&a, &text_ext);
             assert_eq!(simd2, sc2, "at m={m} on (a, text_ext)");
