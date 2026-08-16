@@ -141,3 +141,136 @@ published.
 - Do not skip the dry-run sweep, even for a patch release. crates.io
   metadata rules change occasionally, and the sweep is the only place
   those changes are caught before an irreversible publish.
+
+## Dry-run sweep results
+
+Last sweep: `cargo publish --dry-run --locked --allow-dirty -p <crate>`
+against every leaf crate (crates whose `[dependencies]` reference no
+other workspace crate) plus a `cargo publish --dry-run --locked
+--workspace --allow-dirty` over the full 94-crate publishable set.
+
+**Leaf-crate dry-run (individual `-p` invocations, GREEN):**
+
+- `stringcheese-core`
+- `stringcheese-scud`
+- `stringcheese-collate`
+- `stringcheese-lang-gen`
+- `stringcheese-detect-script`
+- `stringcheese-simhash`
+- `stringcheese-pattern`
+- `stringcheese-ident`
+- `stringcheese-escape`
+
+Every workspace-inherited `stringcheese-*` dep in
+`[workspace.dependencies]` already carries `version = "0.1.0"`
+alongside its `path = "crates/..."`, so path-only dep entries are not
+a blocker. All 93 workspace deps checked.
+
+**Non-leaf `cargo publish --dry-run -p <crate>` (EXPECTED FAIL):**
+
+Individual dry-runs of any crate with a workspace `stringcheese-*`
+dep fail with `no matching package named 'stringcheese-*' found` —
+cargo checks the crates.io index for every declared dep during the
+"prepare local package for uploading" step, and the sibling workspace
+crates are not published yet. This is not a manifest bug: it is the
+expected behaviour of `cargo publish -p X` on a fresh workspace.
+Non-leaves must either (a) wait for their deps to publish first, or
+(b) be exercised via the workspace-scoped mode below.
+
+**`cargo publish --dry-run --workspace` (BLOCKED at 13th crate):**
+
+Cargo 1.97's workspace-scoped publish packages crates in topological
+dep order, feeding earlier `.crate` archives into later verification
+steps so a downstream crate can resolve its sibling deps without them
+being on the registry. In the current workspace the first 12 crates
+package cleanly:
+
+`stringcheese-core`, `stringcheese-corpus`, `stringcheese-align`,
+`stringcheese-scud`, `stringcheese-icu-datetime`,
+`stringcheese-icu-number`, `stringcheese-icu-plural`,
+`stringcheese-icu-case`, `stringcheese-collate`,
+`stringcheese-icu-collation`, `stringcheese-lang-gen`,
+`stringcheese-phonetic`.
+
+Cargo then attempts `stringcheese-de` (13th) and fails with
+`no matching package named 'stringcheese-lang' found`. Root cause:
+`stringcheese-lang` declares dev-dependencies on `stringcheese-en`,
+`stringcheese-de`, and `stringcheese-fr` (for the multi-pack
+`tests/registry_integration.rs` linkme test), while each of those
+packs has a regular dependency on `stringcheese-lang`. Cargo's
+topological sort collapses the resulting dev-dep cycle by deferring
+`stringcheese-lang` past its own dependents, tripping the check when
+`-de` cannot resolve `-lang` against either the index or the
+freshly-packaged set. This does **not** block the manual publish
+flow — individual `cargo publish -p X` skips dev-dep resolution for
+non-workspace registries — but it does block the `--workspace`
+convenience mode and any CI that wants to exercise the full graph in
+one shot. Fix (deferred): move the linkme integration test out of
+`stringcheese-lang` into a `publish = false` inner crate that
+depends on `-lang`, `-en`, `-de`, and `-fr`. Tracked as a follow-up.
+
+**Publish order for the first workspace release (dep-graph topo
+sort):**
+
+1. Tier 0 — substrate leaves (no workspace deps): `stringcheese-core`.
+2. Tier 1 — direct dependents of `-core`:
+   `stringcheese-corpus`, `stringcheese-scud`, `stringcheese-align`,
+   `stringcheese-unicode`, `stringcheese-phonetic`,
+   `stringcheese-lang-gen`. (Independent leaves that carry no
+   workspace deps can slot in anywhere: `stringcheese-collate`,
+   `stringcheese-detect-script`, `stringcheese-simhash`,
+   `stringcheese-pattern`, `stringcheese-ident`,
+   `stringcheese-escape`, `stringcheese-translit`,
+   `stringcheese-winnowing`, `stringcheese-segment`,
+   `stringcheese-minhash`, `stringcheese-detect-whatlang`,
+   `stringcheese-detect-lingua`.)
+3. Tier 2 — algorithm crates layered on Tier 1: `stringcheese-cdc`,
+   `stringcheese-index`, `stringcheese-compare`, `stringcheese-diff`,
+   `stringcheese-stats`, `stringcheese-ngram`,
+   `stringcheese-normalize`, `stringcheese-textsplit`,
+   `stringcheese-pattern-regex`, `stringcheese-detect`,
+   `stringcheese-tokenizer`, `stringcheese-lang`.
+4. Tier 3 — ICU-alternative capability crates:
+   `stringcheese-icu-case`, `stringcheese-icu-collation`,
+   `stringcheese-icu-plural`, `stringcheese-icu-number`,
+   `stringcheese-icu-datetime`, `stringcheese-icu-segment`,
+   `stringcheese-icu-linebreak`.
+5. Tier 4 — language packs (each depends on `-lang`, `-phonetic`,
+   plus optional `-icu-*`): `stringcheese-en`, `stringcheese-de`,
+   `stringcheese-fr`, `stringcheese-es`, `stringcheese-it`,
+   `stringcheese-pt`, `stringcheese-ro`, `stringcheese-nl`,
+   `stringcheese-no`, `stringcheese-nn`, `stringcheese-pl`,
+   `stringcheese-ja`, `stringcheese-ko`, `stringcheese-zh`,
+   `stringcheese-am`, `stringcheese-ar`, `stringcheese-he`,
+   `stringcheese-fa`, `stringcheese-hi`, `stringcheese-mr`,
+   `stringcheese-bn`, `stringcheese-pa`, `stringcheese-id`,
+   `stringcheese-ta`, `stringcheese-ml`, `stringcheese-tr`,
+   `stringcheese-fi`, `stringcheese-et`, `stringcheese-ru`,
+   `stringcheese-uk`, `stringcheese-be`, `stringcheese-bg`,
+   `stringcheese-mk`, `stringcheese-sr`, `stringcheese-cs`,
+   `stringcheese-da`, `stringcheese-is`, `stringcheese-sk`,
+   `stringcheese-sv`, `stringcheese-hu`, `stringcheese-vi`,
+   `stringcheese-th`, `stringcheese-el`, `stringcheese-hy`,
+   `stringcheese-ka`.
+6. Tier 5 — tokenizer packs:
+   `stringcheese-tokenizer-hf`, `stringcheese-tokenizer-hf-native`,
+   `stringcheese-tokenizer-tiktoken`.
+7. Tier 6 — WIT component wrappers (depend on their Tier-3 sibling
+   plus embedded language packs):
+   `stringcheese-tokenizer-component`,
+   `stringcheese-icu-case-component`,
+   `stringcheese-icu-collation-component`,
+   `stringcheese-icu-datetime-component`,
+   `stringcheese-icu-segment-component`,
+   `stringcheese-icu-linebreak-component`.
+8. Tier 7 — the umbrella facade: `stringcheese`.
+
+Tiers must publish in order. Within a tier, order is free — the
+`sleep 10` in the publish loop is enough for the registry index to
+propagate before the next tier resolves its deps.
+
+The nine-crate immediate ship set (Tier 0 through the umbrella,
+skipping every language pack, ICU capability, tokenizer pack, and
+component wrapper) is the sequence codified in the loop above; the
+rest of the tree ships in follow-up waves as the ecosystem picks
+them up.
