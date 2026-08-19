@@ -3158,7 +3158,7 @@ version = "0.1.0"
 dependencies = [
  "icu_collator",
  "icu_locid",
- "icu_provider 1.5.0",
+ "icu_provider 2.2.0",
  "proptest",
  "stringcheese-icu-case",
  "stringcheese-icu-collation",
