@@ -19,7 +19,7 @@ ignore = [
     # Unmaintained transitive crates — informational only, no CVE.
     #
     # atomic-polyfill (via wasmtime -> cranelift -> postcard -> heapless):
-    #   Still pulled in transitively by wasmtime 46 (postcard 1.x
+    #   Still pulled in transitively by wasmtime 47 (postcard 1.x
     #   pins heapless 0.7). heapless 0.8 drops the polyfill; wasmtime
     #   / postcard need to migrate before this clears. No CVE, dev-
     #   dep only (wasmtime is a dev-dep on the six `stringcheese-*-

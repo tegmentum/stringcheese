@@ -71,17 +71,18 @@ wit-parser = "0.230"
 # exports through. Feature-pinned to the minimal set the tests
 # need (`runtime` + `cranelift` + `component-model` + `std`) —
 # same trimmed shape as `stringcheese-icu-collation-component`.
-wasmtime = { version = "46", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
+wasmtime = { version = "47", default-features = false, features = ["runtime", "cranelift", "component-model", "std"] }
 
 # Companion crate that ships the WASI preview2 host implementations
 # behind `add_to_linker_sync`. The datetime component does no I/O
 # of its own, but the wasip1 -> wasip2 adapter applied at
 # componentize time introduces a `wasi:*@0.2.x` import surface
 # that the linker must satisfy before `instantiate` will succeed.
-# Pinned in lockstep with `wasmtime` (46.x → wasi:@0.2.12, up from
-# the earlier 26.x → wasi:@0.2.1 pair) so the 19 wasmtime advisories
-# the earlier pin ignored are closed.
-wasmtime-wasi = { version = "46", default-features = false }
+# Pinned in lockstep with `wasmtime` (47.x, up from 46.x, up from
+# the earlier 26.x). The 26 → 46 jump closed 19 wasmtime advisories
+# including 2 critical sandbox escapes; 46 → 47.0.3 closes
+# GHSA-hgjw-h833-99q9 + GHSA-2hw9-mc66-jc2q. See `docs/security.md`.
+wasmtime-wasi = { version = "47", default-features = false }
 
 [package.metadata.docs.rs]
 # Render on docs.rs with every feature exposed. crates.io / docs.rs

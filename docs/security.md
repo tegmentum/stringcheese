@@ -117,27 +117,33 @@ SAFETY comments — it will be overwritten the next time
 
 ## Known follow-ups
 
-* **~~wasmtime 26 → 46 major bump.~~** ***Landed.*** The six
-  `stringcheese-*-component` crates now pin `wasmtime = "46"` /
-  `wasmtime-wasi = "46"` for the WIT component-model smoke tests, up
-  from `26`. This closed 19 advisories including the two
-  9.0-critical sandbox-escape entries (RUSTSEC-2026-0095 Winch
-  sandbox-escape memory, RUSTSEC-2026-0096 aarch64 Cranelift sandbox
-  escape). The `wasip1 → wasip2` reactor adapter shipped alongside
-  wasmtime 46 emits the `wasi:@0.2.12` import surface, up from the
-  earlier `wasi:@0.2.1` — the WIT sources in `component/wit/` import
-  no `wasi:` interfaces themselves, so the world bump lives in the
-  adapter/host coupling only. wasmtime 46 requires rustc 1.94; the
-  workspace `rust-version` stays at 1.88 (the component crates'
-  public API compiles unchanged, only their dev-deps for the smoke
-  tests need the newer toolchain) and the MSRV CI row excludes the
-  six `*-component` crates from its test sweep. See the
-  `.cargo/audit.toml` history for the full 19-advisory table this
-  bump closed.
+* **~~wasmtime 26 → 46 major bump.~~** ***Landed.*** The 26 → 46
+  jump closed 19 advisories including the two 9.0-critical
+  sandbox-escape entries (RUSTSEC-2026-0095 Winch sandbox-escape
+  memory, RUSTSEC-2026-0096 aarch64 Cranelift sandbox escape). The
+  `wasip1 → wasip2` reactor adapter shipped alongside wasmtime 46
+  emits the `wasi:@0.2.12` import surface, up from the earlier
+  `wasi:@0.2.1` — the WIT sources in `component/wit/` import no
+  `wasi:` interfaces themselves, so the world bump lives in the
+  adapter/host coupling only.
+* **~~wasmtime 46 → 47.0.3 minor bump.~~** ***Landed.*** The six
+  `stringcheese-*-component` crates now pin `wasmtime = "47"` /
+  `wasmtime-wasi = "47"`. 47.0.3 closes two additional advisories
+  on top of 46.0.2: GHSA-hgjw-h833-99q9 (stores mixing up type
+  indices between engines) and GHSA-2hw9-mc66-jc2q (preemption and
+  traps during bulk operations breaking internal VM state). Both
+  land in the runtime we exercise. Notes: 47.0.0 removed
+  `wasi-common` and the wasi-threads support (we use `wasmtime-wasi`
+  and don't run threaded wasm, so unaffected) and dropped several
+  Cranelift `*_imm` / `stack_load` / `bxor_not` / `global_value`
+  IR opcodes (we don't emit Cranelift IR ourselves, so unaffected).
+  MSRV requirement stays at 1.94 for these dev-deps; the workspace
+  `rust-version` remains 1.88 and the MSRV CI row continues to
+  exclude the six `*-component` crates from its test sweep.
 * **bio 2 → 4 bump.** Two unmaintained transitives (`custom_derive`,
   `fxhash`) enter the tree only through the `oracle-benches` feature of
   `stringcheese-align`. A bio major bump drops both.
-* **atomic-polyfill.** `wasmtime 46 -> cranelift -> postcard ->
+* **atomic-polyfill.** `wasmtime 47 -> cranelift -> postcard ->
   heapless 0.7` still pulls in the unmaintained `atomic-polyfill`
   crate. `heapless 0.8` drops the polyfill; clearing this ignore
   needs upstream `postcard` and/or `wasmtime` to bump. Informational
