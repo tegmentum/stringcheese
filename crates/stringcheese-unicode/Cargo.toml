@@ -98,7 +98,7 @@ unicode-segmentation = { version = "1", default-features = false, features = ["n
 #     build can drop the crate — and its ~30 transitive ICU4X crates —
 #     entirely. `compiled_data` is toggled by the `compiled-case-data`
 #     feature; see the feature table above.
-icu_casemap = { version = "1", default-features = false, optional = true }
+icu_casemap = { version = "2", default-features = false, optional = true }
 # `unicode-linebreak` — UAX #14 line-break opportunity detection.
 #     Small (`#![no_std]`) single-purpose crate from `axelf4/unicode-
 #     linebreak`, tracking Unicode 15.0.0. Preferred over `xi-unicode`
