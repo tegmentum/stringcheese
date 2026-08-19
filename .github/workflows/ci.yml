@@ -45,10 +45,11 @@ jobs:
 
       - name: Run tests
         # The six `stringcheese-*-component` crates pull in wasmtime
-        # 46 as a dev-dep for their component-model smoke tests (bumped
-        # from 26 to close 19 advisories including RUSTSEC-2026-0095 /
-        # RUSTSEC-2026-0096 critical sandbox-escapes — see
-        # docs/security.md). wasmtime 46 requires rustc 1.94; the
+        # 47 as a dev-dep for their component-model smoke tests (bumped
+        # 26 → 46 → 47 to close 19 + 2 advisories including
+        # RUSTSEC-2026-0095 / RUSTSEC-2026-0096 critical sandbox-escapes
+        # and GHSA-hgjw-h833-99q9 / GHSA-2hw9-mc66-jc2q — see
+        # docs/security.md). wasmtime 47 requires rustc 1.94; the
         # workspace runtime MSRV stays at 1.88 (the component crates'
         # own public API compiles on 1.88, only their dev-deps need the
         # newer toolchain), so the MSRV row here excludes them from the
@@ -1040,8 +1041,8 @@ jobs:
       # Pinned versions. Bump deliberately; every version change may
       # shift the wave-format output shape the smoke-test assertions
       # depend on.
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -1881,8 +1882,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -1974,8 +1975,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -2067,8 +2068,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -2201,8 +2202,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -2330,8 +2331,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
@@ -2487,8 +2488,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      WASMTIME_VERSION: "26.0.0"
-      WASM_TOOLS_VERSION: "1.219.0"
+      WASMTIME_VERSION: "47.0.3"
+      WASM_TOOLS_VERSION: "1.257.1"
     steps:
       - uses: actions/checkout@v4
 
