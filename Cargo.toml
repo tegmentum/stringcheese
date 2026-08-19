@@ -268,7 +268,7 @@ stringcheese-icu-linebreak-component = { version = "0.1.0", path = "crates/strin
 # `stringcheese-index`. The workspace-external `stringcheese-tokenizer-hf-bench`
 # and `stringcheese-bench` pin the same 0.5 line independently — see
 # their manifests for the rationale.
-criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+criterion = { version = "0.8", default-features = false, features = ["html_reports"] }
 
 [profile.release]
 lto = "thin"
