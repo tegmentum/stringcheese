@@ -86,7 +86,7 @@ rustc-hash = { version = "2", default-features = false }
 # `o200k_base` pre-tokenizer pattern verbatim. See
 # `src/pre_tokenizer.rs` for the full rationale. Only compiled when
 # `std` is enabled (fancy-regex itself requires the standard library).
-fancy-regex = { version = "0.14", default-features = false, features = ["std", "unicode"], optional = true }
+fancy-regex = { version = "0.19", default-features = false, features = ["std", "unicode"], optional = true }
 
 # JSON parser for the Hugging Face `tokenizer.json` loader (see
 # `src/hf.rs`). Only compiled when the `hf-tokenizer` feature is on.
