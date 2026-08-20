@@ -48,7 +48,7 @@ stringcheese-core = { workspace = true }
 # a plain `cargo build` / `cargo test` / `cargo bench` never pulls it
 # in. Lives in `[dependencies]` (not `[dev-dependencies]`) because Cargo
 # does not allow optional dev-deps.
-bio = { version = "2", default-features = false, optional = true }
+bio = { version = "4", default-features = false, optional = true }
 
 [dev-dependencies]
 stringcheese-corpus = { workspace = true, features = ["alloc"] }
