@@ -1,0 +1,59 @@
+# Standalone workspace, same posture as
+# stringcheese-tokenizer-component-cl100k.  The `parity-real-vocab`
+# feature bakes real tokenizer bytes into the compiled artifact
+# and CLAUDE.md forbids committing those bytes; excluding the crate
+# from the top-level workspace keeps `cargo test --all-features` from
+# ever pulling the vocab into a repo-tree build.
+[workspace]
+
+[package]
+name = "stringcheese-tokenizer-component-whisper"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/stringcheese"
+description = "Real-vocab OpenAI Whisper packaging of the tegmentum:tokenizer@0.1.0 WIT component.  Sibling of stringcheese-tokenizer-component-cl100k: layers the whisper-* tokenizer.json (SHA-verified when a pin is set, never committed) into the same tokenizer-provider shape so cognition's whisper-transcribe-component can decode its greedy-decoder output over the WIT boundary."
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Real whisper tokenizer.json baked in.  Off by default so
+# `cargo check` stays cheap offline.  See build.rs for the
+# resolution walk: $STRINGCHEESE_WHISPER_TOKENIZER_JSON,
+# $XDG_CACHE_HOME/stringcheese-tokenizer-whisper/tokenizer.json,
+# $HOME/.cache/stringcheese-tokenizer-whisper/tokenizer.json.
+parity-real-vocab = []
+
+# WIT Guest impl + component export.  Requires parity-real-vocab
+# — a stub component exporting an always-erroring decode isn't
+# useful to compose against.
+wit-component = ["parity-real-vocab", "dep:wit-bindgen-rt"]
+
+[dependencies]
+stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features = false, features = ["std"] }
+# Whisper's tokenizer.json is HuggingFace-shape BPE (byte-level GPT-2
+# family).  stringcheese-tokenizer-hf's `hf::parse_tokenizer_json` +
+# `hf::to_bpe_tokenizer` do the parse + materialize.
+stringcheese-tokenizer-hf = { path = "../stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[dev-dependencies]
+# Same host-side WIT-parses gate as the cl100k sibling.
+wit-parser = "0.230"
+
+[lints]
+rust.missing_docs = "warn"
+rust.unsafe_op_in_unsafe_fn = "deny"
+clippy.pedantic = { level = "warn", priority = -1 }
+clippy.module_name_repetitions = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.must_use_candidate = "allow"
+clippy.collapsible_if = "allow"

@@ -128,6 +128,13 @@ exclude = [
     # `wasm-tokenizer-component-cl100k` CI job invokes it explicitly
     # after pre-populating the vocab cache.
     "crates/stringcheese-tokenizer-component-cl100k",
+    # stringcheese-tokenizer-component-whisper is excluded for the same
+    # reason as its cl100k sibling: `parity-real-vocab` bakes real
+    # whisper tokenizer.json bytes into the compiled artifact and
+    # CLAUDE.md forbids committing those bytes.  The dedicated
+    # wasm-tokenizer-component-whisper CI job invokes it explicitly
+    # after populating the cache.
+    "crates/stringcheese-tokenizer-component-whisper",
 ]
 
 [workspace.package]
