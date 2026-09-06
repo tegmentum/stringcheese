@@ -3466,6 +3466,111 @@ impl UnigramTokenizer {
         Ok(ids)
     }
 
+    /// Same as [`Self::encode_regions`] but tracks each emitted id's
+    /// byte range in the CALLER-visible `text` (the argument passed
+    /// here, pre-normalization on the fast path).  Per-region offsets
+    /// come from [`Self::encode_piece_ids_with_offsets`]; each region
+    /// contributes offsets rebased by the region's own byte start in
+    /// `text`.
+    ///
+    /// # Metaspace / normalizer offset caveat
+    ///
+    /// The offsets reported are into the string the tokenizer's
+    /// FORWARD pipeline saw (the input to `encode_piece_ids`).  When
+    /// a Metaspace pre-tokenizer replaces ASCII spaces with `▁`
+    /// (U+2581, 3 bytes) the byte layout shifts, and so do the
+    /// reported offsets.  Downstream consumers that need offsets
+    /// into the ORIGINAL caller input must undo the same substitution
+    /// themselves; the raw offsets here are still useful as internal
+    /// bookkeeping (e.g. gliner's `words_mask_bio` derivation, which
+    /// only needs whitespace-anchor detection).
+    fn encode_regions_with_offsets(
+        &self,
+        text: &str,
+    ) -> Result<Vec<(usize, core::ops::Range<usize>)>, UnigramEncodeError> {
+        let mut out: Vec<(usize, core::ops::Range<usize>)> = Vec::new();
+        if let Some(seq) = &self.pre_tokenizer {
+            // Map source-text word ranges by scanning for each
+            // pre-tokenized piece.  Metaspace substitutes ASCII
+            // space → `▁` (3 bytes), so the piece bytes don't
+            // appear verbatim in `text`; strip a leading `▁`
+            // before searching so `▁Bill` matches `Bill` at the
+            // right position.
+            //
+            // The reported per-token offsets then land INSIDE
+            // each word's source-text byte range: subword k of
+            // a word getting M subwords covers a proportional
+            // slice of the word range.  Not per-subword byte-
+            // precise (that would require inverting Metaspace's
+            // substitution char-by-char), but gliner's
+            // `words_mask_bio` derivation only needs "does the
+            // first byte of the first-subword-of-word offset
+            // land on whitespace or word boundary?" — which
+            // this preserves.
+            let mut cursor = 0usize;
+            for piece in seq.apply(text) {
+                let piece_ids = self.encode_piece_ids_with_offsets(&piece)?;
+                if piece_ids.is_empty() {
+                    continue;
+                }
+                let n = piece_ids.len();
+                // Reconstruct source-space anchor for this piece.
+                // Strip a leading Metaspace `▁` (0x2581, 3 bytes) so
+                // the piece body matches the source text; the leading
+                // whitespace before the piece in source becomes the
+                // first byte of the word range so downstream
+                // whitespace-anchor checks fire.
+                let (piece_body, had_metaspace_prefix): (&str, bool) = if let Some(rest) =
+                    piece.strip_prefix('\u{2581}')
+                {
+                    (rest, true)
+                } else {
+                    (piece.as_str(), false)
+                };
+                let anchor = if piece_body.is_empty() {
+                    cursor
+                } else if let Some(pos) = text[cursor..].find(piece_body) {
+                    cursor + pos
+                } else {
+                    cursor
+                };
+                let word_start = if had_metaspace_prefix && anchor > 0 {
+                    // Include the leading whitespace byte in the
+                    // word range so a downstream whitespace-anchor
+                    // check on the first subword fires.
+                    anchor - 1
+                } else {
+                    anchor
+                };
+                let word_end = anchor + piece_body.len();
+                // Split the source word range across the piece's
+                // n subwords proportionally.
+                let word_len = word_end.saturating_sub(word_start);
+                if n == 1 || word_len <= n {
+                    let (id, _) = piece_ids[0];
+                    out.push((id, word_start..word_end));
+                    for (id, _) in piece_ids.into_iter().skip(1) {
+                        out.push((id, word_end..word_end));
+                    }
+                } else {
+                    let step = word_len / n;
+                    let mut c = word_start;
+                    let count = piece_ids.len();
+                    for (k, (id, _)) in piece_ids.into_iter().enumerate() {
+                        let next = if k + 1 == count { word_end } else { c + step };
+                        out.push((id, c..next));
+                        c = next;
+                    }
+                }
+                cursor = word_end;
+            }
+        } else {
+            let piece_ids = self.encode_piece_ids_with_offsets(text)?;
+            out.extend(piece_ids);
+        }
+        Ok(out)
+    }
+
     /// Decode a slice of Unigram token ids back into a string.
     ///
     /// Concatenates the surface string of each id in order and, when
@@ -3576,6 +3681,12 @@ impl UnigramTokenizer {
     ///
     /// This is the inner loop separated from [`Self::encode`] so the
     /// Metaspace-composed and non-composed paths share it.
+    ///
+    /// The offsets-emitting sibling
+    /// [`Self::encode_piece_ids_with_offsets`] shares this exact
+    /// forward pass + backtrack shape and additionally emits each
+    /// id's byte range in the input piece; when the caller only
+    /// needs ids, this variant skips the offset bookkeeping.
     fn encode_piece_ids(&self, input: &str) -> Result<Vec<usize>, UnigramEncodeError> {
         if input.is_empty() {
             return Ok(Vec::new());
@@ -3703,6 +3814,145 @@ impl UnigramTokenizer {
         Ok(ids)
     }
 
+    /// Same Viterbi + backtrack as [`Self::encode_piece_ids`],
+    /// but returns each emitted id paired with its byte range in
+    /// `input`.  The ranges are guaranteed to be:
+    ///
+    ///   * Non-overlapping and monotonically non-decreasing.
+    ///   * Contiguous within a piece — every byte of `input` is
+    ///     covered by exactly one range EXCEPT when the winning
+    ///     path fused consecutive `unk` ids (see below).
+    ///   * `Single(id)` transitions get the char span they matched:
+    ///     `input[boundaries[j]..boundaries[i]]`.
+    ///   * `Bytes { .. }` transitions (byte-fallback) collapse
+    ///     the four (or fewer) emitted byte-token ids onto the
+    ///     SAME char span — every byte-fallback subword under
+    ///     one character reports the character's full byte range.
+    ///     Downstream consumers that need per-byte offsets can
+    ///     re-derive them from the range length + emit order.
+    ///   * A fused `unk` run reports the byte range of the FIRST
+    ///     char in the run.  This matches SentencePiece's
+    ///     `fuse_unk = true` default: N consecutive unk chars
+    ///     collapse to one emitted id, so only one span can
+    ///     survive; naming the first-char span is a documented
+    ///     approximation.
+    ///
+    /// Called by [`Self::encode_regions_with_offsets`] which
+    /// composes per-region offsets into caller-space by adding
+    /// each region's origin offset.
+    fn encode_piece_ids_with_offsets(
+        &self,
+        input: &str,
+    ) -> Result<Vec<(usize, core::ops::Range<usize>)>, UnigramEncodeError> {
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut boundaries: Vec<usize> = input.char_indices().map(|(i, _)| i).collect();
+        boundaries.push(input.len());
+        let n = boundaries.len() - 1;
+
+        let mut best_score = alloc::vec![f64::NEG_INFINITY; n + 1];
+        let mut best_prev: Vec<(usize, UnigramTransition)> =
+            alloc::vec![(0, UnigramTransition::Single(0)); n + 1];
+        best_score[0] = 0.0;
+
+        for i in 1..=n {
+            for j in 0..i {
+                if !best_score[j].is_finite() {
+                    continue;
+                }
+                let piece = &input[boundaries[j]..boundaries[i]];
+                if let Some(&(id, score)) = self.lookup.get(piece) {
+                    let candidate = best_score[j] + score;
+                    if candidate > best_score[i] {
+                        best_score[i] = candidate;
+                        best_prev[i] = (j, UnigramTransition::Single(id));
+                    }
+                }
+            }
+            if !best_score[i].is_finite() && best_score[i - 1].is_finite() {
+                if let Some(bf) = &self.byte_fallback {
+                    let char_bytes = &input.as_bytes()[boundaries[i - 1]..boundaries[i]];
+                    let mut buf = [0usize; 4];
+                    let len = char_bytes.len();
+                    debug_assert!(len <= 4);
+                    for (k, &b) in char_bytes.iter().enumerate() {
+                        buf[k] = bf[b as usize];
+                    }
+                    best_score[i] = best_score[i - 1] - self.unk_penalty;
+                    best_prev[i] = (i - 1, UnigramTransition::Bytes { buf, len });
+                } else if let Some(u) = self.unk_id {
+                    let (_, unk_score) = self.vocab[u];
+                    let candidate = best_score[i - 1] + unk_score - self.unk_penalty;
+                    best_score[i] = candidate;
+                    best_prev[i] = (i - 1, UnigramTransition::Single(u));
+                }
+            }
+        }
+
+        if !best_score[n].is_finite() {
+            let mut char_offset = 0;
+            for k in 1..=n {
+                if !best_score[k].is_finite() && best_score[k - 1].is_finite() {
+                    char_offset = k - 1;
+                    break;
+                }
+            }
+            return Err(UnigramEncodeError::UntokenizableChar { char_offset });
+        }
+
+        // Backtrack with offsets.  Each transition (prev_pos → pos)
+        // spans char positions `prev_pos..pos`, which maps to bytes
+        // `boundaries[prev_pos]..boundaries[pos]`.  Fused-unk chunks
+        // are handled the same way `encode_piece_ids` does: consecutive
+        // unk ids collapse to one emitted id whose span is the byte
+        // range of the FIRST fused char.
+        let mut out: Vec<(usize, core::ops::Range<usize>)> = Vec::new();
+        let mut pos = n;
+        let mut prev_was_unk = false;
+        // When we're inside a fused-unk run we need to remember the
+        // BYTE range of the FIRST (earliest, i.e. lowest byte offset)
+        // fused character.  We're walking backwards so "first" is the
+        // most recent update — we can't know it until the fuse ends,
+        // so patch the last emitted (unk_id, range) in place.
+        while pos > 0 {
+            let (prev, trans) = &best_prev[pos];
+            let byte_range = boundaries[*prev]..boundaries[pos];
+            match trans {
+                UnigramTransition::Single(id) => {
+                    let is_unk = self.unk_id == Some(*id);
+                    if is_unk && prev_was_unk {
+                        // Fuse: extend the range of the most recent
+                        // emitted unk backwards to cover this char.
+                        if let Some(last) = out.last_mut() {
+                            // `last.1.end` should already equal
+                            // `byte_range.end + (chars_in_between)` from
+                            // the trailing emit; keep it, replace start.
+                            last.1.start = byte_range.start;
+                        }
+                    } else {
+                        out.push((*id, byte_range));
+                    }
+                    prev_was_unk = is_unk;
+                }
+                UnigramTransition::Bytes { buf, len } => {
+                    // Every byte-fallback subword under one char
+                    // reports the SAME char span — downstream
+                    // consumers can split further if they need
+                    // per-byte offsets.
+                    for k in (0..*len).rev() {
+                        out.push((buf[k], byte_range.clone()));
+                    }
+                    prev_was_unk = false;
+                }
+            }
+            pos = *prev;
+        }
+        out.reverse();
+        Ok(out)
+    }
+
     /// Reverse-lookup: if `id` is one of the 256 byte-fallback tokens,
     /// return its associated byte value. `None` when byte-fallback is
     /// disabled or `id` is a regular vocab entry.
@@ -3722,117 +3972,6 @@ impl UnigramTokenizer {
         }
         None
     }
-
-    /// Metaspace replacement character (typically `▁`, U+2581)
-    /// pulled from whichever stage of the configured
-    /// [`PreTokenizerSequence`] carries one, or `None` when the
-    /// tokenizer isn't Metaspace-based (in which case the
-    /// [`Self::reconstruct_offsets`] surface-length heuristic
-    /// doesn't apply).
-    fn metaspace_replacement(&self) -> Option<char> {
-        let seq = self.pre_tokenizer.as_ref()?;
-        for stage in seq.stages() {
-            if let crate::pre_tokenizer::PreTokenizer::Metaspace(m) = stage {
-                return Some(m.replacement);
-            }
-        }
-        None
-    }
-
-    /// Reconstruct per-token byte offsets in the caller-visible
-    /// input text by walking `text` alongside the vocab-surface
-    /// strings for each emitted id.
-    ///
-    /// # Algorithm
-    ///
-    /// For each id:
-    ///
-    ///   * Byte-fallback tokens (256 reserved `<0xXX>` ids)
-    ///     consume exactly one source byte.
-    ///   * The unk token consumes as many source bytes as remain
-    ///     before the next reachable vocab match — this method
-    ///     approximates by consuming one char at a time so the run
-    ///     of fused-unk ids at least maps monotonically.
-    ///   * Regular tokens' vocab surface strings map char-for-char
-    ///     to the source text with two adjustments:
-    ///       - a leading Metaspace replacement char in the surface
-    ///         marks a word-first subword; the source-text cursor
-    ///         advances past the preceding whitespace before the
-    ///         subword's byte range begins.  The offset.start
-    ///         points AT the leading whitespace byte (or 0 for the
-    ///         first word) — the anchor gliner's
-    ///         `words_mask_bio` derivation reads.
-    ///       - continuation subwords' surface bytes consume the
-    ///         next N source bytes verbatim.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if the pipeline diverges (a surface string
-    /// consumes more source bytes than remain, or an id lookup
-    /// fails).  In that case the caller falls back to empty
-    /// offsets — the invariant that `offsets.len() == ids.len()`
-    /// is preserved by NEVER returning a partial vec.
-    fn reconstruct_offsets(
-        &self,
-        text: &str,
-        ids: &[usize],
-        meta_char: char,
-    ) -> Result<Vec<core::ops::Range<usize>>, ()> {
-        let mut out: Vec<core::ops::Range<usize>> = Vec::with_capacity(ids.len());
-        let mut cursor = 0usize;
-        let text_bytes = text.as_bytes();
-        let meta_len = meta_char.len_utf8();
-        for &id in ids {
-            // Byte-fallback: one source byte per token.
-            if self.byte_fallback_byte_for(id).is_some() {
-                let end = (cursor + 1).min(text_bytes.len());
-                out.push(cursor..end);
-                cursor = end;
-                continue;
-            }
-            // Lookup surface string.  A vocab index out of range
-            // shouldn't happen for ids produced by encode() but
-            // hedge with a soft fail — every downstream consumer
-            // tolerates empty offsets better than a partial vec.
-            let (surface, _) = self.vocab.get(id).ok_or(())?;
-            let surface_bytes = surface.as_bytes();
-            // Detect the metaspace-prefixed word-first subword.
-            let (starts_word, content_bytes) =
-                if surface_bytes.starts_with(meta_char.to_string().as_bytes()) {
-                    (true, &surface_bytes[meta_len..])
-                } else {
-                    (false, surface_bytes)
-                };
-            if starts_word {
-                // Advance the cursor past any run of whitespace at
-                // the current position; the offset.start points
-                // AT the whitespace byte (or the current cursor
-                // if we're at the start of the text).
-                let word_anchor = cursor;
-                while cursor < text_bytes.len()
-                    && text_bytes[cursor].is_ascii_whitespace()
-                {
-                    cursor += 1;
-                }
-                // Consume `content_bytes.len()` source bytes for
-                // the subword; cap at the end of the input so a
-                // slight surface / source mismatch (unicode
-                // normalization delta, byte-level ambiguity)
-                // degrades gracefully.
-                let word_start = word_anchor;
-                let subword_end = (cursor + content_bytes.len()).min(text_bytes.len());
-                out.push(word_start..subword_end);
-                cursor = subword_end;
-            } else {
-                // Continuation subword: consume `surface_bytes.len()`
-                // source bytes from the current cursor.
-                let end = (cursor + content_bytes.len()).min(text_bytes.len());
-                out.push(cursor..end);
-                cursor = end;
-            }
-        }
-        Ok(out)
-    }
 }
 
 impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
@@ -3849,13 +3988,46 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
         // returns `Vec<usize>`; the trait's `Encoding<TokenId>` uses
         // `u32`. Cast at the boundary — every id from a real
         // SentencePiece vocab fits.
-        let raw = Self::encode(self, text).map_err(|e| {
-            stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
-        })?;
+        //
+        // Offset threading: run the offset-emitting sibling
+        // `encode_regions_with_offsets` when the specials-slow-path
+        // isn't required (i.e. no `special_tokens` registered on the
+        // tokenizer OR the input carries no special surfaces).  When
+        // the slow path IS required, fall back to the ids-only path
+        // — the specials extraction rewrites byte ranges in a way
+        // that would need parallel offset bookkeeping.  A caller
+        // depending on offsets on a tokenizer with registered
+        // specials gets an empty offsets vec on the specials-hit
+        // path, honoring the WIT contract's "empty when not
+        // tracked".
+        let (raw_ids, raw_offsets) = if self.special_tokens.is_empty() {
+            let normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer {
+                Some(n) => alloc::borrow::Cow::Owned(crate::normalizer::normalize(text, n)),
+                None => alloc::borrow::Cow::Borrowed(text),
+            };
+            let paired = self
+                .encode_regions_with_offsets(normalized.as_ref())
+                .map_err(|e| {
+                    stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+                })?;
+            let mut ids = Vec::with_capacity(paired.len());
+            let mut offsets = Vec::with_capacity(paired.len());
+            for (id, range) in paired {
+                ids.push(id);
+                offsets.push(range);
+            }
+            (ids, offsets)
+        } else {
+            let ids = Self::encode(self, text).map_err(|e| {
+                stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
+            })?;
+            (ids, Vec::new())
+        };
+
         let mut enc: stringcheese_tokenizer::Encoding<TokenId> =
             stringcheese_tokenizer::Encoding::new();
-        enc.ids.reserve(raw.len());
-        for id in &raw {
+        enc.ids.reserve(raw_ids.len());
+        for id in &raw_ids {
             let tid = TokenId::try_from(*id).map_err(|_| {
                 stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!(
                     "Unigram id {id} does not fit in TokenId (u32)"
@@ -3863,33 +4035,7 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
             })?;
             enc.ids.push(tid);
         }
-
-        // Per-token byte offsets in the caller-visible input text.
-        // The Viterbi encode pipeline doesn't natively track them
-        // (encode_piece_ids returns bare ids), so reconstruct via a
-        // source-text walk that consumes vocab-surface bytes:
-        //
-        //   * If the pre-tokenizer chain contains a Metaspace stage,
-        //     use its replacement char (typically `▁`) to detect
-        //     word-first subwords in the vocab surface — they carry
-        //     the metaspace marker; every other subword is a
-        //     continuation.  A word-first subword starts on the
-        //     whitespace preceding its word in the source (or byte 0
-        //     for the first word); a continuation consumes the next
-        //     `surface_len` source bytes.
-        //
-        //   * Without a Metaspace stage, offsets stay empty — the
-        //     surface-length heuristic is unreliable across the
-        //     BPE / WordPiece / GPT-family variants that either
-        //     round-trip through byte-level markers or track offsets
-        //     natively.  Downstream consumers on those tokenizers
-        //     already have working offsets via their own trait impls.
-        if let Some(meta_char) = self.metaspace_replacement() {
-            if let Ok(offsets) = self.reconstruct_offsets(text, &raw, meta_char) {
-                enc.offsets = offsets;
-            }
-        }
-
+        enc.offsets = raw_offsets;
         // Fast-path the identity post-processor to avoid an extra
         // clone on the common no-post-processor path.
         let mut out = if matches!(self.post_processor, PostProcessor::None) {
