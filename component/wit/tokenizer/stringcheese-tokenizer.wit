@@ -203,7 +203,59 @@ interface tokenizer {
 /// `vocabulary-mismatch`; a UTF-8 problem in the input as
 /// `invalid-utf8`; anything else as `other(msg)`.
 interface tokenizer-source {
-    use tokenizer.{token-id, range, encoding, tokenizer-error, capabilities};
+    /// The four scalar types + one variant are DUPLICATED from the
+    /// sibling `tokenizer` interface rather than pulled in via
+    /// `use tokenizer.{…}`.  The `use` form would emit a
+    /// component-model type-only import that `wac plug` cannot
+    /// eliminate during composition — the composed downstream
+    /// would still declare an unresolved import for the free-
+    /// function `tokenizer` interface that nothing satisfies at
+    /// runtime.  Inlined types are self-contained: the runtime-
+    /// bytes satisfier composes clean without dragging the baked-
+    /// pack interface's shadow along.
+    ///
+    /// The types are byte-shape-identical to the sibling interface's
+    /// (same field names, same primitive types, same variant cases),
+    /// so a satisfier can back both interfaces from the same
+    /// underlying `tokenizers::Tokenizer` with a trivial per-type
+    /// conversion at the WIT boundary.
+
+    /// Vocabulary index. Same shape as `tokenizer.token-id`.
+    type token-id = u32;
+
+    /// Half-open byte range. Same shape as `tokenizer.range`.
+    record range {
+        start: u32,
+        end: u32,
+    }
+
+    /// Same shape as `tokenizer.encoding`.
+    record encoding {
+        ids: list<token-id>,
+        offsets: list<range>,
+        special-mask: list<bool>,
+        type-ids: list<u32>,
+        attention-mask: list<bool>,
+    }
+
+    /// Same shape as `tokenizer.tokenizer-error`.
+    variant tokenizer-error {
+        invalid-utf8,
+        unknown-token(string),
+        disallowed-special-token(string),
+        vocabulary-mismatch,
+        other(string),
+    }
+
+    /// Same shape as `tokenizer.capabilities`.
+    record capabilities {
+        model-type: string,
+        variant-id: string,
+        version: string,
+        vocab-size: u32,
+        has-byte-fallback: bool,
+        has-special-tokens: bool,
+    }
 
     /// A live tokenizer instance. Cheap to construct (parses the
     /// tokenizer.json once) but callers should cache it for the
