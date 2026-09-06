@@ -16,6 +16,28 @@
 // (why `list<u32>` for the special mask instead of `list<bool>`, why
 // byte offsets rather than character offsets, why `get-capabilities` is
 // exposed as a function rather than a static record).
+//
+// ## Two provider shapes
+//
+// The `tokenizer` interface below carries the ORIGINAL free-function
+// shape (get-capabilities / encode / decode / count) — the "baked
+// pack" pattern where a stringcheese-tokenizer-component-* wasm ships
+// with tokenizer.json bytes embedded at build time. One pack per
+// model (T5, whisper, cl100k, …); the guest never sees vocabulary
+// bytes at runtime.
+//
+// The `tokenizer-source` interface added alongside carries a
+// resource-based shape (from-json / from-bytes constructors + method-
+// shaped encode/decode/count/get-capabilities) — the "runtime bytes"
+// pattern where ONE shared provider component satisfies every
+// consumer, and each consumer's guest hands the provider a
+// tokenizer.json blob it fetched from a metadata seam. Same
+// underlying `tokenizers`-crate machinery in both cases; different
+// composition rules.
+//
+// Both interfaces live in the same package so a downstream world can
+// pick whichever shape fits the workload's ownership model without
+// picking up a second package dep.
 
 package tegmentum:tokenizer@0.1.0;
 
@@ -141,10 +163,88 @@ interface tokenizer {
     count: func(text: string) -> result<u32, tokenizer-error>;
 }
 
+/// Runtime-bytes tokenizer provider shape.
+///
+/// The `tokenizer` interface above serves the BAKED-PACK model
+/// (stringcheese-tokenizer-component-{t5,whisper,cl100k}, one
+/// component per model, vocabulary embedded at build time). This
+/// interface serves the RUNTIME-BYTES model: one shared provider
+/// component handles every consumer, each consumer's guest passes a
+/// tokenizer.json blob (or its raw bytes) via `from-json` /
+/// `from-bytes` and holds a `tokenizer-handle` resource for the
+/// duration of the work.
+///
+/// The two shapes are strictly parallel — same `encoding` / `range`
+/// / `capabilities` / `tokenizer-error` types (imported from the
+/// sibling interface via `use`), same four verbs (get-capabilities /
+/// encode / decode / count) — so a satisfier can back both from one
+/// underlying `tokenizers::Tokenizer` and a consumer can migrate
+/// between shapes without diffing its business logic.
+///
+/// The resource is named `tokenizer-handle` (rather than the more
+/// natural `tokenizer`) to avoid a WIT name collision with the
+/// sibling interface's identifier.
+///
+/// # Two constructors
+///
+/// * `from-json` takes the tokenizer.json as a UTF-8 string. Preferred
+///   when the caller already has the blob decoded as text (metadata
+///   seams typically hand back strings).
+///
+/// * `from-bytes` takes the raw file bytes. Preferred when the caller
+///   is streaming from disk / a component-model asset (skips a UTF-8
+///   validate + string copy).
+///
+/// # Errors
+///
+/// The constructors return `tokenizer-error` (not a bare string) so a
+/// caller can dispatch on failure class the same way it would on
+/// `encode` / `decode`. A malformed tokenizer.json surfaces as
+/// `vocabulary-mismatch`; a UTF-8 problem in the input as
+/// `invalid-utf8`; anything else as `other(msg)`.
+interface tokenizer-source {
+    use tokenizer.{token-id, range, encoding, tokenizer-error, capabilities};
+
+    /// A live tokenizer instance. Cheap to construct (parses the
+    /// tokenizer.json once) but callers should cache it for the
+    /// lifetime of the work — the underlying `tokenizers::Tokenizer`
+    /// allocates vocab tables in the megabyte range.
+    resource tokenizer-handle {
+        /// Construct from a UTF-8 tokenizer.json blob.
+        from-json: static func(json: string) -> result<tokenizer-handle, tokenizer-error>;
+
+        /// Construct from raw tokenizer.json bytes.
+        from-bytes: static func(bytes: list<u8>) -> result<tokenizer-handle, tokenizer-error>;
+
+        /// Same semantics as `tokenizer.get-capabilities`.
+        get-capabilities: func() -> capabilities;
+
+        /// Same semantics as `tokenizer.encode`.
+        encode: func(text: string) -> result<encoding, tokenizer-error>;
+
+        /// Same semantics as `tokenizer.decode`.
+        decode: func(ids: list<token-id>) -> result<string, tokenizer-error>;
+
+        /// Same semantics as `tokenizer.count`.
+        count: func(text: string) -> result<u32, tokenizer-error>;
+    }
+}
+
 /// The reference tokenizer-provider world. Exports the single
 /// `tokenizer` interface and nothing else — no imports from the host,
 /// no I/O, no clocks. The resulting `.wasm` component is a pure
 /// library.
 world tokenizer-provider {
     export tokenizer;
+}
+
+/// The runtime-bytes tokenizer-provider world. Exports the
+/// resource-based `tokenizer-source` interface — same "pure library"
+/// posture as `tokenizer-provider`, no host imports.
+///
+/// Consumers plug this world's satisfier when they need to hand the
+/// provider a tokenizer.json blob at runtime rather than compose
+/// against a baked pack.
+world tokenizer-source-provider {
+    export tokenizer-source;
 }
