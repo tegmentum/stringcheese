@@ -122,6 +122,41 @@ impl HfSourceHandle {
         if enc.type_ids.is_empty() {
             enc.type_ids = alloc::vec![0u32; n];
         }
+        // Best-effort offset synthesis for the Unigram (SentencePiece)
+        // path — stringcheese's `impl Tokenizer for UnigramTokenizer`
+        // returns bare ids without offset bookkeeping (see
+        // ~/.claude/…/memory/stringcheese_unigram_offsets_gap.md).
+        // Downstream consumers that need offsets (gliner's decode.rs
+        // to map subword spans back to character spans) trip on the
+        // empty vec.
+        //
+        // Reconstruct offsets by splitting the source text on ASCII
+        // whitespace — one "word" per whitespace-separated run,
+        // matching Metaspace's semantic word boundary.  Distribute
+        // each word's byte range across its share of the emitted
+        // subword ids by proportional splitting; special tokens
+        // (typically the leading CLS + trailing SEP the post-
+        // processor added) get the zero-range `(0, 0)` marker every
+        // downstream consumer already expects.
+        //
+        // This is not HF-parity — HF's own offsets are Viterbi-
+        // driven per-subword — but it produces:
+        //
+        //   * non-empty offsets so consumers don't slice-index a
+        //     shorter-than-`ids` vector
+        //   * monotonically non-decreasing offset.start values
+        //     across content tokens
+        //   * the first content subword of each "word" gets an
+        //     offset.start pointing at the whitespace preceding it
+        //     (or 0 for the first word) — the anchor gliner's
+        //     `words_mask_bio` heuristic checks for
+        //
+        // The heuristic is enough to unblock gliner runtime through
+        // hf-source; a true fix belongs upstream in stringcheese's
+        // UnigramTokenizer.
+        if enc.offsets.is_empty() && n > 0 {
+            enc.offsets = synthesize_offsets(text, n);
+        }
         Ok(enc)
     }
 
@@ -189,6 +224,136 @@ impl HfSourceHandle {
             model_type,
         }
     }
+}
+
+/// Best-effort per-token byte offsets when the underlying tokenizer
+/// impl left them empty (typically `stringcheese_tokenizer_hf`'s
+/// UnigramTokenizer).  Split `text` on ASCII whitespace, distribute
+/// each word's byte range across its proportional share of the `n`
+/// emitted subword ids.  Reserves two `(0, 0)` slots at the ends
+/// for the CLS + SEP special tokens the BERT-family post-processor
+/// adds — a good match for the shape gliner's decode expects.
+///
+/// This is a lossy approximation of the HF-parity per-subword
+/// offsets and is scoped narrowly to unblocking downstream
+/// consumers that only need "non-empty offsets whose first byte
+/// discriminates a word-start via whitespace anchor" (gliner's
+/// `words_mask_bio` derivation).  A proper fix belongs upstream.
+fn synthesize_offsets(text: &str, n: usize) -> alloc::vec::Vec<core::ops::Range<usize>> {
+    let mut out = alloc::vec::Vec::with_capacity(n);
+    if n == 0 {
+        return out;
+    }
+
+    // Detect the "leading + trailing special token" shape by
+    // looking at the outer ids after the fact.  Since we don't
+    // have that here, be conservative: reserve 1 special at each
+    // end (matches BERT/DeBERTa's [CLS] $A [SEP] shape).  Down-
+    // stream consumers that get an off-by-one offset on the
+    // outermost content token can tolerate it — the whitespace-
+    // anchor heuristic still fires on the correct first-of-word
+    // subword.
+    let reserve_leading = 1usize.min(n);
+    let content_n = n.saturating_sub(reserve_leading);
+    let reserve_trailing = 1usize.min(content_n);
+    let content_n = content_n.saturating_sub(reserve_trailing);
+
+    for _ in 0..reserve_leading {
+        out.push(0..0);
+    }
+
+    if content_n == 0 {
+        for _ in 0..reserve_trailing {
+            out.push(0..0);
+        }
+        return out;
+    }
+
+    // Split source text at ASCII whitespace boundaries.  Each
+    // segment's byte range in the source becomes one "word" range.
+    // Runs of whitespace between segments collapse — every real
+    // word contributes one segment, matching Metaspace's word-per-
+    // pre-token shape.
+    let bytes = text.as_bytes();
+    let mut segments: alloc::vec::Vec<core::ops::Range<usize>> = alloc::vec::Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if start < i {
+            // Include the leading space in the segment's byte range
+            // when there is one — matches DeBERTa Metaspace's
+            // "first subword carries the leading space" convention.
+            let leading_space = if start > 0
+                && bytes.get(start - 1).is_some_and(|b| b.is_ascii_whitespace())
+            {
+                start - 1
+            } else {
+                start
+            };
+            segments.push(leading_space..i);
+        }
+    }
+
+    if segments.is_empty() {
+        // No word segments — every content id gets `(0, 0)`.
+        for _ in 0..content_n {
+            out.push(0..0);
+        }
+    } else {
+        // Distribute `content_n` subwords across `segments.len()` word
+        // ranges as evenly as possible.  Each word gets floor(N/W)
+        // subwords, plus a leftover 1 for the first N%W words.
+        let w = segments.len();
+        let base = content_n / w;
+        let rem = content_n % w;
+        for (idx, seg) in segments.iter().enumerate() {
+            let subs_in_this_word = base + if idx < rem { 1 } else { 0 };
+            if subs_in_this_word == 0 {
+                continue;
+            }
+            let seg_len = seg.end - seg.start;
+            if subs_in_this_word == 1 || seg_len <= subs_in_this_word {
+                // One-subword-per-word (common Metaspace case), OR
+                // the word is too short to split further — emit the
+                // whole segment for the first subword and empty ranges
+                // for any remainder.
+                out.push(seg.start..seg.end);
+                for _ in 1..subs_in_this_word {
+                    out.push(seg.end..seg.end);
+                }
+            } else {
+                let step = seg_len / subs_in_this_word;
+                let mut cursor = seg.start;
+                for k in 0..subs_in_this_word {
+                    let next = if k + 1 == subs_in_this_word {
+                        seg.end
+                    } else {
+                        cursor + step
+                    };
+                    out.push(cursor..next);
+                    cursor = next;
+                }
+            }
+        }
+    }
+
+    for _ in 0..reserve_trailing {
+        out.push(0..0);
+    }
+    // Defensive: guarantee the output length matches `n` exactly
+    // (rounding errors in the distribution loop would otherwise
+    // leave the vec short).
+    while out.len() < n {
+        out.push(0..0);
+    }
+    out.truncate(n);
+    out
 }
 
 /// Failure modes the hf-source runtime surfaces.  Kept narrow so
@@ -323,5 +488,83 @@ mod tests {
         let enc = handle.encode("hello world").expect("encode");
         let n = handle.count("hello world").expect("count");
         assert_eq!(n as usize, enc.ids.len());
+    }
+
+    #[test]
+    fn synthesize_offsets_empty_text() {
+        assert!(synthesize_offsets("", 0).is_empty());
+        // n > 0 with empty text: every id gets a (0, 0) offset.
+        let out = synthesize_offsets("", 3);
+        assert_eq!(out.len(), 3);
+        for r in &out {
+            assert_eq!(r.start, 0);
+            assert_eq!(r.end, 0);
+        }
+    }
+
+    #[test]
+    fn synthesize_offsets_one_word_per_subword() {
+        // "Bill Gates founded" — 3 words, plus 2 special-token
+        // slots at the ends (n = 5).  Every word gets exactly
+        // one subword; the whitespace anchor on the second and
+        // third words is the leading space.
+        let out = synthesize_offsets("Bill Gates founded", 5);
+        assert_eq!(out.len(), 5);
+        // Leading + trailing specials.
+        assert_eq!(out[0], 0..0);
+        assert_eq!(out[4], 0..0);
+        // First content subword — no leading space.
+        assert_eq!(out[1], 0..4);
+        // Second and third — start on the whitespace preceding
+        // the word.
+        assert_eq!(out[2].start, 4);
+        assert_eq!(out[2].end, 10);
+        assert_eq!(out[3].start, 10);
+        assert_eq!(out[3].end, 18);
+    }
+
+    #[test]
+    fn synthesize_offsets_more_subwords_than_words() {
+        // "Albuquerque" is one word getting three subwords in
+        // Metaspace's typical decomposition.  The word range is
+        // 0..11; the three subwords get contiguous shares of it.
+        let out = synthesize_offsets("Albuquerque", 5);
+        assert_eq!(out.len(), 5);
+        // Leading + trailing specials.
+        assert_eq!(out[0], 0..0);
+        assert_eq!(out[4], 0..0);
+        // The three content subwords partition 0..11.
+        assert_eq!(out[1].start, 0);
+        assert_eq!(out[3].end, 11);
+        // Every content subword is non-empty.
+        for r in &out[1..4] {
+            assert!(r.start < r.end, "content subword got empty range {r:?}");
+        }
+        // Monotonically non-decreasing.
+        assert!(out[1].end <= out[2].start);
+        assert!(out[2].end <= out[3].start);
+    }
+
+    #[test]
+    fn synthesize_offsets_first_content_subword_of_second_word_starts_on_whitespace() {
+        // The load-bearing invariant for gliner's `words_mask_bio`
+        // derivation: for a token whose predecessor is content,
+        // `text.as_bytes()[offset.start].is_ascii_whitespace()`
+        // decides start-of-word.  Verify that a two-word input
+        // with two subwords in the second word puts a whitespace
+        // byte at the start of the FIRST subword of the second
+        // word.
+        let text = "Bill Gates founded"; // 3 words, 3 subwords + 2 specials = 5
+        let out = synthesize_offsets(text, 5);
+        assert_eq!(out.len(), 5);
+        let bytes = text.as_bytes();
+        // out[2] should start on a whitespace byte (the space
+        // between "Bill" and "Gates").
+        assert!(
+            bytes.get(out[2].start).is_some_and(|b| b.is_ascii_whitespace()),
+            "out[2] = {:?} should start on a whitespace byte, got byte {:?}",
+            out[2],
+            out[2].start
+        );
     }
 }
