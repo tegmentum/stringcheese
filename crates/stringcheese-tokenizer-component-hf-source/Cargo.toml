@@ -1,0 +1,57 @@
+# Standalone workspace, same posture as
+# stringcheese-tokenizer-component-t5 / -whisper — excluded from the
+# top-level workspace so `cargo test --all-features` at the
+# repo-tree root does not attempt a wasm-target build.
+[workspace]
+
+[package]
+name = "stringcheese-tokenizer-component-hf-source"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+authors = ["Zachary Whitley <zachary.whitley@tegmentum.ai>"]
+repository = "https://github.com/tegmentum/cheese"
+description = "Runtime-bytes packaging of the tegmentum:tokenizer/tokenizer-source@0.1.0 WIT component.  Sibling of stringcheese-tokenizer-component-{t5,whisper,cl100k}: instead of baking a specific model's tokenizer.json into the compiled artifact, exports the resource-based tokenizer-source interface whose from-json / from-bytes constructors take a tokenizer.json blob at runtime.  One shared component satisfies every consumer that needs a runtime-supplied HuggingFace vocabulary (embed / embed-e5 / gliner today; any future BERT / RoBERTa / DeBERTa / SentencePiece / GPT-family workload as they arrive)."
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# WIT `Guest` impl + component export.  Off by default so
+# `cargo check` on the host stays cheap; the wasm target build
+# always turns it on.
+wit-component = ["dep:wit-bindgen-rt"]
+
+[dependencies]
+# Runtime tokenizer machinery.  Same shared crate every other
+# stringcheese-tokenizer-component-* pack uses — this pack simply
+# dispatches on `HfTokenizer` at runtime instead of pre-selecting
+# one variant at build time.
+stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features = false, features = ["std"] }
+stringcheese-tokenizer-hf = { path = "../stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+
+[dev-dependencies]
+# Host-side WIT-parses gate — same as every other pack.
+wit-parser = "0.230"
+
+[lints]
+rust.missing_docs = "warn"
+rust.unsafe_op_in_unsafe_fn = "deny"
+clippy.pedantic = { level = "warn", priority = -1 }
+clippy.module_name_repetitions = "allow"
+clippy.missing_errors_doc = "allow"
+clippy.must_use_candidate = "allow"
+clippy.collapsible_if = "allow"
+
+[package.metadata.component]
+package = "tegmentum:stringcheese-tokenizer-component-hf-source"
+
+[package.metadata.component.target]
+path = "../../component/wit/tokenizer"
+world = "tokenizer-source-provider"
