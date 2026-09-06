@@ -10,12 +10,9 @@
 //! exercise.
 
 use crate::bindings::exports::tegmentum::tokenizer::tokenizer_source::{
-    Capabilities, Encoding, Guest, GuestTokenizerHandle, TokenId, TokenizerError, TokenizerHandle,
+    Capabilities, Encoding, Guest, GuestTokenizerHandle, Range, TokenId, TokenizerError,
+    TokenizerHandle,
 };
-// `range` isn't re-exported into `tokenizer-source` — the interface
-// pulls it in via `use tokenizer.{range}` so it lives on the sibling
-// `tokenizer` interface's namespace.
-use crate::bindings::tegmentum::tokenizer::tokenizer::Range;
 use crate::runtime::{HfSourceError, HfSourceHandle};
 
 /// The world's only export: a guest-owned tokenizer-handle
