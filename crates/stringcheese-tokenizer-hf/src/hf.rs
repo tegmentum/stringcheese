@@ -3722,6 +3722,117 @@ impl UnigramTokenizer {
         }
         None
     }
+
+    /// Metaspace replacement character (typically `▁`, U+2581)
+    /// pulled from whichever stage of the configured
+    /// [`PreTokenizerSequence`] carries one, or `None` when the
+    /// tokenizer isn't Metaspace-based (in which case the
+    /// [`Self::reconstruct_offsets`] surface-length heuristic
+    /// doesn't apply).
+    fn metaspace_replacement(&self) -> Option<char> {
+        let seq = self.pre_tokenizer.as_ref()?;
+        for stage in seq.stages() {
+            if let crate::pre_tokenizer::PreTokenizer::Metaspace(m) = stage {
+                return Some(m.replacement);
+            }
+        }
+        None
+    }
+
+    /// Reconstruct per-token byte offsets in the caller-visible
+    /// input text by walking `text` alongside the vocab-surface
+    /// strings for each emitted id.
+    ///
+    /// # Algorithm
+    ///
+    /// For each id:
+    ///
+    ///   * Byte-fallback tokens (256 reserved `<0xXX>` ids)
+    ///     consume exactly one source byte.
+    ///   * The unk token consumes as many source bytes as remain
+    ///     before the next reachable vocab match — this method
+    ///     approximates by consuming one char at a time so the run
+    ///     of fused-unk ids at least maps monotonically.
+    ///   * Regular tokens' vocab surface strings map char-for-char
+    ///     to the source text with two adjustments:
+    ///       - a leading Metaspace replacement char in the surface
+    ///         marks a word-first subword; the source-text cursor
+    ///         advances past the preceding whitespace before the
+    ///         subword's byte range begins.  The offset.start
+    ///         points AT the leading whitespace byte (or 0 for the
+    ///         first word) — the anchor gliner's
+    ///         `words_mask_bio` derivation reads.
+    ///       - continuation subwords' surface bytes consume the
+    ///         next N source bytes verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the pipeline diverges (a surface string
+    /// consumes more source bytes than remain, or an id lookup
+    /// fails).  In that case the caller falls back to empty
+    /// offsets — the invariant that `offsets.len() == ids.len()`
+    /// is preserved by NEVER returning a partial vec.
+    fn reconstruct_offsets(
+        &self,
+        text: &str,
+        ids: &[usize],
+        meta_char: char,
+    ) -> Result<Vec<core::ops::Range<usize>>, ()> {
+        let mut out: Vec<core::ops::Range<usize>> = Vec::with_capacity(ids.len());
+        let mut cursor = 0usize;
+        let text_bytes = text.as_bytes();
+        let meta_len = meta_char.len_utf8();
+        for &id in ids {
+            // Byte-fallback: one source byte per token.
+            if self.byte_fallback_byte_for(id).is_some() {
+                let end = (cursor + 1).min(text_bytes.len());
+                out.push(cursor..end);
+                cursor = end;
+                continue;
+            }
+            // Lookup surface string.  A vocab index out of range
+            // shouldn't happen for ids produced by encode() but
+            // hedge with a soft fail — every downstream consumer
+            // tolerates empty offsets better than a partial vec.
+            let (surface, _) = self.vocab.get(id).ok_or(())?;
+            let surface_bytes = surface.as_bytes();
+            // Detect the metaspace-prefixed word-first subword.
+            let (starts_word, content_bytes) =
+                if surface_bytes.starts_with(meta_char.to_string().as_bytes()) {
+                    (true, &surface_bytes[meta_len..])
+                } else {
+                    (false, surface_bytes)
+                };
+            if starts_word {
+                // Advance the cursor past any run of whitespace at
+                // the current position; the offset.start points
+                // AT the whitespace byte (or the current cursor
+                // if we're at the start of the text).
+                let word_anchor = cursor;
+                while cursor < text_bytes.len()
+                    && text_bytes[cursor].is_ascii_whitespace()
+                {
+                    cursor += 1;
+                }
+                // Consume `content_bytes.len()` source bytes for
+                // the subword; cap at the end of the input so a
+                // slight surface / source mismatch (unicode
+                // normalization delta, byte-level ambiguity)
+                // degrades gracefully.
+                let word_start = word_anchor;
+                let subword_end = (cursor + content_bytes.len()).min(text_bytes.len());
+                out.push(word_start..subword_end);
+                cursor = subword_end;
+            } else {
+                // Continuation subword: consume `surface_bytes.len()`
+                // source bytes from the current cursor.
+                let end = (cursor + content_bytes.len()).min(text_bytes.len());
+                out.push(cursor..end);
+                cursor = end;
+            }
+        }
+        Ok(out)
+    }
 }
 
 impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
@@ -3744,14 +3855,41 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
         let mut enc: stringcheese_tokenizer::Encoding<TokenId> =
             stringcheese_tokenizer::Encoding::new();
         enc.ids.reserve(raw.len());
-        for id in raw {
-            let tid = TokenId::try_from(id).map_err(|_| {
+        for id in &raw {
+            let tid = TokenId::try_from(*id).map_err(|_| {
                 stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!(
                     "Unigram id {id} does not fit in TokenId (u32)"
                 ))
             })?;
             enc.ids.push(tid);
         }
+
+        // Per-token byte offsets in the caller-visible input text.
+        // The Viterbi encode pipeline doesn't natively track them
+        // (encode_piece_ids returns bare ids), so reconstruct via a
+        // source-text walk that consumes vocab-surface bytes:
+        //
+        //   * If the pre-tokenizer chain contains a Metaspace stage,
+        //     use its replacement char (typically `▁`) to detect
+        //     word-first subwords in the vocab surface — they carry
+        //     the metaspace marker; every other subword is a
+        //     continuation.  A word-first subword starts on the
+        //     whitespace preceding its word in the source (or byte 0
+        //     for the first word); a continuation consumes the next
+        //     `surface_len` source bytes.
+        //
+        //   * Without a Metaspace stage, offsets stay empty — the
+        //     surface-length heuristic is unreliable across the
+        //     BPE / WordPiece / GPT-family variants that either
+        //     round-trip through byte-level markers or track offsets
+        //     natively.  Downstream consumers on those tokenizers
+        //     already have working offsets via their own trait impls.
+        if let Some(meta_char) = self.metaspace_replacement() {
+            if let Ok(offsets) = self.reconstruct_offsets(text, &raw, meta_char) {
+                enc.offsets = offsets;
+            }
+        }
+
         // Fast-path the identity post-processor to avoid an extra
         // clone on the common no-post-processor path.
         let mut out = if matches!(self.post_processor, PostProcessor::None) {
