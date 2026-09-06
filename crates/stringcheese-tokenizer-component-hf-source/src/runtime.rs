@@ -85,7 +85,7 @@ impl HfSourceHandle {
         use stringcheese_tokenizer_hf::wordpiece::WordPieceTokenizer;
         use stringcheese_tokenizer_hf::BpeTokenizer;
         use stringcheese_tokenizer_hf::hf::UnigramTokenizer;
-        match &self.inner {
+        let mut enc = match &self.inner {
             HfTokenizer::Bpe(t) => <BpeTokenizer as TokTrait>::encode(t.as_ref(), text),
             HfTokenizer::WordPiece(t) => <WordPieceTokenizer as TokTrait>::encode(t, text),
             HfTokenizer::Unigram(t) => <UnigramTokenizer as TokTrait>::encode(t, text),
@@ -96,7 +96,33 @@ impl HfSourceHandle {
                 )))
             }
         }
-        .map_err(HfSourceError::encode)
+        .map_err(HfSourceError::encode)?;
+        // Per-token side-arrays are documented as "empty when not
+        // tracked", but downstream consumers (embed-e5, embed, gliner)
+        // slice-index them alongside `ids` and panic on empty.  Fill
+        // the two universally-required arrays with the trivial
+        // single-sentence-no-padding defaults so a caller can rely on
+        // them:
+        //
+        //   * `attention_mask` — all `true` (no padding at encode
+        //     boundary; pad-batch is where padding is later applied)
+        //   * `type_ids` — all `0` (single sentence encode; segment 1
+        //     only appears on the `encode_pair` path this WIT does
+        //     not expose)
+        //
+        // `special_mask` and `offsets` are left as whatever the
+        // tokenizer populated — a BERT/WordPiece tokenizer produces
+        // both; a bare Unigram/BPE without an offset-tracker leaves
+        // both empty, and consumers that need them fall back to the
+        // empty-vec contract.
+        let n = enc.ids.len();
+        if enc.attention_mask.is_empty() {
+            enc.attention_mask = alloc::vec![true; n];
+        }
+        if enc.type_ids.is_empty() {
+            enc.type_ids = alloc::vec![0u32; n];
+        }
+        Ok(enc)
     }
 
     /// Decode `ids` back to text.
