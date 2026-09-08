@@ -3492,34 +3492,33 @@ impl UnigramTokenizer {
         if let Some(seq) = &self.pre_tokenizer {
             // Map source-text word ranges by scanning for each
             // pre-tokenized piece.  Metaspace substitutes ASCII
-            // space → `▁` (3 bytes), so the piece bytes don't
-            // appear verbatim in `text`; strip a leading `▁`
-            // before searching so `▁Bill` matches `Bill` at the
-            // right position.
+            // space → `▁` (0x2581, 3 bytes), so the piece bytes
+            // don't appear verbatim in `text`; strip a leading
+            // `▁` before searching so `▁Bill` matches `Bill` at
+            // the right position.
             //
-            // The reported per-token offsets then land INSIDE
-            // each word's source-text byte range: subword k of
-            // a word getting M subwords covers a proportional
-            // slice of the word range.  Not per-subword byte-
-            // precise (that would require inverting Metaspace's
-            // substitution char-by-char), but gliner's
-            // `words_mask_bio` derivation only needs "does the
-            // first byte of the first-subword-of-word offset
-            // land on whitespace or word boundary?" — which
-            // this preserves.
+            // For per-subword offsets we take the Viterbi-precise
+            // piece-relative ranges from
+            // `encode_piece_ids_with_offsets` and translate them
+            // from piece-space to source-space.  With one leading
+            // Metaspace `▁` (3 piece bytes) mapping to at most one
+            // source whitespace byte, the translation is a fixed
+            // shift past the prefix: piece byte 0 → the leading
+            // whitespace (or word start if there is none); piece
+            // bytes ≥ 3 → `anchor + (piece_byte - 3)`.  Pieces
+            // without a `▁` prefix pass through as `anchor + p`.
             let mut cursor = 0usize;
             for piece in seq.apply(text) {
                 let piece_ids = self.encode_piece_ids_with_offsets(&piece)?;
                 if piece_ids.is_empty() {
                     continue;
                 }
-                let n = piece_ids.len();
                 // Reconstruct source-space anchor for this piece.
                 // Strip a leading Metaspace `▁` (0x2581, 3 bytes) so
                 // the piece body matches the source text; the leading
                 // whitespace before the piece in source becomes the
-                // first byte of the word range so downstream
-                // whitespace-anchor checks fire.
+                // first byte of the first subword's range so
+                // downstream whitespace-anchor checks fire.
                 let (piece_body, had_metaspace_prefix): (&str, bool) = if let Some(rest) =
                     piece.strip_prefix('\u{2581}')
                 {
@@ -3534,33 +3533,35 @@ impl UnigramTokenizer {
                 } else {
                     cursor
                 };
-                let word_start = if had_metaspace_prefix && anchor > 0 {
-                    // Include the leading whitespace byte in the
-                    // word range so a downstream whitespace-anchor
-                    // check on the first subword fires.
-                    anchor - 1
-                } else {
-                    anchor
-                };
+                let has_leading_ws = had_metaspace_prefix && anchor > 0;
                 let word_end = anchor + piece_body.len();
-                // Split the source word range across the piece's
-                // n subwords proportionally.
-                let word_len = word_end.saturating_sub(word_start);
-                if n == 1 || word_len <= n {
-                    let (id, _) = piece_ids[0];
-                    out.push((id, word_start..word_end));
-                    for (id, _) in piece_ids.into_iter().skip(1) {
-                        out.push((id, word_end..word_end));
+                // Translate a piece-relative byte offset to a
+                // source-text byte offset.  With a Metaspace prefix
+                // present, piece bytes 0..3 span the `▁` glyph and
+                // collapse onto the single source whitespace byte at
+                // `anchor - 1` (word_start); piece bytes ≥ 3 shift
+                // by `anchor - 3`.  Without a prefix, offsets pass
+                // through as `anchor + p`.
+                let translate = |p: usize| -> usize {
+                    if had_metaspace_prefix {
+                        if p == 0 {
+                            if has_leading_ws { anchor - 1 } else { anchor }
+                        } else if p >= 3 {
+                            anchor + (p - 3)
+                        } else {
+                            // Char-boundary: never lands strictly
+                            // inside the multi-byte `▁`.  Fall back
+                            // to the whitespace/word start.
+                            if has_leading_ws { anchor - 1 } else { anchor }
+                        }
+                    } else {
+                        anchor + p
                     }
-                } else {
-                    let step = word_len / n;
-                    let mut c = word_start;
-                    let count = piece_ids.len();
-                    for (k, (id, _)) in piece_ids.into_iter().enumerate() {
-                        let next = if k + 1 == count { word_end } else { c + step };
-                        out.push((id, c..next));
-                        c = next;
-                    }
+                };
+                for (id, range) in piece_ids {
+                    let s = translate(range.start);
+                    let e = translate(range.end);
+                    out.push((id, s..e));
                 }
                 cursor = word_end;
             }
@@ -4018,10 +4019,95 @@ impl stringcheese_tokenizer::Tokenizer for UnigramTokenizer {
             }
             (ids, offsets)
         } else {
-            let ids = Self::encode(self, text).map_err(|e| {
-                stringcheese_tokenizer::TokenizerError::UnknownToken(alloc::format!("{e}"))
-            })?;
-            (ids, Vec::new())
+            // Specials-present slow path: pre-extract registered
+            // special-token surfaces from the raw text, then normalize
+            // + pre-tokenize + Viterbi each between-specials region.
+            // Track per-id source-text byte ranges alongside the ids
+            // so downstream consumers (gliner's word-boundary
+            // derivation) get Viterbi-precise offsets rather than the
+            // component-side proportional whitespace synthesizer.
+            //
+            // Matched-in-input specials get a real
+            // `(cursor..cursor+len)` range in the source string; the
+            // post-processor's own `Self::TemplateProcessing` /
+            // `Self::BertProcessing` inserts additional specials
+            // (`[CLS]` / `[SEP]`) with the empty range (0..0), which
+            // is what gliner's guest uses as the "is special" marker.
+            //
+            // Region-content offsets come from
+            // `encode_regions_with_offsets(region_normalized)` shifted
+            // by the region's byte start.  When the normalizer is
+            // byte-preserving on that region (ASCII input with
+            // Lowercase / no-op Precompiled / Bert-without-strip,
+            // etc.) the shifted ranges are correct source positions;
+            // when the normalizer changes byte lengths on the region
+            // the fallback path emits empty offsets for that region so
+            // downstream slice-indexing still sees a full-length vec
+            // padded with `(0, 0)` placeholders instead of a
+            // wrong-position range.
+            let sorted_specials = sorted_unigram_special_tokens(&self.special_tokens);
+            let mut ids: Vec<usize> = Vec::new();
+            let mut offsets: Vec<core::ops::Range<usize>> = Vec::new();
+            let mut cursor = 0usize;
+            while cursor < text.len() {
+                let remaining = &text[cursor..];
+                let mut matched: Option<(usize, usize)> = None;
+                for (surface, id) in &sorted_specials {
+                    if remaining.starts_with(surface.as_str()) {
+                        matched = Some((*id as usize, surface.len()));
+                        break;
+                    }
+                }
+                if let Some((id, len)) = matched {
+                    ids.push(id);
+                    offsets.push(cursor..cursor + len);
+                    cursor += len;
+                    continue;
+                }
+                let mut next_rel = remaining.len();
+                for (surface, _) in &sorted_specials {
+                    if let Some(rel) = remaining.find(surface.as_str()) {
+                        if rel < next_rel {
+                            next_rel = rel;
+                        }
+                    }
+                }
+                let region = &remaining[..next_rel];
+                if !region.is_empty() {
+                    let region_normalized: alloc::borrow::Cow<'_, str> = match &self.normalizer
+                    {
+                        Some(n) => {
+                            alloc::borrow::Cow::Owned(crate::normalizer::normalize(region, n))
+                        }
+                        None => alloc::borrow::Cow::Borrowed(region),
+                    };
+                    let region_paired = self
+                        .encode_regions_with_offsets(region_normalized.as_ref())
+                        .map_err(|e| {
+                            stringcheese_tokenizer::TokenizerError::UnknownToken(
+                                alloc::format!("{e}"),
+                            )
+                        })?;
+                    // Only shift-and-carry region offsets when the
+                    // normalizer left byte positions untouched — the
+                    // shift assumes normalized-byte == source-byte
+                    // alignment.  When the normalizer changed the byte
+                    // length, keep the ids but pad offsets with the
+                    // empty-range placeholder so vec lengths stay
+                    // aligned.
+                    let byte_preserving = region_normalized.as_ref().len() == region.len();
+                    for (id, range) in region_paired {
+                        ids.push(id);
+                        if byte_preserving {
+                            offsets.push(cursor + range.start..cursor + range.end);
+                        } else {
+                            offsets.push(0..0);
+                        }
+                    }
+                }
+                cursor += next_rel;
+            }
+            (ids, offsets)
         };
 
         let mut enc: stringcheese_tokenizer::Encoding<TokenId> =
