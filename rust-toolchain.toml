@@ -1,0 +1,35 @@
+# Pin the rust toolchain used to build stringcheese crates.
+#
+# Rationale (2026-09-25): stringcheese components (particularly
+# `stringcheese-tokenizer-component-hf-source` and its siblings)
+# are composed into cognition workspaces via wasmos-compose at
+# `wasm32-wasip2` target.  Rust's built-in wasip2 bundles a
+# specific `wasi` crate version — that determines the WASI-std
+# version the emitted component imports.
+#
+# Without a toolchain pin, stringcheese picks up the ambient
+# rustc (contributor's system), which can diverge from cognition's
+# stable-channel bundled WASI version.  Empirically observed
+# 2026-09-25 during the p1-target-workaround retirement
+# validation: cognition's `stable` rustc emitted
+# `wasi:io/streams@0.2.6` imports, stringcheese's ambient
+# nightly rustc emitted `wasi:io/streams@0.2.9`.
+#
+# wasmos-compose's Slice E stages 2-6 (anchor-first emit
+# ordering, canonical-resource alias-exports) handle the
+# cross-version case cleanly at compose time — the two mixed-
+# version wasip2 plugs above composed to a valid artifact that
+# ran end-to-end.  But keeping the two workspaces aligned on
+# toolchain avoids latent variance in the wasi-std surface and
+# makes the compose emit deterministic.
+#
+# Cognition's `rust-toolchain.toml` also pins `channel =
+# "stable"` and adds the `wasm32-wasip2` target.  Match here.
+#
+# See [[compose_wasi_io_streams_026_skew]]'s 2026-09-25
+# continuation for the finding.
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-wasip2"]
