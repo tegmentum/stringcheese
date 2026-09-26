@@ -3,28 +3,70 @@
 //! Sibling of
 //! [`stringcheese_tokenizer_component_cl100k`](https://docs.rs/stringcheese-tokenizer-component-cl100k)
 //! that layers OpenAI Whisper's real `tokenizer.json` into the same
-//! WIT `tokenizer-provider` shape.  The cognition-side
-//! `whisper-transcribe-component` (`~/git/cognition/crates/whisper-transcribe-component/`)
-//! imports `tegmentum:tokenizer/tokenizer@0.1.0`; composing that
-//! import against the artifact built here produces a fully-satisfied
-//! `dist/whisper-ort.wasm` that decodes greedy-decoder token IDs into
-//! text.
+//! WIT `tokenizer-provider` shape.
+//!
+//! ## Status (2026-09-25)
+//!
+//! **The cognition workspace no longer consumes this crate.**
+//! `whisper-transcribe-component` migrated to the runtime-bytes
+//! `tegmentum:tokenizer/tokenizer-source@0.1.0` interface satisfied
+//! by [`stringcheese-tokenizer-component-hf-source`] on 2026-09-25
+//! after this crate's compose-time vocab bake silently drifted from
+//! the model bundle at runtime.  See the cognition-side memory
+//! `whisper_tokenizer_vocab_mismatch.md` for the failure mode.
+//!
+//! [`stringcheese-tokenizer-component-hf-source`]: ../stringcheese_tokenizer_component_hf_source/index.html
+//!
+//! New consumers should plug the runtime-bytes satisfier instead;
+//! the guest reads `tokenizer.json` from the model bundle's
+//! metadata surface at call time, so vocabulary and model always
+//! match by construction.  This crate remains available for
+//! non-cognition callers who explicitly want a bake-time vocab,
+//! but bake-time vs runtime mismatch has bitten twice — see the
+//! caveat below.
 //!
 //! ## Build-time contract
 //!
 //! * The `tokenizer.json` bytes are **never** committed.  `build.rs`
 //!   locates them at build time from `$STRINGCHEESE_WHISPER_TOKENIZER_JSON`
-//!   or the standard cache path.  Fetch from HF Hub:
+//!   or the standard cache path.  Fetch from HF Hub matching your
+//!   target model family:
 //!
 //!   ```text
 //!   mkdir -p ~/.cache/stringcheese-tokenizer-whisper && \
 //!   curl -L -o ~/.cache/stringcheese-tokenizer-whisper/tokenizer.json \
-//!       https://huggingface.co/openai/whisper-tiny/resolve/main/tokenizer.json
+//!       https://huggingface.co/openai/whisper-tiny.en/resolve/main/tokenizer.json
+//!   # (or openai/whisper-tiny for multilingual models — but see the
+//!   #  vocab-family caveat below)
 //!   ```
 //!
-//!   Every whisper-* checkpoint ships the same tokenizer, so
-//!   `whisper-tiny` works for `whisper-large-v3` too.  A future
-//!   revision could split per-variant if a checkpoint diverges.
+//! ## Vocab-family caveat
+//!
+//! Contrary to an earlier claim in this doc, **multilingual and .en
+//! whisper checkpoints do NOT share a tokenizer**:
+//!
+//! | Token ID | `openai/whisper-tiny` (multilingual) | `openai/whisper-tiny.en` |
+//! |----------|--------------------------------------|--------------------------|
+//! | 843      | `'ody'`                              | `'ĠAnd'`                 |
+//! | 5891     | `'Ġviel'` (German)                   | `'Ġfellow'`              |
+//! | 50256    | `''`                                 | `'<|endoftext|>'`        |
+//! | 50257    | `'<|endoftext|>'`                    | `'<|startoftranscript|>'`|
+//! | vocab    | 50258                                | 50257                    |
+//!
+//! Pointing this build at the wrong family produces a composed
+//! artifact that argmaxes correct token IDs and detokenizes them
+//! as scrambled real-vocab words in the wrong language.  Compose
+//! validation still passes (the WIT shape is correct); only the
+//! transcript is garbage.
+//!
+//! Within a family (`.en` variants share, multilingual variants
+//! share), any checkpoint's tokenizer.json works — `tiny.en`
+//! matches `small.en` matches `medium.en`.  Across the family
+//! boundary they don't.
+//!
+//! The runtime-bytes route via
+//! `stringcheese-tokenizer-component-hf-source` avoids this
+//! entirely — the vocab travels with the weights.
 //!
 //! * Without `parity-real-vocab` the crate compiles into a stub;
 //!   every operation returns `TokenizerError::Other` naming the
@@ -47,10 +89,11 @@
 //! ## Build recipe
 //!
 //! ```text
-//! # Fetch the tokenizer.json once:
+//! # Fetch the tokenizer.json once (choose the URL matching your
+//! # target model family — see the vocab-family caveat above):
 //! mkdir -p ~/.cache/stringcheese-tokenizer-whisper
 //! curl -L -o ~/.cache/stringcheese-tokenizer-whisper/tokenizer.json \
-//!     https://huggingface.co/openai/whisper-tiny/resolve/main/tokenizer.json
+//!     https://huggingface.co/openai/whisper-tiny.en/resolve/main/tokenizer.json
 //!
 //! # Standalone WIT component build (wasm32-wasip1):
 //! cargo build \
