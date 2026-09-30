@@ -27,6 +27,18 @@ uax14-lines = ["dep:unicode-linebreak", "std"]
 icu_segmenter    = { version = "1.5", optional = true, features = ["compiled_data"] }
 unicode-linebreak = { version = "0.1", optional = true }
 
+# Small CLI wrapper that reads stdin lines, applies a chosen
+# SegmentUnit, and emits one token per output line. Consumed by
+# ~/git/snomed-ct's `tools/rf2-to-canonical.sh` bypass tool so the
+# bypass path tokenizes identically to the ICU4X-backed authoring
+# path (SLICE-INT-followup-4 D M4a). Behind the `icu` feature
+# because UAX #29 word segmentation is the only unit the CLI is
+# useful for at scale.
+[[bin]]
+name = "stringcheese-segment"
+path = "src/bin/stringcheese_segment.rs"
+required-features = ["icu"]
+
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
 # `#[cfg(unix)]` / `#[cfg(windows)]` only, with no wasm branch, so
 # leaving it in `[dev-dependencies]` breaks the wasm-runtime CI job's
