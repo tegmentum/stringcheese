@@ -65,7 +65,21 @@ extern crate alloc;
     clippy::nursery,
     clippy::restriction
 )]
-mod bindings;
+#[cfg(all(target_family = "wasm", feature = "wit-component"))]
+#[allow(warnings)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "tokenizer-source-provider",
+        path: "wit",
+        generate_all,
+    });
+}
+
+// Non-wasm or `wit-component` feature off: emit a stub module so the
+// rest of this crate's `use crate::bindings::...` paths resolve.  Host
+// (`cargo check` / `cargo test`) does not exercise the WIT boundary.
+#[cfg(not(all(target_family = "wasm", feature = "wit-component")))]
+mod bindings {}
 
 #[cfg(all(target_family = "wasm", feature = "wit-component"))]
 #[allow(unsafe_code, unsafe_op_in_unsafe_fn)]

@@ -23,7 +23,7 @@ default = []
 # WIT `Guest` impl + component export.  Off by default so
 # `cargo check` on the host stays cheap; the wasm target build
 # always turns it on.
-wit-component = ["dep:wit-bindgen-rt"]
+wit-component = ["dep:wit-bindgen"]
 
 [dependencies]
 # Runtime tokenizer machinery.  Same shared crate every other
@@ -34,7 +34,12 @@ stringcheese-tokenizer = { path = "../stringcheese-tokenizer", default-features 
 stringcheese-tokenizer-hf = { path = "../stringcheese-tokenizer-hf", default-features = false, features = ["std", "hf-tokenizer"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"], optional = true }
+wit-bindgen = { version = "0.44", default-features = false, features = ["macros"], optional = true }
+
+[build-dependencies]
+# Plumbs the wasi-preview1 adapter into cargo's registry cache so the
+# post-cargo-build componentize step can find it.  Not linked.
+wasi-preview1-component-adapter-provider = "46.0.1"
 
 [dev-dependencies]
 # Host-side WIT-parses gate — same as every other pack.
@@ -49,9 +54,8 @@ clippy.missing_errors_doc = "allow"
 clippy.must_use_candidate = "allow"
 clippy.collapsible_if = "allow"
 
-[package.metadata.component]
-package = "tegmentum:stringcheese-tokenizer-component-hf-source"
-
-[package.metadata.component.target]
-path = "../../component/wit/tokenizer"
-world = "tokenizer-source-provider"
+# cargo-component metadata removed per migration recipe (see cognition
+# commit 88c640a / memory [[cargo-component-migration-recipe]]).  Build
+# via `cargo build --target wasm32-wasip1 --release` followed by
+# `wasm-tools component new --adapt wasi_snapshot_preview1=<adapter>`
+# instead.  WIT lives in `wit/` next to this Cargo.toml.
