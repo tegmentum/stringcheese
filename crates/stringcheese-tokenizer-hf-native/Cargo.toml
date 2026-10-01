@@ -73,7 +73,7 @@ stringcheese-tokenizer = { workspace = true, features = ["std"] }
 # subset of tokenizers-rs's features governs which pipeline shape.
 # ---------------------------------------------------------------------
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-tokenizers = { version = "0.20", default-features = false, features = ["onig", "esaxx_fast"] }
+tokenizers = { version = "0.23", default-features = false, features = ["onig", "esaxx_fast"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 # Property tests exercise the byte-identical delegation contract over
