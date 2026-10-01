@@ -99,7 +99,7 @@ stringcheese-phonetic = { workspace = true }
 # Default features include `compiled_data`, which bakes the English
 # collation table into the binary — this is the whole point of the
 # opt-in feature. See `cldr_collator.rs` for the wrapper.
-icu_collator = { version = "1.5", optional = true }
+icu_collator = { version = "2.2", optional = true }
 # `icu_locid` — the `locale!("en")` macro that names the CLDR locale
 # passed to `Collator::try_new`. Same version family as the
 # already-in-tree `icu_casemap` dependency (both at ICU4X 1.5).
