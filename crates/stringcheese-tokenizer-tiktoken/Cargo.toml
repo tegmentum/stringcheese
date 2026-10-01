@@ -42,13 +42,13 @@ stringcheese-tokenizer-hf = { workspace = true, features = ["std"] }
 # Pure-Rust deflate decoder. `miniz_oxide` is the same decoder Rust's
 # `backtrace` uses and needs no C shim, which is what makes it work on
 # every `wasm32-*` target the workspace ships to.
-miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 
 [build-dependencies]
 # The build script runs on the host toolchain and produces the embedded
 # SCUD-lite packs. Same crate as the runtime, but here it's used for its
 # `deflate_to_vec` encoder path.
-miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 
 
 # `proptest` gated off wasm — its transitive `wait-timeout` dep is
